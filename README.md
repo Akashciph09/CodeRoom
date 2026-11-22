@@ -22,25 +22,33 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 ```mermaid
 flowchart LR
     subgraph Browser
-        W[React + Monaco]
+        W["React + Monaco"]
     end
     subgraph Supabase
-        AUTH[Auth<br/>ES256 JWT]
-        PG[(Postgres<br/>RLS on all tables)]
-        ST[(Storage<br/>private bucket)]
+        AUTH["Auth<br/>ES256 JWT"]
+        PG[("Postgres<br/>RLS on all tables")]
+        ST[("Storage<br/>private bucket")]
     end
-    W -- sign in --> AUTH
-    W -- REST + Bearer token --> API[Express API]
-    API -- verify JWT via JWKS --> AUTH
-    API -- Drizzle --> PG
-    API -- enqueue submissionId --> Q[[Redis / BullMQ]]
-    Q --> WK1[Worker]
-    Q --> WK2[Worker ×N]
-    WK1 -- docker run --network none ... --> SB[(Sandbox container)]
-    WK1 -- results in one transaction --> PG
-    WK1 -- submission:id:done --> PS[[Redis pub/sub]]
-    PS -. planned .-> GW[WebSocket gateway<br/>Yjs sync]
-    GW -. planned .-> W
+    API["Express API"]
+    Q[["Redis / BullMQ"]]
+    WK1["Worker"]
+    WK2["Worker xN"]
+    SB[("Sandbox container<br/>no network, limits, read-only")]
+    PS[["Redis pub/sub"]]
+    GW["WebSocket gateway<br/>Yjs sync (planned)"]
+
+    W -->|"sign in"| AUTH
+    W -->|"REST + Bearer token"| API
+    API -->|"verify JWT via JWKS"| AUTH
+    API -->|"Drizzle"| PG
+    API -->|"enqueue submissionId"| Q
+    Q --> WK1
+    Q --> WK2
+    WK1 -->|"docker run"| SB
+    WK1 -->|"results in one transaction"| PG
+    WK1 -->|"submission done event"| PS
+    PS -.->|"planned"| GW
+    GW -.->|"planned"| W
 ```
 
 ### Submission flow

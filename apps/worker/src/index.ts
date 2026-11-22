@@ -1,7 +1,7 @@
 import { UnrecoverableError, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
 import { asc, createDb, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
-import { EXECUTION_QUEUE, ExecutionJob, submissionDoneChannel } from "@coderoom/shared";
+import { EXECUTION_QUEUE, ExecutionJob, roomEventsChannel, type RoomBusEvent } from "@coderoom/shared";
 import { config } from "./config.js";
 import { runInSandbox } from "./sandbox/runner.js";
 import { judge, overallVerdict } from "./sandbox/verdict.js";
@@ -10,8 +10,10 @@ const { db, close: closeDb } = createDb(config.DATABASE_URL, { max: config.WORKE
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 const publisher = new Redis(config.REDIS_URL);
 
-async function finish(submissionId: string, status: "completed" | "failed") {
-  await publisher.publish(submissionDoneChannel(submissionId), status);
+/** Tell realtime gateways the submission finished; they load results and push role-specific views. */
+async function finish(roomId: string, submissionId: string, status: "completed" | "failed") {
+  const event: RoomBusEvent = { type: "submission:done", roomId, submissionId, status };
+  await publisher.publish(roomEventsChannel(roomId), JSON.stringify(event));
 }
 
 async function processJob(job: Job) {
@@ -32,7 +34,7 @@ async function processJob(job: Job) {
       .update(submissions)
       .set({ status: "failed", overall: "internal_error" })
       .where(eq(submissions.id, submissionId));
-    await finish(submissionId, "failed");
+    await finish(submission.roomId, submissionId, "failed");
     return;
   }
 
@@ -69,7 +71,7 @@ async function processJob(job: Job) {
       .set({ status: "completed", overall: overallVerdict(results.map((r) => r.verdict)) })
       .where(eq(submissions.id, submissionId));
   });
-  await finish(submissionId, "completed");
+  await finish(submission.roomId, submissionId, "completed");
 }
 
 const worker = new Worker(EXECUTION_QUEUE, processJob, {
@@ -84,12 +86,16 @@ worker.on("failed", async (job, err) => {
   // Out of retries: mark the submission failed so clients stop waiting.
   const parsed = ExecutionJob.safeParse(job.data);
   if (!parsed.success) return;
-  await db
-    .update(submissions)
-    .set({ status: "failed", overall: "internal_error" })
-    .where(eq(submissions.id, parsed.data.submissionId))
-    .catch((e) => console.error("could not mark submission failed:", e));
-  await finish(parsed.data.submissionId, "failed").catch(() => {});
+  try {
+    const [row] = await db
+      .update(submissions)
+      .set({ status: "failed", overall: "internal_error" })
+      .where(eq(submissions.id, parsed.data.submissionId))
+      .returning({ roomId: submissions.roomId });
+    if (row) await finish(row.roomId, parsed.data.submissionId, "failed");
+  } catch (e) {
+    console.error("could not mark submission failed:", e);
+  }
 });
 
 console.log(`worker started (concurrency=${config.WORKER_CONCURRENCY})`);
