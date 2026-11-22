@@ -17,7 +17,7 @@ export const DEFAULT_PIDS_LIMIT = 64;
 
 /**
  * Build `docker run` arguments for one untrusted execution.
- * Every flag here is a security control — see CLAUDE.md before removing any.
+ * Every flag here is a security control — see docs/decisions/0004-queue-and-docker-sandbox.md before removing any.
  */
 export function buildDockerRunArgs(spec: DockerRunSpec): string[] {
   const { limits } = spec;

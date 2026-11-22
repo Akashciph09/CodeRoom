@@ -1,12 +1,17 @@
 import { Router } from "express";
-import { asc, eq, rooms, submissions, testResults } from "@coderoom/db";
-import { CreateSubmissionRequest, type CreateSubmissionResponse } from "@coderoom/shared";
+import { eq, rooms, submissions } from "@coderoom/db";
+import {
+  CreateSubmissionRequest,
+  roomEventsChannel,
+  type CreateSubmissionResponse,
+  type RoomBusEvent,
+} from "@coderoom/shared";
 import { requireRoomRole } from "../auth.js";
 import { config } from "../config.js";
 import { db } from "../db.js";
 import { asyncHandler, BadRequest, NotFound, PayloadTooLarge } from "../errors.js";
-import { enqueueExecution } from "../queue.js";
-import { toCandidateView, toInterviewerView } from "../views.js";
+import { enqueueExecution, redis } from "../queue.js";
+import { loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
 import { UuidParam } from "./params.js";
 
 export const submissionsRouter: Router = Router();
@@ -44,10 +49,15 @@ submissionsRouter.post(
         code: body.code,
       })
       .returning({ id: submissions.id });
+    const submissionId = submission!.id;
 
-    await enqueueExecution({ submissionId: submission!.id });
+    await enqueueExecution({ submissionId });
 
-    const response: CreateSubmissionResponse = { submissionId: submission!.id, status: "queued" };
+    // Best effort: realtime clients learn about it; REST polling still works if this fails.
+    const event: RoomBusEvent = { type: "submission:queued", roomId: body.roomId, submissionId };
+    redis.publish(roomEventsChannel(body.roomId), JSON.stringify(event)).catch(() => {});
+
+    const response: CreateSubmissionResponse = { submissionId, status: "queued" };
     res.status(202).json(response);
   }),
 );
@@ -58,22 +68,9 @@ submissionsRouter.get(
     const parsed = UuidParam.safeParse(req.params.id);
     if (!parsed.success) throw new NotFound();
 
-    const [submission] = await db
-      .select()
-      .from(submissions)
-      .where(eq(submissions.id, parsed.data))
-      .limit(1);
-    if (!submission) throw new NotFound();
-
-    const role = await requireRoomRole(submission.roomId, req.user!.userId);
-    const results = await db
-      .select()
-      .from(testResults)
-      .where(eq(testResults.submissionId, submission.id))
-      .orderBy(asc(testResults.testCaseId));
-
-    res.json(
-      role === "interviewer" ? toInterviewerView(submission, results) : toCandidateView(submission, results),
-    );
+    const loaded = await loadSubmissionWithResults(parsed.data);
+    if (!loaded) throw new NotFound();
+    const role = await requireRoomRole(loaded.submission.roomId, req.user!.userId);
+    res.json(viewFor(role, loaded));
   }),
 );

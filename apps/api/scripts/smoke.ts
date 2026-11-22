@@ -3,49 +3,7 @@
  * Signs up two real Supabase users, creates a room, joins it, and exercises the sandbox.
  *   pnpm smoke
  */
-import path from "node:path";
-import { randomUUID } from "node:crypto";
-import dotenv from "dotenv";
-import { AuthClient } from "@supabase/auth-js";
-
-dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
-
-const API = process.env.SMOKE_API_URL ?? `http://localhost:${process.env.PORT ?? 4000}`;
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const PUBLISHABLE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY!;
-const QUESTION_ID = "00000000-0000-4000-8000-000000000001"; // from supabase/seed.sql
-
-let failures = 0;
-const check = (name: string, ok: boolean, detail = "") => {
-  if (!ok) failures++;
-  console.log(`${ok ? "✓" : "✗"} ${name}${detail ? `  ${detail}` : ""}`);
-};
-
-async function signUp(label: string) {
-  const auth = new AuthClient({
-    url: `${SUPABASE_URL}/auth/v1`,
-    headers: { apikey: PUBLISHABLE_KEY },
-    persistSession: false,
-  });
-  const { data, error } = await auth.signUp({
-    email: `${label}-${randomUUID().slice(0, 8)}@example.test`,
-    password: randomUUID(),
-  });
-  if (error || !data.session) throw new Error(`sign up failed: ${error?.message ?? "no session"}`);
-  return data.session.access_token;
-}
-
-const call = async (method: string, url: string, token?: string, body?: unknown) => {
-  const res = await fetch(`${API}${url}`, {
-    method,
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return { status: res.status, json: (await res.json().catch(() => null)) as any };
-};
+import { call, check, finish, PUBLISHABLE_KEY, QUESTION_ID, signUp, SUPABASE_URL } from "./lib.js";
 
 async function waitFor(id: string, token: string) {
   for (let i = 0; i < 80; i++) {
@@ -139,8 +97,7 @@ async function main() {
   const rows = (await rest.json()) as unknown[];
   check("RLS: test_cases unreadable via Supabase REST", Array.isArray(rows) && rows.length === 0, `(${rows.length} rows)`);
 
-  console.log(failures === 0 ? "\nall checks passed" : `\n${failures} check(s) failed`);
-  process.exit(failures === 0 ? 0 : 1);
+  finish();
 }
 
 main().catch((err) => {

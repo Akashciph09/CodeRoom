@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  customType,
   index,
   integer,
   pgEnum,
@@ -136,6 +137,24 @@ export const testResults = pgTable(
     check("hidden_output_not_stored", sql`NOT ${t.isHidden} OR (${t.stdout} IS NULL AND ${t.stderr} IS NULL)`),
   ],
 ).enableRLS();
+
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+  dataType: () => "bytea",
+  toDriver: (value) => Buffer.from(value),
+  fromDriver: (value) => new Uint8Array(value),
+});
+
+/**
+ * Latest merged Yjs state of a room's shared editor (one row per room).
+ * Written by the realtime gateway on a debounce and when the last client leaves.
+ */
+export const roomDocuments = pgTable("room_documents", {
+  roomId: uuid("room_id")
+    .primaryKey()
+    .references(() => rooms.id, { onDelete: "cascade" }),
+  state: bytea("state").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();
 
 export type Question = typeof questions.$inferSelect;
 export type TestCase = typeof testCases.$inferSelect;

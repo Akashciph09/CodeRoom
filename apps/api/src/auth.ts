@@ -8,6 +8,8 @@ import { Forbidden, Unauthorized } from "./errors.js";
 
 export interface AuthUser {
   userId: string;
+  /** Token expiry, epoch seconds. Long-lived sockets are closed when it passes. */
+  expiresAt: number;
 }
 
 declare global {
@@ -27,8 +29,8 @@ const jwks = createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`));
 /** Verify the Supabase access token locally (no round trip to Supabase per request). */
 export async function verifyAccessToken(token: string): Promise<AuthUser> {
   const { payload } = await jwtVerify(token, jwks, { issuer, audience: "authenticated" });
-  if (!payload.sub) throw new Unauthorized();
-  return { userId: payload.sub };
+  if (!payload.sub || !payload.exp) throw new Unauthorized();
+  return { userId: payload.sub, expiresAt: payload.exp };
 }
 
 export function authenticate(req: Request, _res: Response, next: NextFunction) {

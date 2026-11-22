@@ -4,7 +4,7 @@
 
 Interviewer and candidate share a room. The candidate writes code; every run goes through a queue to a disposable, locked-down Docker container and comes back with per-test verdicts. Hidden test cases never leave the server. An AI copilot (in progress) helps the interviewer prepare questions, ask follow-ups and summarize evidence against a rubric.
 
-> **Status:** backend core is working and tested end-to-end (auth, rooms, submission pipeline, sandbox). Live collaborative editor, interviewer UI and AI features are next — see [Roadmap](#roadmap).
+> **Status:** backend core is working and tested end-to-end: auth, rooms, submission pipeline, sandbox, and the realtime gateway (collaborative editing + live results across multiple API instances). The browser UI and AI features are next — see [Roadmap](#roadmap).
 
 ---
 
@@ -15,6 +15,8 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 - **Hidden tests stay hidden** — enforced three ways: a candidate-only serializer, a database `CHECK` constraint that refuses to store hidden-test output, and Row Level Security that blocks direct table access via Supabase's public API.
 - **Per-room roles.** The same user can interview in one room and be a candidate in another; every request is checked against room membership.
 - **Horizontally scalable execution.** Stateless BullMQ workers; add processes to add throughput. Retries are idempotent.
+- **Collaborative editing that scales out.** Yjs (CRDT) over our own WebSocket gateway; interviewer and candidate can be connected to *different* API instances and stay in sync via Redis pub/sub. Concurrent edits converge; the document survives everyone leaving.
+- **Live, role-aware results.** When the worker finishes, every connected participant gets the submission pushed over WebSocket — candidates the redacted view, interviewers the full one.
 - **Every stack choice is documented** in [Architecture Decision Records](docs/decisions/README.md).
 
 ## Architecture
@@ -35,20 +37,22 @@ flowchart LR
     WK2["Worker xN"]
     SB[("Sandbox container<br/>no network, limits, read-only")]
     PS[["Redis pub/sub"]]
-    GW["WebSocket gateway<br/>Yjs sync (planned)"]
+    GW["WebSocket gateway xN<br/>Yjs sync + room events"]
 
     W -->|"sign in"| AUTH
     W -->|"REST + Bearer token"| API
+    W <-->|"WebSocket, token as subprotocol"| GW
     API -->|"verify JWT via JWKS"| AUTH
     API -->|"Drizzle"| PG
     API -->|"enqueue submissionId"| Q
+    API -->|"submission queued event"| PS
     Q --> WK1
     Q --> WK2
     WK1 -->|"docker run"| SB
     WK1 -->|"results in one transaction"| PG
     WK1 -->|"submission done event"| PS
-    PS -.->|"planned"| GW
-    GW -.->|"planned"| W
+    PS <-->|"doc updates, awareness, room events"| GW
+    GW -->|"persist editor state"| PG
 ```
 
 ### Submission flow
@@ -58,7 +62,15 @@ flowchart LR
 3. API enqueues a job containing **only the submission id** and returns `202 Accepted`.
 4. A worker loads the submission and its test cases, then runs each test in a fresh container with stdin input and a wall-clock timeout.
 5. Verdicts (`accepted`, `wrong_answer`, `time_limit_exceeded`, `memory_limit_exceeded`, `runtime_error`, …) and the overall result are written in **one transaction**, then announced on Redis pub/sub.
-6. `GET /submissions/:id` returns a **candidate view** (public results + hidden pass count) or an **interviewer view** (everything), based on the caller's role in the room.
+6. Every gateway instance with participants in that room loads the result once and pushes it over WebSocket: a **candidate view** (public results + hidden pass count) or an **interviewer view** (everything), based on each participant's role. `GET /submissions/:id` returns the same role-based views.
+
+### Realtime flow
+
+1. The client opens `ws://<api>/yjs/<roomId>` with the access token as a WebSocket **subprotocol** (`["coderoom.v1", token]`) — tokens never appear in URLs or access logs.
+2. Before the upgrade completes, the gateway verifies the JWT, checks the user is a participant and the room is open. Rejections are plain HTTP `401/403/404/410`; no socket is created.
+3. The gateway loads the room's Yjs document from Postgres (or memory) and speaks the standard y-websocket protocol, so stock `y-websocket` / `y-monaco` clients work.
+4. Local edits are broadcast to this instance's clients **and** published to Redis (`yjs:<roomId>`), tagged with the instance id; other instances apply them and forward to their clients. A newly loaded instance asks peers for anything it's missing.
+5. State is persisted 2 s after the last edit and when the last client leaves. Sockets close with `4401` when the token expires, so the client reconnects with a fresh one.
 
 ## Tech stack
 
@@ -70,9 +82,9 @@ flowchart LR
 | Auth / Storage | Supabase Auth, Supabase Storage | Commodity concerns, managed — [ADR 0002](docs/decisions/0002-supabase-for-auth-storage-postgres.md) |
 | Queue | Redis + BullMQ | Retries, back-pressure, concurrency; Redis also does pub/sub — [ADR 0004](docs/decisions/0004-queue-and-docker-sandbox.md) |
 | Execution | Docker (per-run containers) | Isolation with measurable limits — [ADR 0004](docs/decisions/0004-queue-and-docker-sandbox.md) |
-| Realtime (planned) | Yjs over own WebSocket gateway | CRDT merging, latency control — [ADR 0005](docs/decisions/0005-yjs-over-own-websocket.md) |
+| Realtime | Yjs + `ws` gateway, Redis pub/sub fan-out | CRDT merging, auth before upgrade, scales across instances — [ADR 0005](docs/decisions/0005-yjs-over-own-websocket.md) |
 | Validation | zod (shared package) | One schema for API, worker and DB enums |
-| Testing | Vitest + end-to-end smoke script | Unit-tests every sandbox control; smoke test hits the real stack |
+| Testing | Vitest + end-to-end smoke scripts | Unit-tests every sandbox control; smoke tests hit the real stack, including two API instances |
 
 **Deliberately not used:** MongoDB, a separate S3/MinIO, Supabase Realtime, browser-side table queries ([ADR 0006](docs/decisions/0006-rls-deny-all-server-side-access.md)).
 
@@ -89,6 +101,8 @@ flowchart LR
 | Candidate reads hidden tests | Candidate serializer + DB `CHECK` constraint + RLS deny-all on Supabase REST |
 | Forged identity / role | JWT verified against Supabase JWKS; roles looked up per room server-side, never trusted from the client |
 | Probing other rooms | Non-participants get `403` whether or not the room exists |
+| Unauthorized WebSocket access | Auth + room membership checked before the upgrade; token sent as subprotocol (not in URL); socket closed at token expiry |
+| Oversized / malformed realtime messages | 1 MB max frame; invalid Yjs messages close the socket; dead connections dropped by heartbeat |
 
 ## Getting started
 
@@ -126,6 +140,14 @@ Verify end to end (with `pnpm dev` running, in another terminal):
 
 ```bash
 pnpm smoke
+pnpm smoke:realtime
+```
+
+To prove cross-instance sync, start a second API on another port and point the candidate at it:
+
+```bash
+PORT=4001 pnpm --filter @coderoom/api dev
+SMOKE_API_URL_2=http://localhost:4001 pnpm smoke:realtime
 ```
 
 ### Scripts
@@ -136,6 +158,7 @@ pnpm smoke
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm typecheck` / `pnpm build` | Type-check / build all packages |
 | `pnpm smoke` | End-to-end checks against the running stack |
+| `pnpm smoke:realtime` | Realtime checks: upgrade auth, sync latency, convergence, live results, persistence |
 | `pnpm db:start` / `db:stop` | Start / stop local Supabase |
 | `pnpm db:reset` | Wipe local DB, reapply migrations and seed |
 | `pnpm db:generate` | Generate a SQL migration from `packages/db/src/schema.ts` |
@@ -157,6 +180,15 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `POST` | `/submissions` | candidate | `{ roomId, language, mode: "run" \| "submit", code }` → `202 { submissionId }` |
 | `GET` | `/submissions/:id` | participant | Candidate view or interviewer view, by role |
 
+### WebSocket
+
+Both require the subprotocols `["coderoom.v1", <access token>]` and room membership.
+
+| Path | Protocol | Description |
+|---|---|---|
+| `/yjs/:roomId` | y-websocket (binary) | Shared editor. Use `doc.getText("code")`. Awareness carries cursors/names |
+| `/rooms/:roomId/events` | JSON, server → client | `ready`, `submission:queued`, `submission:result` (role-specific view) |
+
 ## Testing
 
 - **Unit tests** — every sandbox `docker run` flag, verdict mapping, and the candidate/interviewer serializers (hidden test ids never appear in the candidate view).
@@ -175,11 +207,24 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | Supabase REST read of `test_cases` | 0 rows (RLS) |
 | Leftover containers | 0 |
 
+- **Realtime smoke test** (`pnpm smoke:realtime`) — 14 checks, run with interviewer on one API instance and candidate on another:
+
+| Case | Result |
+|---|---|
+| No subprotocol / no token / bad token / outsider / bad path | `400` / `401` / `401` / `403` / `404` before upgrade |
+| Edit propagation across instances (30 edits) | p50 0.6 ms, p95 1.1 ms on localhost (target < 250 ms) |
+| 50 concurrent inserts at the same position | both clients converge to identical text |
+| Awareness (cursor/name) | reaches the client on the other instance |
+| Candidate submits | both get `submission:queued`; candidate gets redacted result, interviewer gets full result |
+| Everyone disconnects, new client joins | document restored from Postgres |
+
+> Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
+
 ## Project structure
 
 ```
 apps/
-  api/          Express API, auth, routes, serializers, smoke test
+  api/          Express API, auth, routes, serializers, realtime gateway, smoke tests
   worker/       BullMQ consumer + Docker sandbox runner
   web/          React + Monaco client (placeholder)
 packages/
@@ -197,8 +242,8 @@ docs/decisions/ Architecture Decision Records
 - [x] Supabase Auth with per-room roles and invite codes
 - [x] Submission API → queue → Docker sandbox → verdicts
 - [x] Candidate / interviewer result views, RLS lockdown, smoke test
-- [ ] WebSocket gateway with Yjs collaborative editing (<250 ms target)
-- [ ] Interviewer and candidate UI, live results
+- [x] WebSocket gateway: Yjs collaborative editing, cross-instance fan-out, persistence, live role-aware results
+- [ ] Interviewer and candidate UI (sign in, room, Yjs-bound Monaco, live results)
 - [ ] Question bank API (draft → approved workflow)
 - [ ] Submission history and editor replay (Supabase Storage)
 - [ ] Structured evaluation rubric

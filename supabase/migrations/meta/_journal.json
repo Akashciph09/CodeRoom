@@ -8,6 +8,13 @@
       "when": 1795381510165,
       "tag": "20261122210510_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795383746165,
+      "tag": "20261122214226_room_documents",
+      "breakpoints": true
     }
   ]
 }
