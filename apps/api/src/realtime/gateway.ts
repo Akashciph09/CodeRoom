@@ -34,7 +34,10 @@ export function attachRealtimeGateway(server: Server) {
     instanceId,
     persistDebounceMs: config.DOC_PERSIST_DEBOUNCE_MS,
   });
-  const events = new RoomEventHub(sub);
+  const events = new RoomEventHub(sub, {
+    // Room ended (on any instance): live sockets on this instance stop being able to write.
+    onRoomClosed: (roomId) => docs.setReadOnly(roomId),
+  });
 
   const wss = new WebSocketServer({
     noServer: true,
@@ -53,7 +56,7 @@ export function attachRealtimeGateway(server: Server) {
           if (result.route.kind === "events") {
             events.add(result.route.roomId, ws, result.role);
           } else {
-            serveYjs(docs, result.route.roomId, ws);
+            serveYjs(docs, result.route.roomId, ws, result.readOnly);
           }
         });
       })
@@ -91,7 +94,7 @@ export function attachRealtimeGateway(server: Server) {
 
 async function authorizeUpgrade(
   req: IncomingMessage,
-): Promise<{ status: number } | { route: Route; user: AuthUser; role: Role }> {
+): Promise<{ status: number } | { route: Route; user: AuthUser; role: Role; readOnly: boolean }> {
   const route = parseRoute(req.url ?? "");
   if (!route) return { status: 404 };
 
@@ -111,9 +114,10 @@ async function authorizeUpgrade(
   if (!role) return { status: 403 };
 
   const [room] = await db.select({ status: rooms.status }).from(rooms).where(eq(rooms.id, route.roomId)).limit(1);
-  if (!room || room.status !== "open") return { status: 410 };
+  if (!room) return { status: 404 };
 
-  return { route, user, role };
+  // Ended rooms stay viewable (final code, results) but are read-only.
+  return { route, user, role, readOnly: room.status !== "open" };
 }
 
 export function parseRoute(rawUrl: string): Route | null {
@@ -126,9 +130,9 @@ export function parseRoute(rawUrl: string): Route | null {
   return { kind, roomId: id };
 }
 
-function serveYjs(docs: RoomDocManager, roomId: string, ws: WebSocket) {
+function serveYjs(docs: RoomDocManager, roomId: string, ws: WebSocket, readOnly: boolean) {
   ws.binaryType = "nodebuffer";
-  const ready = docs.connect(roomId, ws);
+  const ready = docs.connect(roomId, ws, { readOnly });
   // Process messages strictly in order, after the doc is loaded.
   let queue: Promise<unknown> = ready.then((entry) => {
     if (ws.readyState !== ws.OPEN) return; // closed while loading; the close handler cleans up

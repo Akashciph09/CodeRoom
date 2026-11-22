@@ -25,11 +25,20 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  extraHeaders: Record<string, string> = {},
+): Promise<T> {
   const token = await getAccessToken();
   const res = await fetch(`${API_URL}${path}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(body ? { "content-type": "application/json" } : {}),
+      ...extraHeaders,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json().catch(() => null);
@@ -44,5 +53,8 @@ export const api = {
   joinRoom: (inviteCode: string) => request<JoinRoomResponse>("POST", "/rooms/join", { inviteCode }),
   room: (roomId: string) => request<RoomView>("GET", `/rooms/${roomId}`),
   roomSubmissions: (roomId: string) => request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions`),
-  submit: (body: CreateSubmissionRequest) => request<CreateSubmissionResponse>("POST", "/submissions", body),
+  closeRoom: (roomId: string) => request<{ roomId: string; status: "closed" }>("POST", `/rooms/${roomId}/close`),
+  /** One idempotency key per user action, so a retried request can't create a second submission. */
+  submit: (body: CreateSubmissionRequest, idempotencyKey: string) =>
+    request<CreateSubmissionResponse>("POST", "/submissions", body, { "idempotency-key": idempotencyKey }),
 };

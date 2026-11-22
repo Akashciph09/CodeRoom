@@ -53,12 +53,20 @@ export type RoomDoc = ReturnType<typeof connectRoomDoc>;
 export const getLanguage = (meta: Y.Map<unknown>): Language =>
   meta.get("language") === "javascript" ? "javascript" : "python";
 
-/** Server → client room events, with reconnect (fresh token each attempt). */
+/**
+ * Server → client room events, with reconnect (fresh token each attempt).
+ * Events are fire-and-forget, so anything published while the socket was down is lost: `onOpen`
+ * runs on every (re)connect, and callers use it to re-fetch authoritative state over REST.
+ */
 export function connectRoomEvents(
   roomId: string,
-  onEvent: (event: ServerEvent) => void,
-  onStatus: (status: ConnectionStatus) => void,
+  handlers: {
+    onEvent: (event: ServerEvent) => void;
+    onStatus: (status: ConnectionStatus) => void;
+    onOpen: () => void;
+  },
 ) {
+  const { onEvent, onStatus, onOpen } = handlers;
   let ws: WebSocket | null = null;
   let closed = false;
   let attempt = 0;
@@ -78,6 +86,7 @@ export function connectRoomEvents(
     ws.onopen = () => {
       attempt = 0;
       onStatus("connected");
+      onOpen();
     };
     ws.onmessage = (msg) => onEvent(JSON.parse(String(msg.data)) as ServerEvent);
     ws.onclose = () => {

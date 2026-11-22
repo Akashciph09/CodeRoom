@@ -34,6 +34,14 @@ export class Conflict extends HttpError {
     super(409, message);
   }
 }
+export class TooManyRequests extends HttpError {
+  constructor(
+    message = "Too many requests",
+    public readonly retryAfterSeconds?: number,
+  ) {
+    super(429, message);
+  }
+}
 export class PayloadTooLarge extends HttpError {
   constructor(message = "Payload too large") {
     super(413, message);
@@ -53,6 +61,9 @@ export const errorMiddleware: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
   if (err instanceof HttpError) {
+    if (err instanceof TooManyRequests && err.retryAfterSeconds) {
+      res.setHeader("Retry-After", String(err.retryAfterSeconds));
+    }
     res.status(err.status).json({ error: err.message });
     return;
   }

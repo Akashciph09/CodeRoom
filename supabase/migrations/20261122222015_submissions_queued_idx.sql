@@ -1,0 +1,1 @@
+CREATE INDEX "submissions_queued_idx" ON "submissions" USING btree ("created_at") WHERE "submissions"."status" = 'queued';

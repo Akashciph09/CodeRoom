@@ -111,7 +111,11 @@ export const submissions = pgTable(
     overall: verdictEnum("overall"),
     ...timestamps,
   },
-  (t) => [index("submissions_room_idx").on(t.roomId, t.createdAt)],
+  (t) => [
+    index("submissions_room_idx").on(t.roomId, t.createdAt),
+    // Small partial index for the worker's outbox sweeper ("queued rows older than N seconds").
+    index("submissions_queued_idx").on(t.createdAt).where(sql`${t.status} = 'queued'`),
+  ],
 ).enableRLS();
 
 export const testResults = pgTable(

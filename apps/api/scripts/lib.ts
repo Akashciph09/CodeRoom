@@ -34,17 +34,29 @@ export async function signUp(label: string) {
   return data.session.access_token;
 }
 
-export const call = async (method: string, url: string, token?: string, body?: unknown, base = API) => {
+export const call = async (
+  method: string,
+  url: string,
+  token?: string,
+  body?: unknown,
+  base = API,
+  headers: Record<string, string> = {},
+) => {
   const res = await fetch(`${base}${url}`, {
     method,
     headers: {
       "content-type": "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...headers,
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, json: (await res.json().catch(() => null)) as any };
+  return { status: res.status, headers: res.headers, json: (await res.json().catch(() => null)) as any };
 };
+
+/** The user id (`sub`) inside a Supabase access token. */
+export const userIdOf = (token: string) =>
+  JSON.parse(Buffer.from(token.split(".")[1]!, "base64url").toString()).sub as string;
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

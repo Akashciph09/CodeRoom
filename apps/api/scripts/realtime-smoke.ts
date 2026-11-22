@@ -174,11 +174,30 @@ async function main() {
     "interviewer result: all tests with hidden flag",
     "results" in ivResult.result && ivResult.result.results.filter((r) => r.hidden).length === 2,
   );
+  // --- End session: already-open sockets (on both instances) must stop writing -----------------
+  const textAtClose = iv.text.toString();
+  check("candidate cannot end the session → 403", (await call("POST", `/rooms/${roomId}/close`, candidate)).status === 403);
+  check("interviewer ends the session", (await call("POST", `/rooms/${roomId}/close`, interviewer)).status === 200);
+  await ivEvents.waitFor((e) => e.type === "room:closed", 3000);
+  await cdEvents.waitFor((e) => e.type === "room:closed", 3000);
+  check("both participants get room:closed", true);
+
+  cd.text.insert(0, "AFTER-CLOSE ");
+  await sleep(1000);
+  check("edits on an open socket after close are dropped", !iv.text.toString().includes("AFTER-CLOSE"));
+  const lateSubmit = await call("POST", "/submissions", candidate, {
+    roomId,
+    language: "python",
+    mode: "run",
+    code: "print(1)",
+  });
+  check("submissions after close → 400", lateSubmit.status === 400);
+  check("ended room still opens read-only → 101", (await upgradeStatus(yjsA, [REALTIME_PROTOCOL, interviewer])) === 101);
   ivEvents.ws.close();
   cdEvents.ws.close();
 
   // --- Persistence ------------------------------------------------------------------------------
-  const finalText = iv.text.toString();
+  const finalText = textAtClose;
   iv.p.destroy();
   cd.p.destroy();
   await sleep(PERSIST_WAIT_MS); // last client left → doc persisted and unloaded on every instance

@@ -35,17 +35,28 @@ export function RoomPage() {
   const [entries, setEntries] = useState<SubmissionEntry[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  // Room metadata + history
+  // Room metadata (history is loaded whenever the events socket (re)connects — see below)
   useEffect(() => {
     setRoom(null);
     setError(null);
     api.room(roomId).then(setRoom, (err: unknown) => {
       setError(err instanceof ApiError && err.status === 403 ? "You're not a participant in this room." : String(err));
     });
+  }, [roomId]);
+
+  /** Server history is authoritative; keep only local placeholders the server doesn't know about yet. */
+  const refreshHistory = useCallback(() => {
     api
       .roomSubmissions(roomId)
-      .then((list) => setEntries(list.map((view) => ({ submissionId: view.submissionId, pending: false, view }))))
+      .then((list) =>
+        setEntries((prev) => {
+          const known = new Set(list.map((v) => v.submissionId));
+          const localOnly = prev.filter((e) => e.pending && !known.has(e.submissionId));
+          return [...localOnly, ...list.map((view) => ({ submissionId: view.submissionId, pending: false as const, view }))];
+        }),
+      )
       .catch(() => {});
   }, [roomId]);
 
@@ -91,7 +102,9 @@ export function RoomPage() {
   useEffect(() => {
     if (!room) return;
     const onEvent = (event: ServerEvent) => {
-      if (event.type === "submission:queued") {
+      if (event.type === "room:closed") {
+        setRoom((r) => (r ? { ...r, status: "closed" } : r));
+      } else if (event.type === "submission:queued") {
         setEntries((prev) =>
           prev.some((e) => e.submissionId === event.submissionId)
             ? prev
@@ -105,8 +118,10 @@ export function RoomPage() {
         });
       }
     };
-    return connectRoomEvents(room.roomId, onEvent, setEventStatus);
-  }, [room]);
+    return connectRoomEvents(room.roomId, { onEvent, onStatus: setEventStatus, onOpen: refreshHistory });
+    // Only (re)subscribe when the room itself changes, not when its status flips to closed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.roomId, refreshHistory]);
 
   const changeLanguage = useCallback(
     (next: Language) => {
@@ -128,19 +143,33 @@ export function RoomPage() {
     async (mode: SubmissionMode) => {
       if (!roomDoc) return;
       setSubmitting(true);
+      setNotice(null);
       try {
-        const { submissionId } = await api.submit({ roomId, language, mode, code: roomDoc.text.toString() });
+        const { submissionId } = await api.submit(
+          { roomId, language, mode, code: roomDoc.text.toString() },
+          crypto.randomUUID(),
+        );
         setEntries((prev) =>
           prev.some((e) => e.submissionId === submissionId) ? prev : [{ submissionId, pending: true }, ...prev],
         );
       } catch (err) {
-        alert(err instanceof Error ? err.message : String(err));
+        setNotice(err instanceof Error ? err.message : String(err));
       } finally {
         setSubmitting(false);
       }
     },
     [roomDoc, roomId, language],
   );
+
+  async function endSession() {
+    if (!room || !confirm("End this interview? The editor becomes read-only and no more runs are allowed.")) return;
+    try {
+      await api.closeRoom(room.roomId);
+      setRoom({ ...room, status: "closed" });
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   function copyInvite() {
     if (!room?.inviteCode) return;
@@ -177,12 +206,18 @@ export function RoomPage() {
         <span className={`status-dot ${live ? "on" : "off"}`} title={`editor: ${docStatus}, events: ${eventStatus}`} />
         <span className="muted small">{live ? "live" : "reconnecting…"}</span>
         {roomDoc && <Presence awareness={roomDoc.provider.awareness} />}
-        {room.inviteCode && (
+        {room.inviteCode && !closed && (
           <button className="ghost" onClick={copyInvite}>
             {copied ? "Copied!" : "Copy invite link"}
           </button>
         )}
+        {room.role === "interviewer" && !closed && (
+          <button className="danger" onClick={endSession}>
+            End session
+          </button>
+        )}
       </TopBar>
+      {closed && <div className="banner">This interview has ended. The code is read-only.</div>}
 
       <div className="room-layout">
         <QuestionPanel room={room} />
@@ -193,6 +228,7 @@ export function RoomPage() {
               <option value="python">Python</option>
               <option value="javascript">JavaScript</option>
             </select>
+            {notice && <span className="error small">{notice}</span>}
             <div className="spacer" />
             {isCandidate ? (
               <>

@@ -3,10 +3,12 @@
  * Signs up two real Supabase users, creates a room, joins it, and exercises the sandbox.
  *   pnpm smoke
  */
-import { call, check, finish, PUBLISHABLE_KEY, QUESTION_ID, signUp, SUPABASE_URL } from "./lib.js";
+import { randomUUID } from "node:crypto";
+import { createDb, submissions } from "@coderoom/db";
+import { call, check, finish, PUBLISHABLE_KEY, QUESTION_ID, signUp, SUPABASE_URL, userIdOf } from "./lib.js";
 
-async function waitFor(id: string, token: string) {
-  for (let i = 0; i < 80; i++) {
+async function waitFor(id: string, token: string, attempts = 80) {
+  for (let i = 0; i < attempts; i++) {
     const { json } = await call("GET", `/submissions/${id}`, token);
     if (json?.status === "completed" || json?.status === "failed") return json;
     await new Promise((r) => setTimeout(r, 250));
@@ -96,6 +98,57 @@ async function main() {
   });
   const rows = (await rest.json()) as unknown[];
   check("RLS: test_cases unreadable via Supabase REST", Array.isArray(rows) && rows.length === 0, `(${rows.length} rows)`);
+
+  // --- Idempotency: the same key twice yields one submission -----------------------------------
+  const key = randomUUID();
+  const body = { roomId, language: "python", mode: "run", code: "print(3)" };
+  const first = await call("POST", "/submissions", candidate, body, undefined, { "idempotency-key": key });
+  const again = await call("POST", "/submissions", candidate, body, undefined, { "idempotency-key": key });
+  check(
+    "idempotent retry returns the same submission",
+    first.status === 202 && again.status === 202 && first.json.submissionId === again.json.submissionId &&
+      again.headers.get("idempotent-replayed") === "true",
+  );
+  // (outsider: the candidate has used its 10/min budget by now — key validation runs before role checks)
+  check(
+    "malformed Idempotency-Key → 400",
+    (await call("POST", "/submissions", outsider, body, undefined, { "idempotency-key": "x" })).status === 400,
+  );
+
+  // --- Rate limit: a fresh user's 11th attempt within a minute is refused ----------------------
+  const spammer = await signUp("spammer");
+  const statuses: number[] = [];
+  for (let i = 0; i < 11; i++) statuses.push((await call("POST", "/submissions", spammer, {})).status);
+  const limited = await call("POST", "/submissions", spammer, {});
+  check(
+    "rate limit: 429 with Retry-After after 10/min",
+    statuses.slice(0, 10).every((s) => s === 400) && statuses[10] === 429 && limited.status === 429 &&
+      Number(limited.headers.get("retry-after")) > 0,
+    `(${statuses.join(",")})`,
+  );
+
+  // --- Outbox: a queued row with no job (enqueue "failed") is recovered by the worker ----------
+  const { db, close } = createDb(process.env.DATABASE_URL!, { max: 1 });
+  const [orphan] = await db
+    .insert(submissions)
+    .values({
+      roomId,
+      questionId: QUESTION_ID,
+      userId: userIdOf(candidate),
+      language: "python",
+      mode: "run",
+      code: "a,b=map(int,input().split());print(a+b)",
+      createdAt: new Date(Date.now() - 5 * 60_000), // older than the sweeper's stale threshold
+    })
+    .returning({ id: submissions.id });
+  await close();
+  const t0 = Date.now();
+  const recovered = await waitFor(orphan!.id, candidate, 160); // sweeper runs every ~10s
+  check(
+    "outbox: orphaned queued submission is recovered",
+    recovered.status === "completed" && recovered.overall === "accepted",
+    `(${((Date.now() - t0) / 1000).toFixed(1)}s)`,
+  );
 
   finish();
 }

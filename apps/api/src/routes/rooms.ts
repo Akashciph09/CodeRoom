@@ -14,11 +14,14 @@ import {
 import {
   CreateRoomRequest,
   JoinRoomRequest,
+  roomEventsChannel,
+  type RoomBusEvent,
   type CreateRoomResponse,
   type JoinRoomResponse,
   type RoomSummary,
   type RoomView,
 } from "@coderoom/shared";
+import { redis } from "../queue.js";
 import { resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
@@ -153,6 +156,22 @@ roomsRouter.get(
         viewFor(role, { submission, results: results.filter((r) => r.submissionId === submission.id) }),
       ),
     );
+  }),
+);
+
+/**
+ * End the session (interviewer only). Idempotent. Every gateway instance is told over the room bus,
+ * so already-open sockets become read-only immediately, not just new ones.
+ */
+roomsRouter.post(
+  "/:id/close",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    await db.update(rooms).set({ status: "closed" }).where(eq(rooms.id, roomId));
+    const event: RoomBusEvent = { type: "room:closed", roomId };
+    await redis.publish(roomEventsChannel(roomId), JSON.stringify(event));
+    res.json({ roomId, status: "closed" });
   }),
 );
 

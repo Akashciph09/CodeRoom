@@ -106,6 +106,20 @@ flowchart LR
 | Probing other rooms | Non-participants get `403` whether or not the room exists |
 | Unauthorized WebSocket access | Auth + room membership checked before the upgrade; token sent as subprotocol (not in URL); socket closed at token expiry |
 | Oversized / malformed realtime messages | 1 MB max frame; invalid Yjs messages close the socket; dead connections dropped by heartbeat |
+| Submission flooding | Per-user rate limit in Redis (10/min across all API instances), `429` + `Retry-After` |
+| Editing after the interview ended | Server drops document writes on already-open sockets; enforced on every instance via the room bus |
+
+## Reliability
+
+| Failure | What happens |
+|---|---|
+| Redis/queue unavailable right after the submission row is written | API still answers `202`; the worker's **outbox sweeper** re-enqueues `queued` rows older than 30 s. Delayed, never lost. |
+| Client retries a submit (timeout, double send) | `Idempotency-Key` returns the original submission; no duplicate run |
+| Duplicate job for the same submission | `jobId = submissionId` dedupes in BullMQ; the worker skips already-finished submissions |
+| Worker crashes mid-job | BullMQ stalled-job detection re-runs it; results are written in one transaction, previous partial results deleted |
+| Postgres write of the editor document fails | Change stays `dirty`; saves retry with exponential backoff; the final save on unload retries 5× |
+| Browser loses its events socket while a result is published | On every reconnect the client re-fetches submission history over REST |
+| A gateway instance holds unsaved edits when another loads the room | The new instance asks peers for missing updates (state-vector sync over Redis) |
 
 ## Getting started
 
@@ -185,7 +199,8 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `POST` | `/rooms/join` | any user | Join with invite code as candidate |
 | `GET` | `/rooms/:id` | participant | Question, public tests, caller's role (invite code for the interviewer) |
 | `GET` | `/rooms/:id/submissions` | participant | History, newest first, in the caller's role view (candidates see only their own) |
-| `POST` | `/submissions` | candidate | `{ roomId, language, mode: "run" \| "submit", code }` → `202 { submissionId }` |
+| `POST` | `/rooms/:id/close` | interviewer | End the session: room becomes read-only everywhere, including already-open sockets |
+| `POST` | `/submissions` | candidate | `{ roomId, language, mode: "run" \| "submit", code }` → `202 { submissionId }`. Optional `Idempotency-Key` header; 10/min per user (`429` + `Retry-After`) |
 | `GET` | `/submissions/:id` | participant | Candidate view or interviewer view, by role |
 
 ### WebSocket
@@ -195,12 +210,14 @@ Both require the subprotocols `["coderoom.v1", <access token>]` and room members
 | Path | Protocol | Description |
 |---|---|---|
 | `/yjs/:roomId` | y-websocket (binary) | Shared editor. Use `doc.getText("code")`. Awareness carries cursors/names |
-| `/rooms/:roomId/events` | JSON, server → client | `ready`, `submission:queued`, `submission:result` (role-specific view) |
+| `/rooms/:roomId/events` | JSON, server → client | `ready`, `submission:queued`, `submission:result` (role-specific view), `room:closed`. Fire-and-forget: clients re-fetch history over REST on every (re)connect |
+
+Ended rooms still accept WebSocket connections (to view the final code), but the server drops every document write.
 
 ## Testing
 
-- **Unit tests** — every sandbox `docker run` flag, verdict mapping, and the candidate/interviewer serializers (hidden test ids never appear in the candidate view).
-- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 19 behaviours against the running stack. Latest local run:
+- **Unit tests** — every sandbox `docker run` flag, verdict mapping, the candidate/interviewer serializers (hidden test ids never appear in the candidate view), and the document manager against a fake database: failed saves are retried, saves never overlap, the final save retries on unload, and read-only rooms drop writes.
+- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 23 behaviours against the running stack. Latest local run:
 
 | Case | Result |
 |---|---|
@@ -214,8 +231,11 @@ Both require the subprotocols `["coderoom.v1", <access token>]` and room members
 | Outsider / interviewer submitting | `403` |
 | Supabase REST read of `test_cases` | 0 rows (RLS) |
 | Leftover containers | 0 |
+| Same `Idempotency-Key` sent twice | one submission, second response marked `Idempotent-Replayed` |
+| 11 submit attempts in a minute | 11th → `429` with `Retry-After` |
+| Queued row with no job (simulated enqueue failure) | recovered by the outbox sweeper and graded `accepted` |
 
-- **Realtime smoke test** (`pnpm smoke:realtime`) — 14 checks, run with interviewer on one API instance and candidate on another:
+- **Realtime smoke test** (`pnpm smoke:realtime`) — 20 checks, run with interviewer on one API instance and candidate on another:
 
 | Case | Result |
 |---|---|
@@ -224,6 +244,7 @@ Both require the subprotocols `["coderoom.v1", <access token>]` and room members
 | 50 concurrent inserts at the same position | both clients converge to identical text |
 | Awareness (cursor/name) | reaches the client on the other instance |
 | Candidate submits | both get `submission:queued`; candidate gets redacted result, interviewer gets full result |
+| Interviewer ends the session | both get `room:closed`; edits on already-open sockets are dropped; new submissions `400`; candidate can't end it (`403`) |
 | Everyone disconnects, new client joins | document restored from Postgres |
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.

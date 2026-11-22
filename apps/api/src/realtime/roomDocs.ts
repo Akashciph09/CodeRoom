@@ -24,9 +24,19 @@ export interface SharedRoomDoc {
 }
 
 interface Entry extends SharedRoomDoc {
+  /** Has changes not yet confirmed written to Postgres. */
   dirty: boolean;
   persistTimer?: NodeJS.Timeout;
+  /** Saves run one at a time, so an older snapshot can never overwrite a newer one. */
+  saving: Promise<void>;
+  saveFailures: number;
+  /** Room ended: clients may still read and see cursors, but their document updates are dropped. */
+  readOnly: boolean;
 }
+
+const UNLOAD_SAVE_ATTEMPTS = 5;
+const backoffMs = (failures: number) => Math.min(30_000, 500 * 2 ** (failures - 1));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface RoomDocManagerOptions {
   db: Db;
@@ -59,7 +69,7 @@ export class RoomDocManager {
   }
 
   /** Register a connection for a room, loading the doc if needed. The conn counts immediately (no unload race). */
-  async connect(roomId: string, ws: WebSocket): Promise<SharedRoomDoc> {
+  async connect(roomId: string, ws: WebSocket, opts: { readOnly: boolean }): Promise<SharedRoomDoc> {
     await this.unloading.get(roomId);
     let entry = this.loaded.get(roomId);
     if (!entry) {
@@ -71,8 +81,15 @@ export class RoomDocManager {
       }
       entry = await pending;
     }
+    if (opts.readOnly) entry.readOnly = true;
     entry.conns.set(ws, new Set());
     return entry;
+  }
+
+  /** The room was ended: stop accepting document edits from every client on this instance. */
+  setReadOnly(roomId: string) {
+    const entry = this.loaded.get(roomId);
+    if (entry) entry.readOnly = true;
   }
 
   async disconnect(roomId: string, ws: WebSocket) {
@@ -91,14 +108,24 @@ export class RoomDocManager {
   }
 
   /** Apply one y-websocket protocol message from a client and reply if the protocol requires it. */
-  handleClientMessage(entry: SharedRoomDoc, ws: WebSocket, message: Uint8Array) {
+  handleClientMessage(shared: SharedRoomDoc, ws: WebSocket, message: Uint8Array) {
+    const entry = shared as Entry;
     if (!entry.conns.has(ws)) return; // already disconnected
     const decoder = decoding.createDecoder(message);
     const type = decoding.readVarUint(decoder);
     if (type === MessageType.Sync) {
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, MessageType.Sync);
-      syncProtocol.readSyncMessage(decoder, encoder, entry.doc, ws);
+      const subtype = decoding.readVarUint(decoder);
+      if (subtype === syncProtocol.messageYjsSyncStep1) {
+        // A client asking for state is always fine (read access).
+        syncProtocol.readSyncStep1(decoder, encoder, entry.doc);
+      } else if (subtype === syncProtocol.messageYjsSyncStep2 || subtype === syncProtocol.messageYjsUpdate) {
+        // Writes. Enforced server-side: a closed room drops them no matter what the client UI does.
+        if (!entry.readOnly) syncProtocol.readUpdate(decoder, entry.doc, ws);
+      } else {
+        throw new Error(`unsupported sync message ${subtype}`);
+      }
       // Only reply when the message produced a response (sync step 1 → step 2).
       if (encoding.length(encoder) > 1) send(ws, encoding.toUint8Array(encoder));
     } else if (type === MessageType.Awareness) {
@@ -140,7 +167,16 @@ export class RoomDocManager {
       .limit(1);
     if (row) Y.applyUpdate(doc, row.state, PERSISTENCE_ORIGIN);
 
-    const entry: Entry = { roomId, doc, awareness, conns: new Map(), dirty: false };
+    const entry: Entry = {
+      roomId,
+      doc,
+      awareness,
+      conns: new Map(),
+      dirty: false,
+      saving: Promise.resolve(),
+      saveFailures: 0,
+      readOnly: false,
+    };
 
     doc.on("update", (update: Uint8Array, origin: unknown) => {
       const encoder = encoding.createEncoder();
@@ -186,7 +222,18 @@ export class RoomDocManager {
     clearTimeout(entry.persistTimer);
     await this.opts.sub.unsubscribe(docChannel(entry.roomId)).catch(() => {});
     try {
-      if (entry.dirty) await this.persist(entry);
+      // Last chance to save before the in-memory doc is gone: retry with backoff.
+      for (let attempt = 1; entry.dirty && attempt <= UNLOAD_SAVE_ATTEMPTS; attempt++) {
+        try {
+          await this.persist(entry);
+        } catch (err) {
+          console.error(`final save of room ${entry.roomId} failed (attempt ${attempt}/${UNLOAD_SAVE_ATTEMPTS}):`, err);
+          if (attempt < UNLOAD_SAVE_ATTEMPTS) await sleep(backoffMs(attempt));
+        }
+      }
+      if (entry.dirty) {
+        console.error(`room ${entry.roomId}: unsaved edits dropped after ${UNLOAD_SAVE_ATTEMPTS} attempts`);
+      }
     } finally {
       entry.awareness.destroy();
       entry.doc.destroy();
@@ -195,19 +242,48 @@ export class RoomDocManager {
 
   private markDirty(entry: Entry) {
     entry.dirty = true;
-    clearTimeout(entry.persistTimer);
-    entry.persistTimer = setTimeout(() => {
-      this.persist(entry).catch((err) => console.error(`persist ${entry.roomId} failed:`, err));
-    }, this.opts.persistDebounceMs);
+    this.schedulePersist(entry, this.opts.persistDebounceMs);
   }
 
-  private async persist(entry: Entry) {
-    entry.dirty = false;
-    const state = Y.encodeStateAsUpdate(entry.doc);
-    await this.opts.db
-      .insert(roomDocuments)
-      .values({ roomId: entry.roomId, state })
-      .onConflictDoUpdate({ target: roomDocuments.roomId, set: { state, updatedAt: sql`now()` } });
+  private schedulePersist(entry: Entry, delayMs: number) {
+    clearTimeout(entry.persistTimer);
+    entry.persistTimer = setTimeout(() => {
+      this.persist(entry).then(
+        () => (entry.saveFailures = 0),
+        (err) => {
+          entry.saveFailures++;
+          const retryIn = backoffMs(entry.saveFailures);
+          console.error(`save of room ${entry.roomId} failed; retrying in ${retryIn}ms:`, err);
+          // Still loaded and still dirty → try again. (If it unloaded, unload() does its own retries.)
+          if (this.loaded.get(entry.roomId) === entry && entry.dirty) this.schedulePersist(entry, retryIn);
+        },
+      );
+    }, delayMs);
+  }
+
+  /**
+   * Write the current merged state. Serialized per room via `entry.saving`, and the snapshot is taken
+   * when the write actually starts, so the last write to finish is always the newest state.
+   * `dirty` is cleared before encoding (edits arriving during the write set it again) and restored on failure.
+   */
+  private persist(entry: Entry): Promise<void> {
+    const run = async () => {
+      if (!entry.dirty) return;
+      entry.dirty = false;
+      const state = Y.encodeStateAsUpdate(entry.doc);
+      try {
+        await this.opts.db
+          .insert(roomDocuments)
+          .values({ roomId: entry.roomId, state })
+          .onConflictDoUpdate({ target: roomDocuments.roomId, set: { state, updatedAt: sql`now()` } });
+      } catch (err) {
+        entry.dirty = true;
+        throw err;
+      }
+    };
+    const next = entry.saving.catch(() => {}).then(run);
+    entry.saving = next;
+    return next;
   }
 
   private publish(roomId: string, kind: FrameKind, payload: Uint8Array) {

@@ -18,5 +18,7 @@ Strangers submit arbitrary code. Running it in the API process would let one inf
 
 ## Consequences
 - Throughput scales horizontally by adding worker processes.
-- Retries are safe: the worker deletes prior results inside the same transaction that writes new ones.
+- Retries are safe: the worker deletes prior results inside the same transaction that writes new ones, and skips submissions that are already `completed`/`failed`.
+- **Delivery is guaranteed by a transactional outbox, not by the enqueue call.** The `submissions` row is written first and is the source of truth. If enqueueing fails (Redis blip, API crash between insert and enqueue), the API still answers `202`, and a sweeper in every worker re-enqueues `queued` rows older than 30 s (partial index `submissions_queued_idx`). Because `jobId = submissionId`, re-enqueueing is idempotent. A submission can be delayed, never lost.
+- **Abuse controls in front of the queue:** a per-user fixed-window rate limit (10 submit attempts/min, counted in Redis so it holds across API instances; `429` + `Retry-After`) and an `Idempotency-Key` header (Redis `SET NX`, 10-minute TTL) so a retried request returns the original submission instead of creating a second one.
 - Measured locally: infinite loop → `time_limit_exceeded`, memory bomb → `memory_limit_exceeded`, outbound HTTP → fails, no containers left behind (`pnpm smoke`).

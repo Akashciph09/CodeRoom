@@ -13,9 +13,8 @@ export const REALTIME_PROTOCOL = "coderoom.v1";
 
 /** Close codes (4000–4999 are application-defined). */
 export const CloseCode = {
+  /** Token expired; reconnect with a refreshed token. */
   Unauthorized: 4401,
-  Forbidden: 4403,
-  RoomClosed: 4410,
 } as const;
 
 export const ServerEvent = z.discriminatedUnion("type", [
@@ -27,6 +26,8 @@ export const ServerEvent = z.discriminatedUnion("type", [
     /** Shape depends on the receiving participant's role in the room. */
     result: z.union([InterviewerSubmissionView, CandidateSubmissionView]),
   }),
+  /** The interviewer ended the session: the editor is now read-only and no more submissions are accepted. */
+  z.object({ type: z.literal("room:closed"), roomId: z.string() }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
 export type ServerEvent = z.infer<typeof ServerEvent>;

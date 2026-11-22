@@ -1,8 +1,9 @@
-import { UnrecoverableError, Worker, type Job } from "bullmq";
+import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
 import { asc, createDb, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
 import { EXECUTION_QUEUE, ExecutionJob, roomEventsChannel, type RoomBusEvent } from "@coderoom/shared";
 import { config } from "./config.js";
+import { startOutboxSweeper } from "./outbox.js";
 import { runInSandbox } from "./sandbox/runner.js";
 import { judge, overallVerdict } from "./sandbox/verdict.js";
 
@@ -21,6 +22,8 @@ async function processJob(job: Job) {
 
   const [submission] = await db.select().from(submissions).where(eq(submissions.id, submissionId)).limit(1);
   if (!submission) throw new UnrecoverableError(`Submission ${submissionId} not found`);
+  // Already finished (e.g. a duplicate job after outbox recovery): never run it twice.
+  if (submission.status === "completed" || submission.status === "failed") return;
 
   const tests = await db
     .select()
@@ -98,9 +101,19 @@ worker.on("failed", async (job, err) => {
   }
 });
 
+const recoveryQueue = new Queue<ExecutionJob>(EXECUTION_QUEUE, { connection });
+const stopSweeper = startOutboxSweeper({
+  db,
+  queue: recoveryQueue,
+  intervalMs: config.OUTBOX_SWEEP_INTERVAL_MS,
+  staleAfterMs: config.OUTBOX_STALE_AFTER_MS,
+});
+
 console.log(`worker started (concurrency=${config.WORKER_CONCURRENCY})`);
 
 const shutdown = async () => {
+  stopSweeper();
+  await recoveryQueue.close();
   await worker.close();
   await connection.quit();
   await publisher.quit();

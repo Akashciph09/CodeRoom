@@ -48,6 +48,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary:hover:not(:disabled) { background: var(--accent-2); }
 button.ghost { background: transparent; }
 button.link { background: none; border: none; color: var(--accent); padding: 4px 0; }
+button.danger { background: transparent; border-color: #7f1d1d; color: #fca5a5; }
+button.danger:hover:not(:disabled) { background: #3f1212; border-color: var(--bad); }
+.banner { padding: 8px 16px; background: #2a2210; border-bottom: 1px solid #854d0e; color: #fde68a; font-size: 13px; }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
 label input, label select { color: var(--text); font-size: 14px; }
