@@ -68,7 +68,7 @@ export async function startInterview(browser: Browser) {
   await signUp(candidate.page, candidate.name);
   await expect(candidate.page).toHaveURL(interviewer.page.url());
   for (const p of [interviewer, candidate]) await expect(liveStatus(p.page)).toHaveText("live");
-  await expect.poll(() => editorText(candidate.page)).toContain("def solve");
+  await expect.poll(() => editorText(candidate.page)).not.toBe(""); // starter code seeded
 
   return {
     interviewer,

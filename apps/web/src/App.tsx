@@ -4,6 +4,8 @@ import { SessionProvider, useSession } from "./lib/auth";
 import { AuthPage } from "./pages/AuthPage";
 import { HomePage } from "./pages/HomePage";
 import { JoinPage } from "./pages/JoinPage";
+import { QuestionEditorPage } from "./pages/QuestionEditorPage";
+import { QuestionsPage } from "./pages/QuestionsPage";
 
 // Monaco + Yjs are most of the bundle; only load them when a room is opened.
 const RoomPage = lazy(() => import("./pages/RoomPage").then((m) => ({ default: m.RoomPage })));
@@ -27,6 +29,8 @@ export function App() {
           <Route path="/login" element={<AuthPage />} />
           <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
           <Route path="/join/:inviteCode" element={<RequireAuth><JoinPage /></RequireAuth>} />
+          <Route path="/questions" element={<RequireAuth><QuestionsPage /></RequireAuth>} />
+          <Route path="/questions/:questionId" element={<RequireAuth><QuestionEditorPage /></RequireAuth>} />
           <Route
             path="/rooms/:roomId"
             element={

@@ -1,11 +1,22 @@
-import type { RoomView } from "@coderoom/shared";
+import type { CandidateQuestionView } from "@coderoom/shared";
 
-export function QuestionPanel({ room }: { room: RoomView }) {
-  const { question } = room;
+/**
+ * The question as a candidate sees it. Used in the room AND in the author's preview, fed by the same
+ * server view (public tests only), so the preview is exactly the candidate's view.
+ */
+export function QuestionPanel({ question }: { question: CandidateQuestionView }) {
   return (
-    <aside className="panel question-panel">
+    <aside className="panel question-panel" aria-label="Question">
       <h2>{question.title}</h2>
-      <p className="prompt">{question.prompt}</p>
+      <p className="prompt">{question.statement}</p>
+
+      {question.constraints.trim() && (
+        <>
+          <h3>Constraints</h3>
+          <pre className="constraints">{question.constraints}</pre>
+        </>
+      )}
+
       <h3>Examples</h3>
       {question.publicTests.map((t, i) => (
         <div key={t.id} className="example">
@@ -22,7 +33,11 @@ export function QuestionPanel({ room }: { room: RoomView }) {
           </div>
         </div>
       ))}
-      <p className="muted small">Submit also runs hidden tests. Their inputs are never shown.</p>
+      <p className="muted small">
+        {question.hiddenTestCount > 0
+          ? `Submit also runs ${question.hiddenTestCount} hidden test${question.hiddenTestCount === 1 ? "" : "s"}. Their inputs are never shown.`
+          : "Submit runs the examples above."}
+      </p>
     </aside>
   );
 }

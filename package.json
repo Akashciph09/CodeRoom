@@ -21,7 +21,8 @@
     "sandbox:build": "docker build -t coderoom-runner-python sandbox/images/python && docker build -t coderoom-runner-javascript sandbox/images/javascript",
     "smoke": "pnpm --filter @coderoom/api smoke",
     "smoke:realtime": "pnpm --filter @coderoom/api smoke:realtime",
-    "e2e": "pnpm --filter @coderoom/web e2e"
+    "e2e": "pnpm --filter @coderoom/web e2e",
+    "smoke:questions": "pnpm --filter @coderoom/api smoke:questions"
   },
   "devDependencies": {
     "supabase": "^3.2.0",

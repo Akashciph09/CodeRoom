@@ -8,7 +8,7 @@ dotenv.config({ path: path.resolve(process.cwd(), "../../.env") });
 export const API = process.env.SMOKE_API_URL ?? `http://localhost:${process.env.PORT ?? 4000}`;
 export const SUPABASE_URL = process.env.SUPABASE_URL!;
 export const PUBLISHABLE_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY!;
-export const QUESTION_ID = "00000000-0000-4000-8000-000000000001"; // from supabase/seed.sql
+export const QUESTION_ID = "00000000-0000-4000-8000-000000000001"; // shared library question (supabase/seed.sql)
 
 let failures = 0;
 export const check = (name: string, ok: boolean, detail = "") => {

@@ -4,7 +4,7 @@
  *   pnpm smoke
  */
 import { randomUUID } from "node:crypto";
-import { and, createDb, eq, submissions } from "@coderoom/db";
+import { and, createDb, eq, rooms, submissions } from "@coderoom/db";
 import { call, check, finish, PUBLISHABLE_KEY, QUESTION_ID, setupRoom, signUp, SUPABASE_URL, userIdOf } from "./lib.js";
 
 async function waitFor(id: string, token: string, attempts = 80) {
@@ -152,11 +152,12 @@ async function main() {
 
   // --- Outbox: a queued row with no job (enqueue "failed") is recovered by the worker ----------
   const { db, close } = createDb(process.env.DATABASE_URL!, { max: 1 });
+  const [pinned] = await db.select({ v: rooms.questionVersionId }).from(rooms).where(eq(rooms.id, roomId));
   const [orphan] = await db
     .insert(submissions)
     .values({
       roomId,
-      questionId: QUESTION_ID,
+      questionVersionId: pinned!.v,
       userId: userIdOf(candidate),
       language: "python",
       mode: "run",
