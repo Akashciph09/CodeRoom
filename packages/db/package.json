@@ -1,0 +1,31 @@
+{
+  "name": "@coderoom/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo \"no tests yet\"",
+    "generate": "drizzle-kit generate"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "@coderoom/shared": "workspace:^",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.9"
+  }
+}

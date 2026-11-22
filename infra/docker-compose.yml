@@ -1,0 +1,7 @@
+# Redis only. Postgres, Auth and Storage come from the local Supabase stack (`pnpm db:start`).
+name: coderoom
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]

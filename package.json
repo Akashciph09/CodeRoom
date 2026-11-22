@@ -1,0 +1,28 @@
+{
+  "name": "coderoom",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:libs": "pnpm --filter @coderoom/shared build && pnpm --filter @coderoom/db build",
+    "dev": "pnpm build:libs && pnpm --parallel --filter \"./apps/*\" dev",
+    "build": "pnpm -r build",
+    "test": "pnpm build:libs && pnpm -r test",
+    "typecheck": "pnpm build:libs && pnpm -r typecheck",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d --remove-orphans",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:generate": "pnpm --filter @coderoom/shared build && pnpm --filter @coderoom/db generate",
+    "sandbox:build": "docker build -t coderoom-runner-python sandbox/images/python && docker build -t coderoom-runner-javascript sandbox/images/javascript",
+    "smoke": "pnpm --filter @coderoom/api smoke"
+  },
+  "devDependencies": {
+    "supabase": "^3.2.0",
+    "typescript": "^5.6.3"
+  }
+}
