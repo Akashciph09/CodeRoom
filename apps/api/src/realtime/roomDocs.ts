@@ -36,7 +36,7 @@ interface Entry extends SharedRoomDoc {
   recoveredSpill: boolean;
 }
 
-/** State whose final save failed after the doc was unloaded. Never dropped: retried until written. */
+/** State whose final save failed after the doc was unloaded: retried in the background while this process lives (plus a best-effort Redis spill). */
 interface Retained {
   state: Uint8Array;
   failures: number;
@@ -280,7 +280,7 @@ export class RoomDocManager {
           if (attempt < UNLOAD_SAVE_ATTEMPTS) await sleep(this.backoff(attempt));
         }
       }
-      // Still unsaved: never drop it. Keep the state and keep retrying after the doc is gone.
+      // Still unsaved: keep the state (memory + best-effort Redis spill) and keep retrying after the doc is gone.
       if (entry.dirty) this.retain(entry.roomId, Y.encodeStateAsUpdate(entry.doc));
     } finally {
       entry.awareness.destroy();
@@ -321,22 +321,32 @@ export class RoomDocManager {
     }, this.backoff(r.failures + 1));
   }
 
-  /**
-   * Save state for a room that is no longer loaded here. Other instances may have saved newer state
-   * meanwhile, so merge with the stored row under a row lock instead of overwriting it.
-   */
+  /** Save state for a room that is no longer loaded here (retained after failed final saves). */
   private async writeMerged(roomId: string, state: Uint8Array) {
+    await this.lockedMergeWrite(roomId, (stored) => (stored ? Y.mergeUpdates([stored, state]) : state));
+  }
+
+  /**
+   * The only way room_documents is written. Several instances can save the same room, and any of them
+   * may have missed an update, so no save may blindly overwrite the row. Instead, per room:
+   *   1. take a transaction-scoped advisory lock — it serializes writers across instances and, unlike a
+   *      row lock, also works for the very first save when no row exists yet;
+   *   2. read the stored snapshot; 3. merge (Yjs merges are commutative and idempotent); 4. write.
+   * The lock is released automatically at commit/rollback.
+   */
+  private async lockedMergeWrite(roomId: string, merge: (stored: Uint8Array | null) => Uint8Array) {
     await this.opts.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${roomId}, 0))`);
       const [row] = await tx
         .select({ state: roomDocuments.state })
         .from(roomDocuments)
         .where(eq(roomDocuments.roomId, roomId))
-        .for("update");
-      const merged = row ? Y.mergeUpdates([row.state, state]) : state;
+        .limit(1);
+      const next = merge(row?.state ?? null);
       await tx
         .insert(roomDocuments)
-        .values({ roomId, state: merged })
-        .onConflictDoUpdate({ target: roomDocuments.roomId, set: { state: merged, updatedAt: sql`now()` } });
+        .values({ roomId, state: next })
+        .onConflictDoUpdate({ target: roomDocuments.roomId, set: { state: next, updatedAt: sql`now()` } });
     });
   }
 
@@ -362,20 +372,21 @@ export class RoomDocManager {
   }
 
   /**
-   * Write the current merged state. Serialized per room via `entry.saving`, and the snapshot is taken
-   * when the write actually starts, so the last write to finish is always the newest state.
-   * `dirty` is cleared before encoding (edits arriving during the write set it again) and restored on failure.
+   * Save the live doc. Serialized per room on this instance via `entry.saving`, and across instances by
+   * the advisory lock in `lockedMergeWrite`. Inside the lock, the stored snapshot is first applied to the
+   * live doc — so anything this instance missed is pulled in (and sent to its clients) — and only then is
+   * the doc encoded and written. A save can therefore never shrink the stored document.
+   * `dirty` is cleared before the write (edits arriving meanwhile set it again) and restored on failure.
    */
   private persist(entry: Entry): Promise<void> {
     const run = async () => {
       if (!entry.dirty) return;
       entry.dirty = false;
-      const state = Y.encodeStateAsUpdate(entry.doc);
       try {
-        await this.opts.db
-          .insert(roomDocuments)
-          .values({ roomId: entry.roomId, state })
-          .onConflictDoUpdate({ target: roomDocuments.roomId, set: { state, updatedAt: sql`now()` } });
+        await this.lockedMergeWrite(entry.roomId, (stored) => {
+          if (stored) Y.applyUpdate(entry.doc, stored, PERSISTENCE_ORIGIN);
+          return Y.encodeStateAsUpdate(entry.doc);
+        });
       } catch (err) {
         entry.dirty = true;
         throw err;

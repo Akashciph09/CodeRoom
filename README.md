@@ -117,7 +117,8 @@ flowchart LR
 | Client retries a submit after a lost response | The browser reuses the same `Idempotency-Key` for the same action; the key is stored on the submission row (unique per user, same `INSERT`), so the retry returns the original. Concurrent duplicates collide on the index; a reused key with a different body is `422` |
 | Duplicate job for the same submission | `jobId = submissionId` dedupes in BullMQ; the worker skips already-finished submissions |
 | Worker crashes mid-job | BullMQ stalled-job detection re-runs it; results are written in one transaction, previous partial results deleted |
-| Postgres write of the editor document fails | Change stays `dirty`; saves retry with backoff. Unload waits for any in-flight save first. If the final retries fail, edits are **retained** (background retries) and spilled to Redis; the next load of the room merges them back — never dropped |
+| Postgres write of the editor document fails | Change stays `dirty`; saves retry with backoff. Unload waits for any in-flight save first. If the final retries fail, edits are **retained in memory** with background retries for as long as the process lives, plus a **best-effort** Redis copy (7-day TTL) that the next load of the room merges back. Edits can still be lost if the process exits while Postgres is down *and* the Redis copy is missing (spill failed, Redis lost it, or 7 days passed) |
+| Two instances save the same room (one missed an update, or both make the very first save) | Every save runs under a per-room Postgres advisory lock and merges with the stored snapshot instead of overwriting it, so a save can't remove content another instance saved |
 | Last user leaves while a save is in flight | Unload awaits that save; if it fails, the doc is saved again before it's destroyed |
 | `room:closed` publish fails, or a gateway misses it | Each gateway reconciles room status from Postgres every 5 s and enforces it on open sockets |
 | Browser loses its events socket while a result is published | On every reconnect the client re-fetches history and **merges** it — a submission never moves backwards, so a slow response can't undo a newer result |
@@ -239,7 +240,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | 11 submit attempts in a minute | 11th → `429` with `Retry-After` |
 | Queued row with no job (simulated enqueue failure) | recovered by the outbox sweeper and graded `accepted` |
 
-- **Realtime smoke test** (`pnpm smoke:realtime`) — 22 checks, run with interviewer on one API instance and candidate on another:
+- **Realtime smoke test** (`pnpm smoke:realtime`) — 23 checks, run with interviewer on one API instance and candidate on another:
 
 | Case | Result |
 |---|---|
@@ -250,6 +251,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Candidate submits | both get `submission:queued`; candidate gets redacted result, interviewer gets full result |
 | Interviewer ends the session | both get `room:closed`; edits on already-open sockets are dropped; new submissions `400`; candidate can't end it (`403`) |
 | Room closed in the DB with **no** event published | gateways enforce it via reconciliation (~4 s); open sockets on the other instance stop writing |
+| Two instances blind to each other make concurrent first saves (×10, real Postgres) | both edits kept 10/10 (0/20 with the advisory lock removed) |
 | Everyone disconnects, new client joins | document restored from Postgres |
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.

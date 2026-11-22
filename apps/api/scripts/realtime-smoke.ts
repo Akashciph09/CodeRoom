@@ -9,6 +9,7 @@ import * as Y from "yjs";
 import { createDb, eq, rooms } from "@coderoom/db";
 import { REALTIME_PROTOCOL, type ServerEvent } from "@coderoom/shared";
 import { API, call, check, finish, setupRoom, sleep } from "./lib.js";
+import { runPersistenceRace } from "./persistenceRace.js";
 
 const API_B = process.env.SMOKE_API_URL_2 ?? API;
 const wsUrl = (http: string) => http.replace(/^http/, "ws");
@@ -230,6 +231,16 @@ async function main() {
   cd2Events.ws.close();
   iv2.p.destroy();
   cd2.p.destroy();
+
+  // --- Document saves across instances against real Postgres ------------------------------------
+  const r3 = await setupRoom();
+  const rounds = 10;
+  const kept = await runPersistenceRace(r3.roomId, rounds);
+  check(
+    "concurrent first saves (instances blind to each other) keep both edits",
+    kept === rounds,
+    `(${kept}/${rounds} rounds)`,
+  );
 
   finish();
 }

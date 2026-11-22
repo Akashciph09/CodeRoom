@@ -10,10 +10,11 @@ import { MessageType, RoomDocManager, spillKey } from "./roomDocs.js";
 const ROOM = "00000000-0000-4000-8000-0000000000aa";
 
 /**
- * Minimal Drizzle stand-in holding one room_documents row. Upserts (plain or inside a transaction)
- * can be made to fail N times and to take `writeDelayMs`.
+ * Minimal Drizzle stand-in holding one room_documents row. Upserts can be made to fail N times and to
+ * take `writeDelayMs`. `lock` makes transactions mutually exclusive — standing in for the Postgres
+ * advisory lock the real code takes (the real lock is exercised against Postgres in pnpm smoke:realtime).
  */
-function fakeDb(opts: { failFirst?: number; writeDelayMs?: number } = {}) {
+function fakeDb(opts: { failFirst?: number; writeDelayMs?: number; lock?: boolean } = {}) {
   let stored: Uint8Array | null = null;
   const writes: Uint8Array[] = [];
   let inFlight = 0;
@@ -40,15 +41,24 @@ function fakeDb(opts: { failFirst?: number; writeDelayMs?: number } = {}) {
       },
     }),
   });
+  const tx = { execute: async () => {}, select: selectChain, insert: insertChain };
+  let lockChain: Promise<unknown> = Promise.resolve();
   const db = {
     select: selectChain,
     insert: insertChain,
-    transaction: async (fn: (tx: unknown) => Promise<void>) => fn({ select: selectChain, insert: insertChain }),
+    transaction: (fn: (t: typeof tx) => Promise<void>) => {
+      if (opts.lock === false) return fn(tx);
+      const run = lockChain.then(() => fn(tx));
+      lockChain = run.catch(() => {});
+      return run;
+    },
   };
   return {
     db: db as unknown as Db,
     writes,
     stored: () => stored,
+    /** Simulate another instance having saved this snapshot. */
+    setStored: (s: Uint8Array) => (stored = s),
     maxInFlight: () => maxInFlight,
     heal: () => (failuresLeft = 0),
   };
@@ -129,8 +139,8 @@ describe("RoomDocManager persistence", () => {
     expect(textOf(db.writes[0])).toBe("hello");
   });
 
-  it("never runs two saves for a room at once", async () => {
-    const db = fakeDb({ writeDelayMs: 50 });
+  it("never runs two saves for a room at once on one instance (even without the DB lock)", async () => {
+    const db = fakeDb({ writeDelayMs: 50, lock: false });
     const docs = manager(db.db, { debounceMs: 1 });
     const { ws } = fakeSocket();
     const entry = await docs.connect(ROOM, ws, { readOnly: false });
@@ -141,6 +151,44 @@ describe("RoomDocManager persistence", () => {
     }
     await waitFor(() => textOf(db.stored()).length === 5);
     expect(db.maxInFlight()).toBe(1);
+  });
+
+  it("a save never shrinks the stored doc: it merges in a snapshot this instance missed", async () => {
+    const db = fakeDb();
+    const docs = manager(db.db, { debounceMs: 1 });
+    const { ws, sent } = fakeSocket();
+    const entry = await docs.connect(ROOM, ws, { readOnly: false });
+
+    // Another instance saved an edit this one never received over the bus.
+    const other = new Y.Doc();
+    other.getText("code").insert(0, "remote ");
+    db.setStored(Y.encodeStateAsUpdate(other));
+
+    const sentBefore = sent.length;
+    docs.handleClientMessage(entry, ws, editMessage("local"));
+    await waitFor(() => textOf(db.stored()).includes("local"));
+    expect(textOf(db.stored())).toContain("remote ");
+    // The live doc healed too, and its clients were sent the missed content.
+    expect(entry.doc.getText("code").toString()).toContain("remote ");
+    expect(sent.length).toBeGreaterThan(sentBefore);
+  });
+
+  it("concurrent first saves from two instances keep both edits", async () => {
+    // No row exists yet, so there is nothing for a row lock to lock.
+    const db = fakeDb({ writeDelayMs: 30 });
+    const a = manager(db.db, { debounceMs: 1 });
+    const b = manager(db.db, { debounceMs: 1 });
+    const wa = fakeSocket();
+    const wb = fakeSocket();
+    const ea = await a.connect(ROOM, wa.ws, { readOnly: false });
+    const eb = await b.connect(ROOM, wb.ws, { readOnly: false });
+
+    a.handleClientMessage(ea, wa.ws, editMessage("from-a "));
+    b.handleClientMessage(eb, wb.ws, editMessage("from-b "));
+    await waitFor(() => db.writes.length >= 2);
+    const final = textOf(db.stored());
+    expect(final).toContain("from-a ");
+    expect(final).toContain("from-b ");
   });
 
   it("waits for an in-flight save on unload, and saves again if that save fails", async () => {
