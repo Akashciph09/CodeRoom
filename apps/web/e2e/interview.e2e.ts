@@ -1,7 +1,18 @@
 import { expect, test } from "@playwright/test";
-import { avatars, editorText, expectUnchanged, openAs, replaceCode, results, signUp, type Participant } from "./helpers";
+import {
+  appendLine,
+  avatars,
+  editorText,
+  expectUnchanged,
+  openAs,
+  replaceCode,
+  results,
+  signUp,
+  type Participant,
+} from "./helpers";
 
 const SOLUTION = "a, b = map(int, input().split())\nprint(a + b)";
+const HINT = "# interviewer: what if the input has extra spaces?";
 
 /**
  * One realistic interview, end to end, with two real users in two browser contexts:
@@ -64,6 +75,11 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
     await test.step("candidate's typing appears in the interviewer's editor", async () => {
       await replaceCode(candidate.page, SOLUTION);
       await expect.poll(() => editorText(interviewer.page)).toBe(SOLUTION);
+    });
+
+    await test.step("interviewer's typing appears in the candidate's editor", async () => {
+      await appendLine(interviewer.page, HINT);
+      await expect.poll(() => editorText(candidate.page)).toBe(`${SOLUTION}\n${HINT}`);
     });
 
     await test.step("candidate submits; each side sees its own view of the result", async () => {

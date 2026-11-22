@@ -258,7 +258,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts run a whole interview in Chrome (~11 s):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~25 s for all three tests):
 
 | Step | Checked |
 |---|---|
@@ -266,6 +266,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Copy invite link → candidate opens it | redirected to sign-in, lands back in the room after signing up |
 | Presence | each side sees both named avatars |
 | Candidate types | text appears in the interviewer's editor |
+| Interviewer types | text appears in the candidate's editor |
 | Candidate submits | candidate: "Accepted, hidden tests 2/2", no hidden rows; interviewer: 2 hidden rows + submitted code |
 | Language picker | change syncs to the other side |
 | `while (true) {}` | "Time limit exceeded" on both sides |
@@ -273,8 +274,9 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Interviewer ends the session | banner on both sides, Run/Submit disabled, typing changes nothing on either side |
 | Reload after the end | final code and history still shown |
 | Signed-out visit to a room | redirected to sign-in with the room kept in `next` |
+| **Reconnect:** candidate submits, then their realtime connection drops; the run finishes and both type during the gap; connection returns | no reload needed: the missed "Accepted" result appears (no duplicate card), both offline edits reach both sides, editors converge |
 
-The tests refuse to run unless Supabase and the API are on `localhost` (they create throwaway accounts), and they fail fast if the API isn't healthy. They use the installed Google Chrome; set `PLAYWRIGHT_CHANNEL=""` and run `pnpm --filter @coderoom/web exec playwright install chromium` to use Playwright's bundled browser instead (e.g. CI). Each assertion was checked to fail when the behaviour it guards is broken — for example, disabling the editor's read-only mode makes the end-of-session step fail.
+The tests refuse to run unless Supabase and the API are on `localhost` (they create throwaway accounts), and they fail fast if the API isn't healthy. They use the installed Google Chrome; set `PLAYWRIGHT_CHANNEL=""` and run `pnpm --filter @coderoom/web exec playwright install chromium` to use Playwright's bundled browser instead (e.g. CI). Each assertion was checked to fail when the behaviour it guards is broken — for example, disabling the editor's read-only mode fails the end-of-session step, removing the history refetch on reconnect fails the reconnect test, and blocking interviewer edits fails the two-way typing step. Connection drops are simulated by proxying the page's WebSockets through the test (`routeWebSocket`), so they're deterministic.
 
 ## Project structure
 
