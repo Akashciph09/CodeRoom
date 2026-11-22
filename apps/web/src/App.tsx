@@ -1,36 +1,45 @@
-import Editor from "@monaco-editor/react";
-import { useEffect, useState } from "react";
-import type { Language } from "@coderoom/shared";
+import { lazy, Suspense, type ReactNode } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { SessionProvider, useSession } from "./lib/auth";
+import { AuthPage } from "./pages/AuthPage";
+import { HomePage } from "./pages/HomePage";
+import { JoinPage } from "./pages/JoinPage";
 
-const STARTER: Record<Language, string> = {
-  python: "import sys\n\nfor line in sys.stdin:\n    print(line.strip())\n",
-  javascript:
-    "const lines = require('fs').readFileSync(0, 'utf8').trim().split('\\n');\nfor (const l of lines) console.log(l);\n",
-};
+// Monaco + Yjs are most of the bundle; only load them when a room is opened.
+const RoomPage = lazy(() => import("./pages/RoomPage").then((m) => ({ default: m.RoomPage })));
+
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { session, loading } = useSession();
+  const location = useLocation();
+  if (loading) return <div className="center muted">Loading…</div>;
+  if (!session) {
+    const next = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?next=${next}`} replace />;
+  }
+  return <>{children}</>;
+}
 
 export function App() {
-  const [language, setLanguage] = useState<Language>("python");
-  const [health, setHealth] = useState<string>("checking…");
-
-  useEffect(() => {
-    fetch("/api/health")
-      .then((r) => r.json())
-      .then((j: { ok: boolean }) => setHealth(j.ok ? "api ok" : "api degraded"))
-      .catch(() => setHealth("api unreachable"));
-  }, []);
-
-  // TODO (build step 4): rooms, roles, Yjs-bound editor, run/submit, live results.
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", fontFamily: "system-ui" }}>
-      <header style={{ display: "flex", gap: 12, alignItems: "center", padding: "8px 16px" }}>
-        <strong>CodeRoom</strong>
-        <select value={language} onChange={(e) => setLanguage(e.target.value as Language)}>
-          <option value="python">Python</option>
-          <option value="javascript">JavaScript</option>
-        </select>
-        <span style={{ marginLeft: "auto", opacity: 0.6 }}>{health}</span>
-      </header>
-      <Editor height="100%" language={language} value={STARTER[language]} theme="vs-dark" />
-    </div>
+    <SessionProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<AuthPage />} />
+          <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
+          <Route path="/join/:inviteCode" element={<RequireAuth><JoinPage /></RequireAuth>} />
+          <Route
+            path="/rooms/:roomId"
+            element={
+              <RequireAuth>
+                <Suspense fallback={<div className="center muted">Loading editor…</div>}>
+                  <RoomPage />
+                </Suspense>
+              </RequireAuth>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </SessionProvider>
   );
 }

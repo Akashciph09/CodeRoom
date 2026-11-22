@@ -92,6 +92,7 @@ export class RoomDocManager {
 
   /** Apply one y-websocket protocol message from a client and reply if the protocol requires it. */
   handleClientMessage(entry: SharedRoomDoc, ws: WebSocket, message: Uint8Array) {
+    if (!entry.conns.has(ws)) return; // already disconnected
     const decoder = decoding.createDecoder(message);
     const type = decoding.readVarUint(decoder);
     if (type === MessageType.Sync) {

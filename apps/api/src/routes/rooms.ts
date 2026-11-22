@@ -1,13 +1,25 @@
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
-import { and, asc, eq, questions, roomParticipants, rooms, testCases } from "@coderoom/db";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  questions,
+  roomParticipants,
+  rooms,
+  submissions,
+  testCases,
+} from "@coderoom/db";
 import {
   CreateRoomRequest,
   JoinRoomRequest,
   type CreateRoomResponse,
   type JoinRoomResponse,
+  type RoomSummary,
   type RoomView,
 } from "@coderoom/shared";
+import { resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
 import { asyncHandler, BadRequest, Conflict, NotFound } from "../errors.js";
@@ -86,6 +98,7 @@ roomsRouter.get(
     const [row] = await db
       .select({
         status: rooms.status,
+        inviteCode: rooms.inviteCode,
         questionId: questions.id,
         title: questions.title,
         prompt: questions.prompt,
@@ -107,8 +120,61 @@ roomsRouter.get(
       roomId,
       status: row.status,
       role,
+      ...(role === "interviewer" ? { inviteCode: row.inviteCode } : {}),
       question: { id: row.questionId, title: row.title, prompt: row.prompt, publicTests },
     };
     res.json(view);
+  }),
+);
+
+/** Submission history for the room, newest first, each in the caller's role view. Candidates see only their own. */
+roomsRouter.get(
+  "/:id/submissions",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    const userId = req.user!.userId;
+    const role = await requireRoomRole(roomId, userId);
+
+    const rows = await db
+      .select()
+      .from(submissions)
+      .where(
+        role === "interviewer"
+          ? eq(submissions.roomId, roomId)
+          : and(eq(submissions.roomId, roomId), eq(submissions.userId, userId)),
+      )
+      .orderBy(desc(submissions.createdAt))
+      .limit(50);
+
+    const results = await resultsFor(rows.map((r) => r.id));
+
+    res.json(
+      rows.map((submission) =>
+        viewFor(role, { submission, results: results.filter((r) => r.submissionId === submission.id) }),
+      ),
+    );
+  }),
+);
+
+/** Rooms the caller participates in, newest first. */
+roomsRouter.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const rows = await db
+      .select({
+        roomId: rooms.id,
+        role: roomParticipants.role,
+        status: rooms.status,
+        questionTitle: questions.title,
+        createdAt: rooms.createdAt,
+      })
+      .from(roomParticipants)
+      .innerJoin(rooms, eq(rooms.id, roomParticipants.roomId))
+      .innerJoin(questions, eq(questions.id, rooms.questionId))
+      .where(eq(roomParticipants.userId, req.user!.userId))
+      .orderBy(desc(rooms.createdAt))
+      .limit(50);
+    const list: RoomSummary[] = rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+    res.json(list);
   }),
 );

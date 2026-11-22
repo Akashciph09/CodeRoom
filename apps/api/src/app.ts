@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { db } from "./db.js";
 import { errorMiddleware } from "./errors.js";
 import { redis } from "./queue.js";
+import { questionsRouter } from "./routes/questions.js";
 import { roomsRouter } from "./routes/rooms.js";
 import { submissionsRouter } from "./routes/submissions.js";
 
@@ -25,6 +26,7 @@ export function createApp(): Express {
     res.status(postgres && redisOk ? 200 : 503).json({ ok: postgres && redisOk, postgres, redis: redisOk });
   });
 
+  app.use("/questions", authenticate, questionsRouter);
   app.use("/rooms", authenticate, roomsRouter);
   app.use("/submissions", authenticate, submissionsRouter);
 

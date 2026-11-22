@@ -4,7 +4,7 @@
 
 Interviewer and candidate share a room. The candidate writes code; every run goes through a queue to a disposable, locked-down Docker container and comes back with per-test verdicts. Hidden test cases never leave the server. An AI copilot (in progress) helps the interviewer prepare questions, ask follow-ups and summarize evidence against a rubric.
 
-> **Status:** backend core is working and tested end-to-end: auth, rooms, submission pipeline, sandbox, and the realtime gateway (collaborative editing + live results across multiple API instances). The browser UI and AI features are next — see [Roadmap](#roadmap).
+> **Status:** a working interview product end to end — sign in, create a room, share an invite link, edit code together in real time, run/submit against sandboxed tests and see role-aware results live. Tested across multiple API instances. AI copilot, rubric and replay are next — see [Roadmap](#roadmap).
 
 ---
 
@@ -17,6 +17,7 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 - **Horizontally scalable execution.** Stateless BullMQ workers; add processes to add throughput. Retries are idempotent.
 - **Collaborative editing that scales out.** Yjs (CRDT) over our own WebSocket gateway; interviewer and candidate can be connected to *different* API instances and stay in sync via Redis pub/sub. Concurrent edits converge; the document survives everyone leaving.
 - **Live, role-aware results.** When the worker finishes, every connected participant gets the submission pushed over WebSocket — candidates the redacted view, interviewers the full one.
+- **A real interview UI.** Invite links, a shared Monaco editor with named live cursors and presence, a synced language picker, Run/Submit for the candidate, and a results panel where the interviewer also sees hidden tests and the exact submitted code.
 - **Every stack choice is documented** in [Architecture Decision Records](docs/decisions/README.md).
 
 ## Architecture
@@ -76,7 +77,9 @@ flowchart LR
 
 | Layer | Choice | Why |
 |---|---|---|
-| Frontend | React, TypeScript, Vite, Monaco | Industry-standard editor (VS Code's) |
+| Frontend | React, TypeScript, Vite, React Router | Small SPA; the editor route is lazy-loaded (initial bundle ~80 KB gzipped) |
+| Editor | Monaco (bundled, no CDN) + `y-monaco` | VS Code's editor; one Monaco instance shared with the Yjs binding; live remote cursors |
+| Browser auth | `@supabase/auth-js` only | The browser only signs in — it never queries tables, so the full Supabase client isn't needed ([ADR 0006](docs/decisions/0006-rls-deny-all-server-side-access.md)) |
 | API | Node.js, Express, TypeScript | Thin validate → persist → enqueue layer |
 | Database | Postgres (Supabase) + Drizzle ORM | Relational domain, FKs and constraints enforce invariants — [ADR 0001](docs/decisions/0001-postgres-over-mongodb.md), [0003](docs/decisions/0003-drizzle-orm.md) |
 | Auth / Storage | Supabase Auth, Supabase Storage | Commodity concerns, managed — [ADR 0002](docs/decisions/0002-supabase-for-auth-storage-postgres.md) |
@@ -136,6 +139,8 @@ Run everything:
 pnpm dev             # web :5173, api :4000, worker
 ```
 
+Open http://localhost:5173, create an account and start a room, then use **Copy invite link**. Each browser tab keeps its own session, so you can paste the link into a second tab and sign up as the candidate to try both sides at once.
+
 Verify end to end (with `pnpm dev` running, in another terminal):
 
 ```bash
@@ -174,9 +179,12 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | Method | Path | Who | Description |
 |---|---|---|---|
 | `GET` | `/health` | — | Postgres + Redis status |
+| `GET` | `/questions` | any user | Approved questions (id, title) |
+| `GET` | `/rooms` | any user | Rooms the caller participates in |
 | `POST` | `/rooms` | any user | Create a room for an approved question; caller becomes interviewer. Returns invite code |
 | `POST` | `/rooms/join` | any user | Join with invite code as candidate |
-| `GET` | `/rooms/:id` | participant | Question, public tests, caller's role |
+| `GET` | `/rooms/:id` | participant | Question, public tests, caller's role (invite code for the interviewer) |
+| `GET` | `/rooms/:id/submissions` | participant | History, newest first, in the caller's role view (candidates see only their own) |
 | `POST` | `/submissions` | candidate | `{ roomId, language, mode: "run" \| "submit", code }` → `202 { submissionId }` |
 | `GET` | `/submissions/:id` | participant | Candidate view or interviewer view, by role |
 
@@ -226,7 +234,7 @@ Both require the subprotocols `["coderoom.v1", <access token>]` and room members
 apps/
   api/          Express API, auth, routes, serializers, realtime gateway, smoke tests
   worker/       BullMQ consumer + Docker sandbox runner
-  web/          React + Monaco client (placeholder)
+  web/          React client: sign-in, rooms, Yjs-bound Monaco editor, presence, live results
 packages/
   shared/       zod schemas and types shared by every app
   db/           Drizzle schema, DB client, migration config
@@ -243,7 +251,8 @@ docs/decisions/ Architecture Decision Records
 - [x] Submission API → queue → Docker sandbox → verdicts
 - [x] Candidate / interviewer result views, RLS lockdown, smoke test
 - [x] WebSocket gateway: Yjs collaborative editing, cross-instance fan-out, persistence, live role-aware results
-- [ ] Interviewer and candidate UI (sign in, room, Yjs-bound Monaco, live results)
+- [x] Browser UI: sign in, invite links, collaborative Monaco with live cursors, run/submit, role-aware live results
+- [ ] Browser end-to-end tests (Playwright) for the two-role flow
 - [ ] Question bank API (draft → approved workflow)
 - [ ] Submission history and editor replay (Supabase Storage)
 - [ ] Structured evaluation rubric

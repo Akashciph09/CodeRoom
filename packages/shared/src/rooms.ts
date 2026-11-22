@@ -29,10 +29,27 @@ export const PublicTestCase = z.object({
   expectedOutput: z.string(),
 });
 
+export const QuestionSummary = z.object({
+  id: z.string().uuid(),
+  title: z.string(),
+});
+export type QuestionSummary = z.infer<typeof QuestionSummary>;
+
+export const RoomSummary = z.object({
+  roomId: z.string().uuid(),
+  role: Role,
+  status: z.enum(["open", "closed"]),
+  questionTitle: z.string(),
+  createdAt: z.string(),
+});
+export type RoomSummary = z.infer<typeof RoomSummary>;
+
 export const RoomView = z.object({
   roomId: z.string().uuid(),
   status: z.enum(["open", "closed"]),
   role: Role,
+  /** Only returned to the interviewer, so they can share it. */
+  inviteCode: z.string().optional(),
   question: z.object({
     id: z.string().uuid(),
     title: z.string(),

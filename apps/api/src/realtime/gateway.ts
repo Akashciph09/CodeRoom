@@ -145,7 +145,8 @@ function serveYjs(docs: RoomDocManager, roomId: string, ws: WebSocket) {
       });
   });
   ws.on("close", () => {
-    ready.then(() => docs.disconnect(roomId, ws)).catch(() => {});
+    // Disconnect AFTER any queued messages, so a late awareness update can't outlive the connection.
+    queue = queue.then(() => ready).then(() => docs.disconnect(roomId, ws)).catch(() => {});
   });
   ready.catch((err) => {
     console.error(`could not load room ${roomId}:`, err);
