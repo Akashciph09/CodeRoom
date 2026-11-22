@@ -8,12 +8,18 @@ interface Subscriber {
   role: Role;
 }
 
+interface RoomSubscribers {
+  subs: Set<Subscriber>;
+  /** `room:closed` already sent to this room's sockets on this instance. */
+  closed: boolean;
+}
+
 /**
  * Relays room events (published by the API and worker on Redis) to this instance's event sockets.
  * Bus events carry ids only; each recipient gets the view its role allows (candidate vs interviewer).
  */
 export class RoomEventHub {
-  private readonly rooms = new Map<string, Set<Subscriber>>();
+  private readonly rooms = new Map<string, RoomSubscribers>();
 
   constructor(
     sub: Redis,
@@ -27,32 +33,43 @@ export class RoomEventHub {
 
   add(roomId: string, ws: WebSocket, role: Role) {
     const subscriber: Subscriber = { ws, role };
-    let set = this.rooms.get(roomId);
-    if (!set) this.rooms.set(roomId, (set = new Set()));
-    set.add(subscriber);
+    let room = this.rooms.get(roomId);
+    if (!room) this.rooms.set(roomId, (room = { subs: new Set(), closed: false }));
+    room.subs.add(subscriber);
     ws.on("close", () => {
-      set.delete(subscriber);
-      if (set.size === 0) this.rooms.delete(roomId);
+      room.subs.delete(subscriber);
+      if (room.subs.size === 0 && this.rooms.get(roomId) === room) this.rooms.delete(roomId);
     });
     // Clients only listen on this socket; ignore anything they send.
     ws.on("message", () => {});
     sendEvent(ws, { type: "ready", roomId });
   }
 
+  /** Rooms with listeners here that haven't been told the room ended (checked by the status reconciler). */
+  openRoomIds(): string[] {
+    return [...this.rooms.entries()].filter(([, r]) => !r.closed).map(([id]) => id);
+  }
+
+  /**
+   * The room ended — learned from the bus (fast path) or from the database (reconciler). Idempotent:
+   * docs become read-only and each local events socket gets `room:closed` once.
+   */
+  markClosed(roomId: string) {
+    this.hooks.onRoomClosed(roomId);
+    const room = this.rooms.get(roomId);
+    if (!room || room.closed) return;
+    room.closed = true;
+    for (const s of room.subs) sendEvent(s.ws, { type: "room:closed", roomId });
+  }
+
   private async onBusEvent(raw: string) {
     const parsed = RoomBusEvent.safeParse(JSON.parse(raw));
     if (!parsed.success) return;
     const event = parsed.data;
-    // Applies to this instance's editor docs even if nobody here has an events socket open.
-    if (event.type === "room:closed") this.hooks.onRoomClosed(event.roomId);
+    if (event.type === "room:closed") return this.markClosed(event.roomId);
 
-    const subscribers = this.rooms.get(event.roomId);
+    const subscribers = this.rooms.get(event.roomId)?.subs;
     if (!subscribers || subscribers.size === 0) return;
-
-    if (event.type === "room:closed") {
-      for (const s of subscribers) sendEvent(s.ws, { type: "room:closed", roomId: event.roomId });
-      return;
-    }
 
     if (event.type === "submission:queued") {
       for (const s of subscribers) {

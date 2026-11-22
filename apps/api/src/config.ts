@@ -19,6 +19,8 @@ const Env = z.object({
   WS_MAX_PAYLOAD_BYTES: z.coerce.number().int().positive().default(1_048_576),
   /** Editor state is written to Postgres this long after the last change (and when the room empties). */
   DOC_PERSIST_DEBOUNCE_MS: z.coerce.number().int().positive().default(2000),
+  /** How often each gateway re-checks the DB status of rooms it serves (closure bound without pub/sub). */
+  ROOM_STATUS_RECONCILE_MS: z.coerce.number().int().positive().default(5000),
 });
 
 export const config = Env.parse(process.env);

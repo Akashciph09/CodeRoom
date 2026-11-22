@@ -160,8 +160,9 @@ roomsRouter.get(
 );
 
 /**
- * End the session (interviewer only). Idempotent. Every gateway instance is told over the room bus,
- * so already-open sockets become read-only immediately, not just new ones.
+ * End the session (interviewer only). Idempotent.
+ * The DB update is the commit point. The bus event is only the fast path (best effort): every gateway
+ * also reconciles room status from the DB, so already-open sockets become read-only even if it's lost.
  */
 roomsRouter.post(
   "/:id/close",
@@ -170,7 +171,9 @@ roomsRouter.post(
     await requireRoomRole(roomId, req.user!.userId, "interviewer");
     await db.update(rooms).set({ status: "closed" }).where(eq(rooms.id, roomId));
     const event: RoomBusEvent = { type: "room:closed", roomId };
-    await redis.publish(roomEventsChannel(roomId), JSON.stringify(event));
+    redis
+      .publish(roomEventsChannel(roomId), JSON.stringify(event))
+      .catch((err) => console.error(`room:closed publish failed for ${roomId}; reconciler will enforce:`, err));
     res.json({ roomId, status: "closed" });
   }),
 );

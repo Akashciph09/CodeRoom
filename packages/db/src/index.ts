@@ -1,3 +1,3 @@
 export * from "./schema.js";
 export * from "./client.js";
-export { and, asc, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
+export { and, asc, desc, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";

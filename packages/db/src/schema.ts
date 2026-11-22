@@ -10,6 +10,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { authUsers } from "drizzle-orm/supabase";
@@ -109,9 +110,16 @@ export const submissions = pgTable(
     code: text("code").notNull(),
     status: submissionStatusEnum("status").notNull().default("queued"),
     overall: verdictEnum("overall"),
+    /**
+     * Client-supplied `Idempotency-Key`. Stored in the same row as the submission so the key and the
+     * submission are created atomically; the unique constraint makes a retried request find the original.
+     */
+    idempotencyKey: text("idempotency_key"),
     ...timestamps,
   },
   (t) => [
+    // NULLs are distinct in a Postgres unique index, so rows without a key never collide.
+    uniqueIndex("submissions_user_idempotency_key").on(t.userId, t.idempotencyKey),
     index("submissions_room_idx").on(t.roomId, t.createdAt),
     // Small partial index for the worker's outbox sweeper ("queued rows older than N seconds").
     index("submissions_queued_idx").on(t.createdAt).where(sql`${t.status} = 'queued'`),

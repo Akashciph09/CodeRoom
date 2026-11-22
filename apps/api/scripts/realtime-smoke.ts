@@ -6,6 +6,7 @@
 import WebSocket from "ws";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
+import { createDb, eq, rooms } from "@coderoom/db";
 import { REALTIME_PROTOCOL, type ServerEvent } from "@coderoom/shared";
 import { API, call, check, finish, setupRoom, sleep } from "./lib.js";
 
@@ -205,6 +206,30 @@ async function main() {
   await fresh.synced;
   check("document persists after everyone leaves", fresh.text.toString() === finalText, `(${fresh.text.length} chars)`);
   fresh.p.destroy();
+
+  // --- Closure without pub/sub: the DB says closed, no event is ever published ------------------
+  // Simulates a lost/failed room:closed publish. Gateways must still enforce it via reconciliation.
+  const r2 = await setupRoom();
+  const iv2 = provider(API, r2.roomId, r2.interviewer);
+  const cd2 = provider(API_B, r2.roomId, r2.candidate);
+  const cd2Events = eventSocket(API_B, r2.roomId, r2.candidate);
+  await Promise.all([iv2.synced, cd2.synced, cd2Events.ready]);
+  iv2.text.insert(0, "x");
+  await waitForText(cd2.text, (s) => s === "x");
+
+  const { db, close } = createDb(process.env.DATABASE_URL!, { max: 1 });
+  await db.update(rooms).set({ status: "closed" }).where(eq(rooms.id, r2.roomId));
+  await close();
+  const reconcileMs = Number(process.env.ROOM_STATUS_RECONCILE_MS ?? 5000);
+  const t0 = Date.now();
+  await cd2Events.waitFor((e) => e.type === "room:closed", reconcileMs * 2 + 2000);
+  check("closed in DB only → room:closed via reconciliation", true, `(${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+  cd2.text.insert(0, "LATE ");
+  await sleep(800);
+  check("…and open sockets on the other instance stop writing", iv2.text.toString() === "x");
+  cd2Events.ws.close();
+  iv2.p.destroy();
+  cd2.p.destroy();
 
   finish();
 }

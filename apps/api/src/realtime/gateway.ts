@@ -12,6 +12,7 @@ import { redis } from "../queue.js";
 import { UuidParam } from "../routes/params.js";
 import { RoomDocManager } from "./roomDocs.js";
 import { RoomEventHub } from "./roomEvents.js";
+import { startRoomStatusReconciler } from "./roomStatusReconciler.js";
 
 type Route = { kind: "yjs" | "events"; roomId: string };
 
@@ -37,6 +38,13 @@ export function attachRealtimeGateway(server: Server) {
   const events = new RoomEventHub(sub, {
     // Room ended (on any instance): live sockets on this instance stop being able to write.
     onRoomClosed: (roomId) => docs.setReadOnly(roomId),
+  });
+  // Pub/sub is the fast path for closure; this makes the stored status win even if an event is lost.
+  const reconciler = startRoomStatusReconciler({
+    db,
+    intervalMs: config.ROOM_STATUS_RECONCILE_MS,
+    candidates: () => [...docs.writableRoomIds(), ...events.openRoomIds()],
+    onClosed: (roomId) => events.markClosed(roomId),
   });
 
   const wss = new WebSocketServer({
@@ -80,9 +88,10 @@ export function attachRealtimeGateway(server: Server) {
 
   return {
     instanceId,
-    stats: () => ({ connections: wss.clients.size, rooms: docs.roomCount }),
+    stats: () => ({ connections: wss.clients.size, rooms: docs.roomCount, retainedUnsaved: docs.retainedCount }),
     async close() {
       clearInterval(heartbeat);
+      reconciler.stop();
       for (const ws of wss.clients) ws.close(1001, "server shutting down");
       await docs.closeAll();
       await sub.quit();

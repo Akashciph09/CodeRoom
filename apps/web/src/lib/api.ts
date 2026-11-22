@@ -54,7 +54,24 @@ export const api = {
   room: (roomId: string) => request<RoomView>("GET", `/rooms/${roomId}`),
   roomSubmissions: (roomId: string) => request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions`),
   closeRoom: (roomId: string) => request<{ roomId: string; status: "closed" }>("POST", `/rooms/${roomId}/close`),
-  /** One idempotency key per user action, so a retried request can't create a second submission. */
   submit: (body: CreateSubmissionRequest, idempotencyKey: string) =>
     request<CreateSubmissionResponse>("POST", "/submissions", body, { "idempotency-key": idempotencyKey }),
 };
+
+/** No response, or a server-side failure: the request may or may not have been applied. */
+export const isRetryable = (err: unknown) => !(err instanceof ApiError) || err.status >= 500;
+
+/**
+ * Submit with automatic retries that all carry the SAME idempotency key, so whichever attempt the
+ * server actually received, at most one submission exists. 4xx responses are final and not retried.
+ */
+export async function submitWithRetry(body: CreateSubmissionRequest, idempotencyKey: string, retries = 2) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api.submit(body, idempotencyKey);
+    } catch (err) {
+      if (attempt >= retries || !isRetryable(err)) throw err;
+      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+    }
+  }
+}

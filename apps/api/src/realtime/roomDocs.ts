@@ -32,10 +32,21 @@ interface Entry extends SharedRoomDoc {
   saveFailures: number;
   /** Room ended: clients may still read and see cursors, but their document updates are dropped. */
   readOnly: boolean;
+  /** Loaded state included a Redis spill of previously unsaved edits; delete the spill once saved. */
+  recoveredSpill: boolean;
 }
 
-const UNLOAD_SAVE_ATTEMPTS = 5;
-const backoffMs = (failures: number) => Math.min(30_000, 500 * 2 ** (failures - 1));
+/** State whose final save failed after the doc was unloaded. Never dropped: retried until written. */
+interface Retained {
+  state: Uint8Array;
+  failures: number;
+  timer?: NodeJS.Timeout;
+}
+
+const UNLOAD_SAVE_ATTEMPTS = 3;
+const SPILL_TTL_SECONDS = 7 * 24 * 3600;
+export const spillKey = (roomId: string) => `yjs:unsaved:${roomId}`;
+const backoffMs = (failures: number, baseMs = 500) => Math.min(30_000, baseMs * 2 ** (failures - 1));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface RoomDocManagerOptions {
@@ -44,6 +55,8 @@ export interface RoomDocManagerOptions {
   sub: Redis;
   instanceId: string;
   persistDebounceMs: number;
+  /** Base delay for save retries (tests shorten it). */
+  retryBaseMs?: number;
 }
 
 /**
@@ -56,6 +69,7 @@ export class RoomDocManager {
   private readonly loading = new Map<string, Promise<Entry>>();
   private readonly loaded = new Map<string, Entry>();
   private readonly unloading = new Map<string, Promise<void>>();
+  private readonly retained = new Map<string, Retained>();
 
   constructor(private readonly opts: RoomDocManagerOptions) {
     opts.sub.on("messageBuffer", (channel: Buffer, message: Buffer) => {
@@ -66,6 +80,20 @@ export class RoomDocManager {
 
   get roomCount() {
     return this.loaded.size;
+  }
+
+  /** Rooms with unsaved state still being retried after unload (for health/metrics and tests). */
+  get retainedCount() {
+    return this.retained.size;
+  }
+
+  /** Loaded rooms that still accept writes — the gateway's status reconciler checks these against the DB. */
+  writableRoomIds(): string[] {
+    return [...this.loaded.values()].filter((e) => !e.readOnly).map((e) => e.roomId);
+  }
+
+  private backoff(failures: number) {
+    return backoffMs(failures, this.opts.retryBaseMs);
   }
 
   /** Register a connection for a room, loading the doc if needed. The conn counts immediately (no unload race). */
@@ -151,6 +179,8 @@ export class RoomDocManager {
   /** Persist and drop every loaded doc (graceful shutdown). */
   async closeAll() {
     await Promise.all([...this.loaded.values()].map((e) => this.unload(e)));
+    // Anything still retained stays in its Redis spill for the next process to recover.
+    for (const r of this.retained.values()) clearTimeout(r.timer);
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -167,6 +197,22 @@ export class RoomDocManager {
       .limit(1);
     if (row) Y.applyUpdate(doc, row.state, PERSISTENCE_ORIGIN);
 
+    // Edits whose save failed earlier are merged back in (Yjs merges are idempotent, so overlap is harmless):
+    // first anything this process still retains, then any Redis spill (e.g. from a process that has since died).
+    let recovered = false;
+    const retained = this.retained.get(roomId);
+    if (retained) {
+      clearTimeout(retained.timer);
+      this.retained.delete(roomId);
+      Y.applyUpdate(doc, retained.state, PERSISTENCE_ORIGIN);
+      recovered = true;
+    }
+    const spilled = await this.opts.pub.getBuffer(spillKey(roomId)).catch(() => null);
+    if (spilled) {
+      Y.applyUpdate(doc, new Uint8Array(spilled), PERSISTENCE_ORIGIN);
+      recovered = true;
+    }
+
     const entry: Entry = {
       roomId,
       doc,
@@ -176,6 +222,7 @@ export class RoomDocManager {
       saving: Promise.resolve(),
       saveFailures: 0,
       readOnly: false,
+      recoveredSpill: spilled !== null,
     };
 
     doc.on("update", (update: Uint8Array, origin: unknown) => {
@@ -214,6 +261,7 @@ export class RoomDocManager {
     await this.opts.sub.subscribe(docChannel(roomId));
     // Ask other instances for anything we don't have yet (edits not yet persisted).
     this.publish(roomId, FrameKind.SyncRequest, Y.encodeStateVector(doc));
+    if (recovered) this.markDirty(entry); // write the recovered edits back to Postgres
     return entry;
   }
 
@@ -222,22 +270,74 @@ export class RoomDocManager {
     clearTimeout(entry.persistTimer);
     await this.opts.sub.unsubscribe(docChannel(entry.roomId)).catch(() => {});
     try {
-      // Last chance to save before the in-memory doc is gone: retry with backoff.
+      // A save may be in flight with `dirty` already cleared. Wait for it: if it fails, `dirty` comes back.
+      await entry.saving.catch(() => {});
       for (let attempt = 1; entry.dirty && attempt <= UNLOAD_SAVE_ATTEMPTS; attempt++) {
         try {
           await this.persist(entry);
         } catch (err) {
           console.error(`final save of room ${entry.roomId} failed (attempt ${attempt}/${UNLOAD_SAVE_ATTEMPTS}):`, err);
-          if (attempt < UNLOAD_SAVE_ATTEMPTS) await sleep(backoffMs(attempt));
+          if (attempt < UNLOAD_SAVE_ATTEMPTS) await sleep(this.backoff(attempt));
         }
       }
-      if (entry.dirty) {
-        console.error(`room ${entry.roomId}: unsaved edits dropped after ${UNLOAD_SAVE_ATTEMPTS} attempts`);
-      }
+      // Still unsaved: never drop it. Keep the state and keep retrying after the doc is gone.
+      if (entry.dirty) this.retain(entry.roomId, Y.encodeStateAsUpdate(entry.doc));
     } finally {
       entry.awareness.destroy();
       entry.doc.destroy();
     }
+  }
+
+  /**
+   * Hold unsaved state for an unloaded room: in memory (retried with backoff until written) and,
+   * best effort, spilled to Redis so it survives this process. The next load of the room merges both.
+   */
+  private retain(roomId: string, state: Uint8Array) {
+    const prev = this.retained.get(roomId);
+    if (prev) clearTimeout(prev.timer);
+    const r: Retained = { state: prev ? Y.mergeUpdates([prev.state, state]) : state, failures: prev?.failures ?? 0 };
+    this.retained.set(roomId, r);
+    console.error(`room ${roomId}: final save failed; keeping unsaved edits and retrying in the background`);
+    this.opts.pub
+      .set(spillKey(roomId), Buffer.from(r.state), "EX", SPILL_TTL_SECONDS)
+      .catch((err) => console.error(`room ${roomId}: could not spill unsaved edits to Redis:`, err));
+    this.scheduleRetained(roomId, r);
+  }
+
+  private scheduleRetained(roomId: string, r: Retained) {
+    r.timer = setTimeout(async () => {
+      if (this.retained.get(roomId) !== r) return; // room was reloaded and took the state over
+      try {
+        await this.writeMerged(roomId, r.state);
+        if (this.retained.get(roomId) === r) {
+          this.retained.delete(roomId);
+          await this.opts.pub.del(spillKey(roomId)).catch(() => {});
+        }
+      } catch (err) {
+        r.failures++;
+        console.error(`room ${roomId}: background save failed (${r.failures}):`, err);
+        if (this.retained.get(roomId) === r) this.scheduleRetained(roomId, r);
+      }
+    }, this.backoff(r.failures + 1));
+  }
+
+  /**
+   * Save state for a room that is no longer loaded here. Other instances may have saved newer state
+   * meanwhile, so merge with the stored row under a row lock instead of overwriting it.
+   */
+  private async writeMerged(roomId: string, state: Uint8Array) {
+    await this.opts.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ state: roomDocuments.state })
+        .from(roomDocuments)
+        .where(eq(roomDocuments.roomId, roomId))
+        .for("update");
+      const merged = row ? Y.mergeUpdates([row.state, state]) : state;
+      await tx
+        .insert(roomDocuments)
+        .values({ roomId, state: merged })
+        .onConflictDoUpdate({ target: roomDocuments.roomId, set: { state: merged, updatedAt: sql`now()` } });
+    });
   }
 
   private markDirty(entry: Entry) {
@@ -252,7 +352,7 @@ export class RoomDocManager {
         () => (entry.saveFailures = 0),
         (err) => {
           entry.saveFailures++;
-          const retryIn = backoffMs(entry.saveFailures);
+          const retryIn = this.backoff(entry.saveFailures);
           console.error(`save of room ${entry.roomId} failed; retrying in ${retryIn}ms:`, err);
           // Still loaded and still dirty → try again. (If it unloaded, unload() does its own retries.)
           if (this.loaded.get(entry.roomId) === entry && entry.dirty) this.schedulePersist(entry, retryIn);
@@ -279,6 +379,11 @@ export class RoomDocManager {
       } catch (err) {
         entry.dirty = true;
         throw err;
+      }
+      if (entry.recoveredSpill) {
+        // The spilled edits are now in Postgres.
+        entry.recoveredSpill = false;
+        await this.opts.pub.del(spillKey(entry.roomId)).catch(() => {});
       }
     };
     const next = entry.saving.catch(() => {}).then(run);

@@ -4,8 +4,8 @@
  *   pnpm smoke
  */
 import { randomUUID } from "node:crypto";
-import { createDb, submissions } from "@coderoom/db";
-import { call, check, finish, PUBLISHABLE_KEY, QUESTION_ID, signUp, SUPABASE_URL, userIdOf } from "./lib.js";
+import { and, createDb, eq, submissions } from "@coderoom/db";
+import { call, check, finish, PUBLISHABLE_KEY, QUESTION_ID, setupRoom, signUp, SUPABASE_URL, userIdOf } from "./lib.js";
 
 async function waitFor(id: string, token: string, attempts = 80) {
   for (let i = 0; i < attempts; i++) {
@@ -99,20 +99,43 @@ async function main() {
   const rows = (await rest.json()) as unknown[];
   check("RLS: test_cases unreadable via Supabase REST", Array.isArray(rows) && rows.length === 0, `(${rows.length} rows)`);
 
-  // --- Idempotency: the same key twice yields one submission -----------------------------------
+  // --- Idempotency (stored with the submission in Postgres) ------------------------------------
+  // Fresh room + candidate: the first candidate has used its 10/min submit budget by now.
+  const idem = await setupRoom();
+  const body = { roomId: idem.roomId, language: "python", mode: "run", code: "print(3)" };
+  const withKey = (k: string) => ({ "idempotency-key": k });
   const key = randomUUID();
-  const body = { roomId, language: "python", mode: "run", code: "print(3)" };
-  const first = await call("POST", "/submissions", candidate, body, undefined, { "idempotency-key": key });
-  const again = await call("POST", "/submissions", candidate, body, undefined, { "idempotency-key": key });
+  const first = await call("POST", "/submissions", idem.candidate, body, undefined, withKey(key));
+  const again = await call("POST", "/submissions", idem.candidate, body, undefined, withKey(key));
   check(
     "idempotent retry returns the same submission",
     first.status === 202 && again.status === 202 && first.json.submissionId === again.json.submissionId &&
       again.headers.get("idempotent-replayed") === "true",
   );
-  // (outsider: the candidate has used its 10/min budget by now — key validation runs before role checks)
+
+  const raceKey = randomUUID();
+  const [r1, r2] = await Promise.all([
+    call("POST", "/submissions", idem.candidate, body, undefined, withKey(raceKey)),
+    call("POST", "/submissions", idem.candidate, body, undefined, withKey(raceKey)),
+  ]);
+  const { db: checkDb, close: closeCheckDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+  const rowsForKey = await checkDb
+    .select({ id: submissions.id })
+    .from(submissions)
+    .where(and(eq(submissions.userId, userIdOf(idem.candidate)), eq(submissions.idempotencyKey, raceKey)));
+  await closeCheckDb();
+  check(
+    "concurrent requests with one key → one row",
+    r1.status === 202 && r2.status === 202 && r1.json.submissionId === r2.json.submissionId && rowsForKey.length === 1,
+    `(${rowsForKey.length} row)`,
+  );
+  check(
+    "same key, different code → 422",
+    (await call("POST", "/submissions", idem.candidate, { ...body, code: "print(4)" }, undefined, withKey(key))).status === 422,
+  );
   check(
     "malformed Idempotency-Key → 400",
-    (await call("POST", "/submissions", outsider, body, undefined, { "idempotency-key": "x" })).status === 400,
+    (await call("POST", "/submissions", idem.candidate, body, undefined, withKey("x"))).status === 400,
   );
 
   // --- Rate limit: a fresh user's 11th attempt within a minute is refused ----------------------

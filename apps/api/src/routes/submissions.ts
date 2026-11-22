@@ -1,5 +1,5 @@
-import { Router } from "express";
-import { eq, rooms, submissions } from "@coderoom/db";
+import { Router, type Response } from "express";
+import { and, eq, rooms, submissions, type Submission } from "@coderoom/db";
 import {
   CreateSubmissionRequest,
   roomEventsChannel,
@@ -9,24 +9,50 @@ import {
 import { requireRoomRole } from "../auth.js";
 import { config } from "../config.js";
 import { db } from "../db.js";
-import { asyncHandler, BadRequest, NotFound, PayloadTooLarge } from "../errors.js";
+import { asyncHandler, BadRequest, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
 import { enqueueExecution, redis } from "../queue.js";
-import {
-  claimIdempotencyKey,
-  completeIdempotencyKey,
-  enforceSubmitRateLimit,
-  releaseIdempotencyKey,
-} from "../services/submitGuards.js";
+import { enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
 import { loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
 import { UuidParam } from "./params.js";
 
 export const submissionsRouter: Router = Router();
 
+async function findByIdempotencyKey(userId: string, key: string) {
+  const [row] = await db
+    .select()
+    .from(submissions)
+    .where(and(eq(submissions.userId, userId), eq(submissions.idempotencyKey, key)))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Enqueue is best effort: the row is the outbox, and the worker's sweeper re-enqueues stuck rows. */
+async function tryEnqueue(submissionId: string) {
+  try {
+    await enqueueExecution({ submissionId });
+  } catch (err) {
+    console.error(`enqueue failed for ${submissionId}; outbox sweeper will retry:`, err);
+  }
+}
+
+/** A retry of the same key returns the original submission — but only if it's really the same request. */
+async function replay(res: Response, existing: Submission, body: CreateSubmissionRequest) {
+  const same =
+    existing.roomId === body.roomId &&
+    existing.language === body.language &&
+    existing.mode === body.mode &&
+    existing.code === body.code;
+  if (!same) throw new UnprocessableEntity("Idempotency-Key was already used for a different request");
+  // Cheap insurance if the original enqueue failed (jobId dedupes if it didn't).
+  if (existing.status === "queued") await tryEnqueue(existing.id);
+  const response: CreateSubmissionResponse = { submissionId: existing.id, status: existing.status };
+  res.status(202).setHeader("Idempotent-Replayed", "true").json(response);
+}
+
 /**
- * rate limit → validate → (idempotency) → persist → enqueue. This handler never executes code.
- *
- * The submissions row is the outbox: if enqueueing fails after the insert, we still answer 202 and
- * the worker's outbox sweeper enqueues the row later. A submission can be delayed, never lost.
+ * rate limit → validate → idempotent replay? → authorize → insert (row + key, atomically) → enqueue.
+ * This handler never executes code. If enqueueing fails after the insert we still answer 202: the
+ * submissions row is the outbox, so a submission can be delayed but never lost.
  */
 submissionsRouter.post(
   "/",
@@ -38,50 +64,46 @@ submissionsRouter.post(
     if (Buffer.byteLength(body.code, "utf8") > config.MAX_CODE_BYTES) {
       throw new PayloadTooLarge(`Code exceeds ${config.MAX_CODE_BYTES} bytes`);
     }
+    const idempotencyKey = parseIdempotencyKey(req.header("idempotency-key"));
 
-    const claim = await claimIdempotencyKey(userId, req.header("idempotency-key"));
-    if (claim.kind === "replay") {
-      const response: CreateSubmissionResponse = { submissionId: claim.submissionId, status: "queued" };
-      res.status(202).setHeader("Idempotent-Replayed", "true").json(response);
-      return;
+    // A retry after a lost response: return what the first attempt created (even if the room closed since).
+    if (idempotencyKey) {
+      const existing = await findByIdempotencyKey(userId, idempotencyKey);
+      if (existing) return replay(res, existing, body);
     }
 
-    let submissionId: string;
-    try {
-      await requireRoomRole(body.roomId, userId, "candidate");
-      const [room] = await db
-        .select({ questionId: rooms.questionId, status: rooms.status })
-        .from(rooms)
-        .where(eq(rooms.id, body.roomId))
-        .limit(1);
-      if (!room) throw new NotFound();
-      if (room.status !== "open") throw new BadRequest("Room is closed");
+    await requireRoomRole(body.roomId, userId, "candidate");
+    const [room] = await db
+      .select({ questionId: rooms.questionId, status: rooms.status })
+      .from(rooms)
+      .where(eq(rooms.id, body.roomId))
+      .limit(1);
+    if (!room) throw new NotFound();
+    if (room.status !== "open") throw new BadRequest("Room is closed");
 
-      const [submission] = await db
-        .insert(submissions)
-        .values({
-          roomId: body.roomId,
-          questionId: room.questionId,
-          userId,
-          language: body.language,
-          mode: body.mode,
-          code: body.code,
-        })
-        .returning({ id: submissions.id });
-      submissionId = submission!.id;
-    } catch (err) {
-      await releaseIdempotencyKey(claim);
-      throw err;
+    const [inserted] = await db
+      .insert(submissions)
+      .values({
+        roomId: body.roomId,
+        questionId: room.questionId,
+        userId,
+        language: body.language,
+        mode: body.mode,
+        code: body.code,
+        idempotencyKey,
+      })
+      // Two concurrent requests with the same key: exactly one row wins; the other replays it.
+      .onConflictDoNothing({ target: [submissions.userId, submissions.idempotencyKey] })
+      .returning({ id: submissions.id });
+
+    if (!inserted) {
+      const existing = idempotencyKey ? await findByIdempotencyKey(userId, idempotencyKey) : null;
+      if (!existing) throw new Error("insert conflicted but no submission found for the key");
+      return replay(res, existing, body);
     }
 
-    // From here the submission exists; record it for idempotent replays before anything else can fail.
-    await completeIdempotencyKey(claim, submissionId).catch(() => {});
-
-    try {
-      await enqueueExecution({ submissionId });
-    } catch (err) {
-      console.error(`enqueue failed for ${submissionId}; outbox sweeper will retry:`, err);
-    }
+    const submissionId = inserted.id;
+    await tryEnqueue(submissionId);
 
     // Best effort: realtime clients learn about it; REST still works if this fails.
     const event: RoomBusEvent = { type: "submission:queued", roomId: body.roomId, submissionId };

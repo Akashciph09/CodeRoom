@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { config } from "../config.js";
-import { BadRequest, Conflict, TooManyRequests } from "../errors.js";
+import { BadRequest, TooManyRequests } from "../errors.js";
 import { redis } from "../queue.js";
 
 const WINDOW_SECONDS = 60;
@@ -23,38 +23,14 @@ export async function enforceSubmitRateLimit(userId: string) {
 }
 
 const IdempotencyKey = z.string().regex(/^[A-Za-z0-9_-]{8,128}$/);
-const IDEMPOTENCY_TTL_SECONDS = 10 * 60;
-const PENDING = "pending";
-
-export type IdempotencyClaim =
-  | { kind: "none" }
-  | { kind: "new"; key: string }
-  | { kind: "replay"; submissionId: string };
 
 /**
- * `Idempotency-Key` header: a client-generated id per logical submit. Retrying the same request
- * (network timeout, double send) returns the original submission instead of creating another.
- * Keys are scoped per user and expire after 10 minutes.
+ * `Idempotency-Key` header: a client-generated id for one logical submit, reused on every retry of it.
+ * The key is stored on the submission row itself (unique per user) — see routes/submissions.ts.
  */
-export async function claimIdempotencyKey(userId: string, header: string | undefined): Promise<IdempotencyClaim> {
-  if (header === undefined) return { kind: "none" };
+export function parseIdempotencyKey(header: string | undefined): string | null {
+  if (header === undefined) return null;
   const parsed = IdempotencyKey.safeParse(header);
   if (!parsed.success) throw new BadRequest("Invalid Idempotency-Key");
-
-  const key = `idem:submit:${userId}:${parsed.data}`;
-  const claimed = await redis.set(key, PENDING, "EX", IDEMPOTENCY_TTL_SECONDS, "NX");
-  if (claimed === "OK") return { kind: "new", key };
-
-  const existing = await redis.get(key);
-  if (existing && existing !== PENDING) return { kind: "replay", submissionId: existing };
-  throw new Conflict("A request with this Idempotency-Key is still being processed");
-}
-
-export async function completeIdempotencyKey(claim: IdempotencyClaim, submissionId: string) {
-  if (claim.kind === "new") await redis.set(claim.key, submissionId, "EX", IDEMPOTENCY_TTL_SECONDS);
-}
-
-/** On failure, free the key so the client can retry with it. */
-export async function releaseIdempotencyKey(claim: IdempotencyClaim) {
-  if (claim.kind === "new") await redis.del(claim.key).catch(() => {});
+  return parsed.data;
 }

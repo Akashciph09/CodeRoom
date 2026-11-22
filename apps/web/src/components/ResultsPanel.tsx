@@ -1,10 +1,7 @@
 import { useState } from "react";
 import type { Verdict } from "@coderoom/shared";
-import { isInterviewerView, type SubmissionView } from "../lib/api";
-
-export type SubmissionEntry =
-  | { submissionId: string; pending: true }
-  | { submissionId: string; pending: false; view: SubmissionView };
+import { isInterviewerView } from "../lib/api";
+import type { SubmissionEntry } from "../lib/submissions";
 
 const VERDICT_LABEL: Record<Verdict, string> = {
   accepted: "Accepted",

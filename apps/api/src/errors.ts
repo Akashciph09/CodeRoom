@@ -34,6 +34,11 @@ export class Conflict extends HttpError {
     super(409, message);
   }
 }
+export class UnprocessableEntity extends HttpError {
+  constructor(message = "Unprocessable entity") {
+    super(422, message);
+  }
+}
 export class TooManyRequests extends HttpError {
   constructor(
     message = "Too many requests",

@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Language, RoomView, ServerEvent, SubmissionMode } from "@coderoom/shared";
 import { CollaborativeEditor } from "../components/CollaborativeEditor";
 import { Presence, RemoteCursorStyles } from "../components/Presence";
 import { QuestionPanel } from "../components/QuestionPanel";
-import { ResultsPanel, type SubmissionEntry } from "../components/ResultsPanel";
+import { ResultsPanel } from "../components/ResultsPanel";
 import { TopBar } from "../components/TopBar";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, isRetryable, submitWithRetry } from "../lib/api";
+import { mergeHistory, upsertEntry, type SubmissionEntry } from "../lib/submissions";
 import { displayName, useSession } from "../lib/auth";
 import {
   colorFor,
@@ -46,17 +47,14 @@ export function RoomPage() {
     });
   }, [roomId]);
 
-  /** Server history is authoritative; keep only local placeholders the server doesn't know about yet. */
+  /**
+   * Re-fetch history (on every events (re)connect). Merged, not replaced: a result event that arrived
+   * while this request was in flight is further along than the snapshot and must not be rolled back.
+   */
   const refreshHistory = useCallback(() => {
     api
       .roomSubmissions(roomId)
-      .then((list) =>
-        setEntries((prev) => {
-          const known = new Set(list.map((v) => v.submissionId));
-          const localOnly = prev.filter((e) => e.pending && !known.has(e.submissionId));
-          return [...localOnly, ...list.map((view) => ({ submissionId: view.submissionId, pending: false as const, view }))];
-        }),
-      )
+      .then((list) => setEntries((prev) => mergeHistory(prev, list)))
       .catch(() => {});
   }, [roomId]);
 
@@ -105,17 +103,10 @@ export function RoomPage() {
       if (event.type === "room:closed") {
         setRoom((r) => (r ? { ...r, status: "closed" } : r));
       } else if (event.type === "submission:queued") {
-        setEntries((prev) =>
-          prev.some((e) => e.submissionId === event.submissionId)
-            ? prev
-            : [{ submissionId: event.submissionId, pending: true }, ...prev],
-        );
+        setEntries((prev) => upsertEntry(prev, { submissionId: event.submissionId, pending: true }));
       } else if (event.type === "submission:result") {
         const view = event.result;
-        setEntries((prev) => {
-          const next = prev.filter((e) => e.submissionId !== view.submissionId);
-          return [{ submissionId: view.submissionId, pending: false, view }, ...next];
-        });
+        setEntries((prev) => upsertEntry(prev, { submissionId: view.submissionId, pending: false, view }));
       }
     };
     return connectRoomEvents(room.roomId, { onEvent, onStatus: setEventStatus, onOpen: refreshHistory });
@@ -139,20 +130,29 @@ export function RoomPage() {
     [roomDoc],
   );
 
+  /**
+   * The idempotency key belongs to one logical action (this exact code/mode/language), not one click.
+   * It's kept until the server gives a definitive answer, so clicking again after a lost response
+   * re-sends the same key and gets the original submission back instead of a second run.
+   */
+  const pendingAttempt = useRef<{ fingerprint: string; key: string } | null>(null);
+
   const submit = useCallback(
     async (mode: SubmissionMode) => {
       if (!roomDoc) return;
+      const body = { roomId, language, mode, code: roomDoc.text.toString() };
+      const fingerprint = JSON.stringify(body);
+      if (pendingAttempt.current?.fingerprint !== fingerprint) {
+        pendingAttempt.current = { fingerprint, key: crypto.randomUUID() };
+      }
       setSubmitting(true);
       setNotice(null);
       try {
-        const { submissionId } = await api.submit(
-          { roomId, language, mode, code: roomDoc.text.toString() },
-          crypto.randomUUID(),
-        );
-        setEntries((prev) =>
-          prev.some((e) => e.submissionId === submissionId) ? prev : [{ submissionId, pending: true }, ...prev],
-        );
+        const { submissionId } = await submitWithRetry(body, pendingAttempt.current.key);
+        pendingAttempt.current = null;
+        setEntries((prev) => upsertEntry(prev, { submissionId, pending: true }));
       } catch (err) {
+        if (!isRetryable(err)) pendingAttempt.current = null; // 4xx is final: the next click is a new action
         setNotice(err instanceof Error ? err.message : String(err));
       } finally {
         setSubmitting(false);

@@ -114,11 +114,13 @@ flowchart LR
 | Failure | What happens |
 |---|---|
 | Redis/queue unavailable right after the submission row is written | API still answers `202`; the worker's **outbox sweeper** re-enqueues `queued` rows older than 30 s. Delayed, never lost. |
-| Client retries a submit (timeout, double send) | `Idempotency-Key` returns the original submission; no duplicate run |
+| Client retries a submit after a lost response | The browser reuses the same `Idempotency-Key` for the same action; the key is stored on the submission row (unique per user, same `INSERT`), so the retry returns the original. Concurrent duplicates collide on the index; a reused key with a different body is `422` |
 | Duplicate job for the same submission | `jobId = submissionId` dedupes in BullMQ; the worker skips already-finished submissions |
 | Worker crashes mid-job | BullMQ stalled-job detection re-runs it; results are written in one transaction, previous partial results deleted |
-| Postgres write of the editor document fails | Change stays `dirty`; saves retry with exponential backoff; the final save on unload retries 5× |
-| Browser loses its events socket while a result is published | On every reconnect the client re-fetches submission history over REST |
+| Postgres write of the editor document fails | Change stays `dirty`; saves retry with backoff. Unload waits for any in-flight save first. If the final retries fail, edits are **retained** (background retries) and spilled to Redis; the next load of the room merges them back — never dropped |
+| Last user leaves while a save is in flight | Unload awaits that save; if it fails, the doc is saved again before it's destroyed |
+| `room:closed` publish fails, or a gateway misses it | Each gateway reconciles room status from Postgres every 5 s and enforces it on open sockets |
+| Browser loses its events socket while a result is published | On every reconnect the client re-fetches history and **merges** it — a submission never moves backwards, so a slow response can't undo a newer result |
 | A gateway instance holds unsaved edits when another loads the room | The new instance asks peers for missing updates (state-vector sync over Redis) |
 
 ## Getting started
@@ -216,8 +218,8 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 ## Testing
 
-- **Unit tests** — every sandbox `docker run` flag, verdict mapping, the candidate/interviewer serializers (hidden test ids never appear in the candidate view), and the document manager against a fake database: failed saves are retried, saves never overlap, the final save retries on unload, and read-only rooms drop writes.
-- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 23 behaviours against the running stack. Latest local run:
+- **Unit tests** — every sandbox `docker run` flag, verdict mapping, the candidate/interviewer serializers (hidden test ids never appear in the candidate view), the document manager against a fake database (failed saves are retried, saves never overlap, unload waits for an in-flight save, edits are retained and recovered — even by a new process — when the DB is down, read-only rooms drop writes), and the browser's history merge (a result is never rolled back by an older snapshot).
+- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack. Latest local run:
 
 | Case | Result |
 |---|---|
@@ -232,10 +234,12 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Supabase REST read of `test_cases` | 0 rows (RLS) |
 | Leftover containers | 0 |
 | Same `Idempotency-Key` sent twice | one submission, second response marked `Idempotent-Replayed` |
+| Two concurrent requests with one key | both get the same submission; exactly one row in Postgres |
+| Same key, different code | `422` |
 | 11 submit attempts in a minute | 11th → `429` with `Retry-After` |
 | Queued row with no job (simulated enqueue failure) | recovered by the outbox sweeper and graded `accepted` |
 
-- **Realtime smoke test** (`pnpm smoke:realtime`) — 20 checks, run with interviewer on one API instance and candidate on another:
+- **Realtime smoke test** (`pnpm smoke:realtime`) — 22 checks, run with interviewer on one API instance and candidate on another:
 
 | Case | Result |
 |---|---|
@@ -245,6 +249,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Awareness (cursor/name) | reaches the client on the other instance |
 | Candidate submits | both get `submission:queued`; candidate gets redacted result, interviewer gets full result |
 | Interviewer ends the session | both get `room:closed`; edits on already-open sockets are dropped; new submissions `400`; candidate can't end it (`403`) |
+| Room closed in the DB with **no** event published | gateways enforce it via reconciliation (~4 s); open sockets on the other instance stop writing |
 | Everyone disconnects, new client joins | document restored from Postgres |
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.

@@ -5,47 +5,84 @@ import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { Db } from "@coderoom/db";
-import { MessageType, RoomDocManager } from "./roomDocs.js";
+import { MessageType, RoomDocManager, spillKey } from "./roomDocs.js";
 
 const ROOM = "00000000-0000-4000-8000-0000000000aa";
 
-/** Minimal Drizzle stand-in: load returns nothing; upserts can be made to fail N times. */
-function fakeDb(failFirst: number, writeDelayMs = 0) {
+/**
+ * Minimal Drizzle stand-in holding one room_documents row. Upserts (plain or inside a transaction)
+ * can be made to fail N times and to take `writeDelayMs`.
+ */
+function fakeDb(opts: { failFirst?: number; writeDelayMs?: number } = {}) {
+  let stored: Uint8Array | null = null;
   const writes: Uint8Array[] = [];
   let inFlight = 0;
   let maxInFlight = 0;
-  let failuresLeft = failFirst;
-  const db = {
-    select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }),
-    insert: () => ({
-      values: (v: { state: Uint8Array }) => ({
-        onConflictDoUpdate: async () => {
-          inFlight++;
-          maxInFlight = Math.max(maxInFlight, inFlight);
-          try {
-            await new Promise((r) => setTimeout(r, writeDelayMs));
-            if (failuresLeft-- > 0) throw new Error("db unavailable");
-            writes.push(v.state);
-          } finally {
-            inFlight--;
-          }
-        },
-      }),
-    }),
+  let failuresLeft = opts.failFirst ?? 0;
+
+  const selectChain = () => {
+    const rows = async () => (stored ? [{ state: stored }] : []);
+    return { from: () => ({ where: () => ({ limit: rows, for: rows }) }) };
   };
-  return { db: db as unknown as Db, writes, maxInFlight: () => maxInFlight };
+  const insertChain = () => ({
+    values: (v: { state: Uint8Array }) => ({
+      onConflictDoUpdate: async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        try {
+          await new Promise((r) => setTimeout(r, opts.writeDelayMs ?? 0));
+          if (failuresLeft-- > 0) throw new Error("db unavailable");
+          stored = v.state;
+          writes.push(v.state);
+        } finally {
+          inFlight--;
+        }
+      },
+    }),
+  });
+  const db = {
+    select: selectChain,
+    insert: insertChain,
+    transaction: async (fn: (tx: unknown) => Promise<void>) => fn({ select: selectChain, insert: insertChain }),
+  };
+  return {
+    db: db as unknown as Db,
+    writes,
+    stored: () => stored,
+    maxInFlight: () => maxInFlight,
+    heal: () => (failuresLeft = 0),
+  };
 }
 
-const fakeRedis = () =>
-  ({ on() {}, subscribe: async () => {}, unsubscribe: async () => {}, publish: async () => 0 }) as unknown as Redis;
+/** Redis stand-in: pub/sub calls are no-ops, plus a key/value store for the unsaved-edits spill. */
+function fakeRedis(store = new Map<string, Buffer>()) {
+  const redis = {
+    on() {},
+    subscribe: async () => {},
+    unsubscribe: async () => {},
+    publish: async () => 0,
+    getBuffer: async (k: string) => store.get(k) ?? null,
+    set: async (k: string, v: Buffer) => (store.set(k, v), "OK"),
+    del: async (k: string) => (store.delete(k) ? 1 : 0),
+  };
+  return { redis: redis as unknown as Redis, store };
+}
 
 function fakeSocket() {
   const sent: Uint8Array[] = [];
   return { ws: { readyState: 1, send: (m: Uint8Array) => sent.push(m), terminate() {} } as unknown as WebSocket, sent };
 }
 
-function manager(db: Db, debounceMs = 10) {
-  return new RoomDocManager({ db, pub: fakeRedis(), sub: fakeRedis(), instanceId: "test", persistDebounceMs: debounceMs });
+function manager(db: Db, opts: { debounceMs?: number; store?: Map<string, Buffer> } = {}) {
+  const { redis } = fakeRedis(opts.store);
+  return new RoomDocManager({
+    db,
+    pub: redis,
+    sub: redis,
+    instanceId: "test",
+    persistDebounceMs: opts.debounceMs ?? 10,
+    retryBaseMs: 10,
+  });
 }
 
 /** A y-websocket "update" message that inserts `text` at the start of the shared code. */
@@ -65,63 +102,106 @@ function syncStep1Message() {
   return encoding.toUint8Array(encoder);
 }
 
-const textOf = (state: Uint8Array) => {
+const textOf = (state: Uint8Array | null | undefined) => {
   const doc = new Y.Doc();
-  Y.applyUpdate(doc, state);
+  if (state) Y.applyUpdate(doc, state);
   return doc.getText("code").toString();
 };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function waitFor(pred: () => boolean, timeoutMs = 4000) {
   const start = Date.now();
   while (!pred()) {
     if (Date.now() - start > timeoutMs) throw new Error("timeout");
-    await new Promise((r) => setTimeout(r, 20));
+    await sleep(10);
   }
 }
 
 describe("RoomDocManager persistence", () => {
   it("retries a failed save until it succeeds", async () => {
-    const { db, writes } = fakeDb(2);
-    const docs = manager(db);
+    const db = fakeDb({ failFirst: 2 });
+    const docs = manager(db.db);
     const { ws } = fakeSocket();
     const entry = await docs.connect(ROOM, ws, { readOnly: false });
 
     docs.handleClientMessage(entry, ws, editMessage("hello"));
-    await waitFor(() => writes.length === 1);
-    expect(textOf(writes[0]!)).toBe("hello");
+    await waitFor(() => db.writes.length === 1);
+    expect(textOf(db.writes[0])).toBe("hello");
   });
 
   it("never runs two saves for a room at once", async () => {
-    const { db, writes, maxInFlight } = fakeDb(0, 50);
-    const docs = manager(db, 1);
+    const db = fakeDb({ writeDelayMs: 50 });
+    const docs = manager(db.db, { debounceMs: 1 });
     const { ws } = fakeSocket();
     const entry = await docs.connect(ROOM, ws, { readOnly: false });
 
     for (const ch of "abcde") {
       docs.handleClientMessage(entry, ws, editMessage(ch));
-      await new Promise((r) => setTimeout(r, 15));
+      await sleep(15);
     }
-    await waitFor(() => writes.length > 0 && textOf(writes.at(-1)!).length === 5);
-    expect(maxInFlight()).toBe(1);
+    await waitFor(() => textOf(db.stored()).length === 5);
+    expect(db.maxInFlight()).toBe(1);
   });
 
-  it("retries the final save when the last client leaves", async () => {
-    const { db, writes } = fakeDb(2);
-    const docs = manager(db, 60_000); // debounce never fires; only the unload save runs
+  it("waits for an in-flight save on unload, and saves again if that save fails", async () => {
+    // The debounce save starts (dirty cleared) and is still writing when the last client leaves;
+    // that write then fails. Previously unload saw dirty=false and destroyed the doc.
+    const db = fakeDb({ failFirst: 1, writeDelayMs: 80 });
+    const docs = manager(db.db, { debounceMs: 1 });
     const { ws } = fakeSocket();
     const entry = await docs.connect(ROOM, ws, { readOnly: false });
 
-    docs.handleClientMessage(entry, ws, editMessage("bye"));
+    docs.handleClientMessage(entry, ws, editMessage("in-flight"));
+    await sleep(20); // save is now in flight
     await docs.disconnect(ROOM, ws);
-    expect(writes).toHaveLength(1);
-    expect(textOf(writes[0]!)).toBe("bye");
+    expect(textOf(db.stored())).toBe("in-flight");
+    expect(docs.retainedCount).toBe(0);
+  });
+
+  it("keeps unsaved edits after final retries fail, and writes them once the DB recovers", async () => {
+    const db = fakeDb({ failFirst: 1000 });
+    const store = new Map<string, Buffer>();
+    const docs = manager(db.db, { debounceMs: 60_000, store }); // only the unload path saves
+    const { ws } = fakeSocket();
+    const entry = await docs.connect(ROOM, ws, { readOnly: false });
+
+    docs.handleClientMessage(entry, ws, editMessage("precious"));
+    await docs.disconnect(ROOM, ws);
+    expect(docs.retainedCount).toBe(1); // not dropped
+    await waitFor(() => store.has(spillKey(ROOM))); // and spilled for other processes
+    expect(textOf(store.get(spillKey(ROOM)))).toBe("precious");
+
+    db.heal();
+    await waitFor(() => docs.retainedCount === 0);
+    expect(textOf(db.stored())).toBe("precious");
+    expect(store.has(spillKey(ROOM))).toBe(false);
+  });
+
+  it("a new process recovers spilled edits when the room is loaded again", async () => {
+    const db = fakeDb({ failFirst: 1000 });
+    const store = new Map<string, Buffer>();
+    const first = manager(db.db, { debounceMs: 60_000, store });
+    const a = fakeSocket();
+    const entry = await first.connect(ROOM, a.ws, { readOnly: false });
+    first.handleClientMessage(entry, a.ws, editMessage("survives"));
+    await first.disconnect(ROOM, a.ws);
+    await first.closeAll(); // "process exits" with the edits only in the Redis spill
+    await waitFor(() => store.has(spillKey(ROOM)));
+
+    db.heal();
+    const second = manager(db.db, { debounceMs: 1, store });
+    const b = fakeSocket();
+    const reloaded = await second.connect(ROOM, b.ws, { readOnly: false });
+    expect(reloaded.doc.getText("code").toString()).toBe("survives");
+    await waitFor(() => textOf(db.stored()) === "survives"); // written back to Postgres
+    await waitFor(() => !store.has(spillKey(ROOM))); // and the spill cleaned up
   });
 });
 
 describe("RoomDocManager read-only rooms", () => {
   it("drops document writes but still answers sync requests", async () => {
-    const { db } = fakeDb(0);
-    const docs = manager(db);
+    const db = fakeDb();
+    const docs = manager(db.db);
     const { ws, sent } = fakeSocket();
     const entry = await docs.connect(ROOM, ws, { readOnly: false });
 
@@ -129,6 +209,7 @@ describe("RoomDocManager read-only rooms", () => {
     docs.setReadOnly(ROOM);
     docs.handleClientMessage(entry, ws, editMessage("after "));
     expect(entry.doc.getText("code").toString()).toBe("before");
+    expect(docs.writableRoomIds()).toEqual([]);
 
     const sentBefore = sent.length;
     docs.handleClientMessage(entry, ws, syncStep1Message());
@@ -136,8 +217,8 @@ describe("RoomDocManager read-only rooms", () => {
   });
 
   it("connections opened on an ended room are read-only from the start", async () => {
-    const { db } = fakeDb(0);
-    const docs = manager(db);
+    const db = fakeDb();
+    const docs = manager(db.db);
     const { ws } = fakeSocket();
     const entry = await docs.connect(ROOM, ws, { readOnly: true });
     docs.handleClientMessage(entry, ws, editMessage("nope"));
