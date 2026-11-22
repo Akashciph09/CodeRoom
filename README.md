@@ -163,6 +163,7 @@ Verify end to end (with `pnpm dev` running, in another terminal):
 ```bash
 pnpm smoke
 pnpm smoke:realtime
+pnpm e2e
 ```
 
 To prove cross-instance sync, start a second API on another port and point the candidate at it:
@@ -181,6 +182,7 @@ SMOKE_API_URL_2=http://localhost:4001 pnpm smoke:realtime
 | `pnpm typecheck` / `pnpm build` | Type-check / build all packages |
 | `pnpm smoke` | End-to-end checks against the running stack |
 | `pnpm smoke:realtime` | Realtime checks: upgrade auth, sync latency, convergence, live results, persistence |
+| `pnpm e2e` | Playwright browser tests of the interviewer/candidate flow (local stack only) |
 | `pnpm db:start` / `db:stop` | Start / stop local Supabase |
 | `pnpm db:reset` | Wipe local DB, reapply migrations and seed |
 | `pnpm db:generate` | Generate a SQL migration from `packages/db/src/schema.ts` |
@@ -256,6 +258,24 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts run a whole interview in Chrome (~11 s):
+
+| Step | Checked |
+|---|---|
+| Interviewer signs up, creates a room | starter code seeded, interviewer has no Run/Submit |
+| Copy invite link → candidate opens it | redirected to sign-in, lands back in the room after signing up |
+| Presence | each side sees both named avatars |
+| Candidate types | text appears in the interviewer's editor |
+| Candidate submits | candidate: "Accepted, hidden tests 2/2", no hidden rows; interviewer: 2 hidden rows + submitted code |
+| Language picker | change syncs to the other side |
+| `while (true) {}` | "Time limit exceeded" on both sides |
+| Outsider opens the room URL | "You're not a participant in this room", no editor |
+| Interviewer ends the session | banner on both sides, Run/Submit disabled, typing changes nothing on either side |
+| Reload after the end | final code and history still shown |
+| Signed-out visit to a room | redirected to sign-in with the room kept in `next` |
+
+The tests refuse to run unless Supabase and the API are on `localhost` (they create throwaway accounts), and they fail fast if the API isn't healthy. They use the installed Google Chrome; set `PLAYWRIGHT_CHANNEL=""` and run `pnpm --filter @coderoom/web exec playwright install chromium` to use Playwright's bundled browser instead (e.g. CI). Each assertion was checked to fail when the behaviour it guards is broken — for example, disabling the editor's read-only mode makes the end-of-session step fail.
+
 ## Project structure
 
 ```
@@ -280,7 +300,8 @@ docs/decisions/ Architecture Decision Records
 - [x] Candidate / interviewer result views, RLS lockdown, smoke test
 - [x] WebSocket gateway: Yjs collaborative editing, cross-instance fan-out, persistence, live role-aware results
 - [x] Browser UI: sign in, invite links, collaborative Monaco with live cursors, run/submit, role-aware live results
-- [ ] Browser end-to-end tests (Playwright) for the two-role flow
+- [x] Browser end-to-end tests (Playwright) for the two-role flow
+- [ ] Run unit, smoke and browser tests in CI against a containerized stack
 - [ ] Question bank API (draft → approved workflow)
 - [ ] Submission history and editor replay (Supabase Storage)
 - [ ] Structured evaluation rubric

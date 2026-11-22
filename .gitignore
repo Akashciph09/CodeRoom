@@ -32,3 +32,8 @@ CLAUDE.local.md
 .vscode/
 .idea/
 .DS_Store
+
+# Playwright
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
