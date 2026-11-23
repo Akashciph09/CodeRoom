@@ -83,7 +83,7 @@ export const api = {
     request<QuestionDetail>("DELETE", `/questions/${id}/draft`, { revision }),
   publishQuestion: (id: string, revision: number) =>
     request<QuestionDetail>("POST", `/questions/${id}/publish`, { revision }),
-  deleteQuestion: (id: string) => request<void>("DELETE", `/questions/${id}`),
+  deleteQuestion: (id: string, revision: number) => request<void>("DELETE", `/questions/${id}`, { revision }),
   previewQuestion: (id: string, of: "draft" | "latest") =>
     request<CandidateQuestionView>("GET", `/questions/${id}/preview?of=${of}`),
 };

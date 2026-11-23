@@ -207,7 +207,7 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `POST` | `/questions/:id/publish` | owner | `{ revision }` → next immutable version. `400` with `problems` if incomplete, `409` if the draft changed since |
 | `DELETE` | `/questions/:id/draft` | owner | `{ revision }` → discard unpublished changes (`409` if stale) |
 | `GET` | `/questions/:id/preview?of=draft\|latest` | owner | Exactly the candidate's view (public tests only) |
-| `DELETE` | `/questions/:id` | owner | Delete a never-ready question (`409` once ready) |
+| `DELETE` | `/questions/:id` | owner | `{ revision }` → delete a never-ready question (`409` once ready or if stale) |
 | `GET` | `/rooms` | any user | Rooms the caller participates in |
 | `POST` | `/rooms` | any user | Create a room with your own or a library question; it **pins the latest ready version**. Caller becomes interviewer |
 | `POST` | `/rooms/join` | any user | Join with invite code as candidate |
@@ -231,7 +231,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 ## Testing
 
 - **Unit tests** — every sandbox `docker run` flag, verdict mapping, the candidate/interviewer serializers (hidden test ids never appear in the candidate view), the document manager against a fake database (failed saves are retried, saves never overlap, unload waits for an in-flight save, edits are retained and recovered — even by a new process — when the DB is down, read-only rooms drop writes), and the browser's history merge (a result is never rolled back by an older snapshot).
-- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack, then `questions-smoke.ts` checks 34 more for authoring, ownership, versioning and two-tab conflicts (an interview on v1 keeps showing and grading v1 after v2 is ready; the DB rejects edits to a published version). Latest local run of the first part:
+- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack, then `questions-smoke.ts` checks 40 more for authoring, ownership, versioning and two-tab conflicts (including a draft being replaced while an old tab is open) (an interview on v1 keeps showing and grading v1 after v2 is ready; the DB rejects edits to a published version). Latest local run of the first part:
 
 | Case | Result |
 |---|---|

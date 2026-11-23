@@ -144,8 +144,8 @@ export function QuestionEditorPage() {
     }
   }
 
-  /** The draft revision this tab's edits are based on (null = editing on top of the ready version). */
-  const baseRevision = detail?.draft?.revision ?? null;
+  /** The question revision this tab's view is based on; every write sends it back (409 if stale). */
+  const baseRevision = detail?.revision ?? 0;
 
   async function saveIfDirty(): Promise<QuestionDetail | null> {
     if (!form || !dirty) return detail;
@@ -180,10 +180,9 @@ export function QuestionEditorPage() {
     run(
       async () => {
         const saved = await saveIfDirty();
-        const revision = saved?.draft?.revision;
-        if (revision === undefined) return;
+        if (!saved?.draft) return; // nothing to publish
         try {
-          const d = await api.publishQuestion(questionId, revision);
+          const d = await api.publishQuestion(questionId, saved.revision);
           applyServer(d);
           setProblems([]);
           setMessage({ kind: "ok", text: `Marked ready as version ${d.latest?.version}. New interviews will use it.` });
@@ -199,7 +198,6 @@ export function QuestionEditorPage() {
   const discard = () =>
     run(
       async () => {
-        if (baseRevision === null) return;
         if (!confirm("Discard your unpublished changes? The ready version stays as it is.")) return;
         applyServer(await api.discardDraft(questionId, baseRevision));
         setMessage({ kind: "ok", text: "Changes discarded." });
@@ -211,7 +209,7 @@ export function QuestionEditorPage() {
     run(
       async () => {
         if (!confirm("Delete this question? This can't be undone.")) return;
-        await api.deleteQuestion(questionId);
+        await api.deleteQuestion(questionId, baseRevision);
         navigate("/questions");
       },
       { lock: true },
@@ -281,7 +279,7 @@ export function QuestionEditorPage() {
 
         {conflict && (
           <div className="error-box" role="alert" aria-label="Draft conflict">
-            <strong>This draft was changed in another tab or window.</strong> Your edits here weren't saved, so
+            <strong>This question was changed in another tab or window.</strong> Your edits here weren't saved, so
             nothing was overwritten. Copy anything you want to keep, then reload the latest version.
             <div className="actions" style={{ marginTop: 8 }}>
               <button onClick={reloadLatest} disabled={busy}>

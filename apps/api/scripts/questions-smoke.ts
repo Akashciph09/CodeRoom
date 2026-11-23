@@ -23,12 +23,12 @@ async function waitFor(id: string, token: string) {
 }
 
 /**
- * Acts like one open editor tab: remembers the draft revision it last saw and sends it back on every
- * save / publish / discard, exactly like the web editor does.
+ * Acts like one open editor tab: remembers the question revision it last saw and sends it back on every
+ * save / publish / discard / delete, exactly like the web editor does.
  */
 function editorTab(token: string, qid: () => string) {
-  let rev: number | null = null;
-  const sync = (detail: any) => (rev = detail?.draft?.revision ?? null);
+  let rev = 0;
+  const sync = (detail: any) => (rev = detail?.revision ?? rev);
   return {
     get revision() {
       return rev;
@@ -45,14 +45,17 @@ function editorTab(token: string, qid: () => string) {
       return r;
     },
     async publish() {
-      const r = await call("POST", `/questions/${qid()}/publish`, token, { revision: rev ?? 1 });
+      const r = await call("POST", `/questions/${qid()}/publish`, token, { revision: rev });
       if (r.status === 200) sync(r.json);
       return r;
     },
     async discard() {
-      const r = await call("DELETE", `/questions/${qid()}/draft`, token, { revision: rev ?? 1 });
+      const r = await call("DELETE", `/questions/${qid()}/draft`, token, { revision: rev });
       if (r.status === 200) sync(r.json);
       return r;
+    },
+    async remove() {
+      return call("DELETE", `/questions/${qid()}`, token, { revision: rev });
     },
   };
 }
@@ -183,9 +186,12 @@ async function main() {
   await tab.save({ ...v2Draft, title: "scratch edit" });
   const discarded = await tab.discard();
   check("discard draft → back to the ready version", discarded.status === 200 && discarded.json.draft === null && discarded.json.latest.version === 2);
-  check("ready questions can't be deleted → 409", (await call("DELETE", `/questions/${qid}`, owner)).status === 409);
+  check("ready questions can't be deleted → 409", (await tab.remove()).status === 409);
   const throwaway = await call("POST", "/questions", owner, {});
-  check("never-ready question can be deleted → 204", (await call("DELETE", `/questions/${throwaway.json.id}`, owner)).status === 204);
+  check(
+    "never-ready question can be deleted → 204",
+    (await call("DELETE", `/questions/${throwaway.json.id}`, owner, { revision: throwaway.json.revision })).status === 204,
+  );
 
   // --- Two tabs editing the same question: optimistic concurrency ---------------------------------------
   // The question is ready (v2) with no draft. Both tabs open the editor.
@@ -193,7 +199,7 @@ async function main() {
   const tabB = editorTab(owner, () => qid);
   await tabA.load();
   await tabB.load();
-  check("both tabs start with no draft", tabA.revision === null && tabB.revision === null);
+  check("both tabs start from the same revision", tabA.revision > 0 && tabA.revision === tabB.revision);
 
   const aFirst = await tabA.save({ ...v2Draft, title: "Edited in tab A" });
   const bStale = await tabB.save({ ...v2Draft, title: "Edited in tab B" });
@@ -202,7 +208,7 @@ async function main() {
     aFirst.status === 200 &&
       bStale.status === 409 &&
       bStale.json.conflict === "draft_changed" &&
-      bStale.json.currentRevision === aFirst.json.draft.revision &&
+      bStale.json.currentRevision === aFirst.json.revision &&
       (await call("GET", `/questions/${qid}`, owner)).json.draft.title === "Edited in tab A",
   );
 
@@ -227,6 +233,71 @@ async function main() {
   );
   const winner = raceA.status === 200 ? tabA : tabB;
   check("the up-to-date tab can still publish", (await winner.publish()).json?.latest?.version === 3);
+
+  // --- Regression: a draft is replaced while an old tab is still open (ABA) -----------------------------
+  // A per-draft counter restarts at 1 for every new draft, so an old tab's revision could match a
+  // DIFFERENT draft. The question-level revision never resets; each case below must be rejected.
+  const titleNow = async () => (await call("GET", `/questions/${qid}`, owner)).json;
+  const stale = editorTab(owner, () => qid);
+  const fresh = editorTab(owner, () => qid);
+
+  // Case 1: draft X is published, then a new draft Y is started; the old tab still holds X.
+  await fresh.load();
+  await fresh.save({ ...v2Draft, title: "draft X" });
+  await stale.load(); // sees draft X
+  await fresh.publish(); // X becomes a version
+  await fresh.save({ ...v2Draft, title: "draft Y" }); // brand-new draft
+  const c1save = await stale.save({ ...v2Draft, title: "stale overwrite" });
+  const c1pub = await stale.publish();
+  const c1dis = await stale.discard();
+  const after1 = await titleNow();
+  check(
+    "replaced draft (after publish): old tab's save/publish/discard → 409",
+    c1save.status === 409 && c1pub.status === 409 && c1dis.status === 409,
+    `(${c1save.status}, ${c1pub.status}, ${c1dis.status})`,
+  );
+  check("…and the new draft is untouched, unpublished", after1.draft?.title === "draft Y" && after1.latest.version === 4);
+
+  // Case 2: draft Y is discarded, then draft Z is started; the old tab still holds Y.
+  await stale.load(); // sees draft Y
+  await fresh.load();
+  await fresh.discard();
+  await fresh.save({ ...v2Draft, title: "draft Z" });
+  const c2 = [await stale.save({ ...v2Draft, title: "stale" }), await stale.publish(), await stale.discard()];
+  const after2 = await titleNow();
+  check(
+    "replaced draft (after discard): old tab's save/publish/discard → 409",
+    c2.every((r) => r.status === 409) && after2.draft?.title === "draft Z",
+  );
+
+  // Case 3: the old tab opened the question when it had no draft; meanwhile a newer version was published.
+  await fresh.load();
+  await fresh.publish(); // Z → v5, no draft now
+  await stale.load(); // no draft, ready v5
+  await fresh.save({ ...v2Draft, title: "draft W" });
+  await fresh.publish(); // v6, no draft again — same shape the old tab saw
+  const c3 = await stale.save({ ...v2Draft, title: "edit of v5" });
+  const after3 = await titleNow();
+  check(
+    "editing from a superseded ready version → 409 (no draft created)",
+    c3.status === 409 && after3.draft === null && after3.latest.version === 6,
+  );
+
+  // The simplest stale cases: the open draft was published / discarded, nothing else happened.
+  await fresh.load();
+  await fresh.save({ ...v2Draft, title: "draft V" });
+  await stale.load();
+  await fresh.publish(); // v7
+  check("old tab saves after its draft was published → 409", (await stale.save({ ...v2Draft, title: "x" })).status === 409);
+  await fresh.load();
+  await fresh.save({ ...v2Draft, title: "draft U" });
+  await stale.load();
+  await fresh.discard();
+  const resurrect = await stale.save({ ...v2Draft, title: "resurrected" });
+  check(
+    "old tab saves after its draft was discarded → 409 (not resurrected)",
+    resurrect.status === 409 && (await titleNow()).draft === null,
+  );
 
   // --- Immutability is enforced by the database, not just the API -------------------------------------
   const { db, close } = createDb(process.env.DATABASE_URL!, { max: 1 });

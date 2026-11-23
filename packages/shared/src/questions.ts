@@ -23,12 +23,13 @@ export type TestCaseInput = z.infer<typeof TestCaseInput>;
  * Full content of a draft. Saving replaces the whole draft — test order in `tests` is the order
  * candidates see and the order results are reported in.
  *
- * `baseRevision` is the draft revision this edit started from (`null` = there was no draft, the edit
- * started from the ready version). If the draft has moved on since — another tab saved, published or
- * discarded it — the server answers 409 instead of overwriting.
+ * `baseRevision` is the question revision (`QuestionDetail.revision`) this edit started from. It changes on
+ * every save, draft creation, publish and discard, and never resets — so if anything happened to the
+ * question since (another tab saved, published, discarded, or started a new draft), the server answers
+ * 409 instead of overwriting.
  */
 export const QuestionDraftInput = z.object({
-  baseRevision: z.number().int().positive().nullable(),
+  baseRevision: z.number().int().positive(),
   title: z.string().trim().min(1, "Title is required").max(200),
   statement: z.string().max(20_000),
   constraints: z.string().max(5_000).default(""),
@@ -37,7 +38,7 @@ export const QuestionDraftInput = z.object({
 });
 export type QuestionDraftInput = z.infer<typeof QuestionDraftInput>;
 
-/** Publish / discard act on the draft the client has seen; 409 if it has changed since. */
+/** Publish / discard / delete act on the question state the client has seen (its `revision`); 409 if it changed. */
 export const DraftRevisionRequest = z.object({
   revision: z.number().int().positive(),
 });
@@ -47,8 +48,8 @@ export type DraftRevisionRequest = z.infer<typeof DraftRevisionRequest>;
 export const DraftConflict = z.object({
   error: z.string(),
   conflict: z.literal("draft_changed"),
-  /** The draft's current revision on the server (`null` if there's no draft any more). */
-  currentRevision: z.number().int().nullable(),
+  /** The question's current revision on the server. */
+  currentRevision: z.number().int(),
 });
 export type DraftConflict = z.infer<typeof DraftConflict>;
 
@@ -72,14 +73,14 @@ export const QuestionVersionView = z.object({
   tests: z.array(TestCaseView),
   publishedAt: z.string().nullable(),
   updatedAt: z.string(),
-  /** Draft revision; send it back as `baseRevision` / `revision`. */
-  revision: z.number().int(),
 });
 export type QuestionVersionView = z.infer<typeof QuestionVersionView>;
 
 /** Editor payload: the editable draft (if any) and the latest ready version (if any). Owner only. */
 export const QuestionDetail = z.object({
   id: z.string().uuid(),
+  /** Question revision: send it back as `baseRevision` / `revision` on the next write. */
+  revision: z.number().int().positive(),
   draft: QuestionVersionView.nullable(),
   latest: QuestionVersionView.nullable(),
   versions: z.array(z.object({ id: z.string().uuid(), version: z.number().int(), publishedAt: z.string() })),

@@ -29,18 +29,15 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Version = typeof questionVersions.$inferSelect;
 
 /**
- * Optimistic-concurrency failure: the draft changed (another tab saved, published or discarded it)
- * since the client loaded the revision it's acting on. Nothing was written.
+ * Optimistic-concurrency failure: the question changed (another tab saved, published, discarded or
+ * started a new draft) since the client loaded the revision it's acting on. Nothing was written.
  */
 export class DraftChanged extends HttpError {
-  constructor(currentRevision: number | null) {
-    super(
-      409,
-      currentRevision === null
-        ? "This draft was published or discarded elsewhere. Reload to continue."
-        : "This draft was changed elsewhere (another tab or window). Reload to get the latest version.",
-      { conflict: "draft_changed", currentRevision },
-    );
+  constructor(currentRevision: number) {
+    super(409, "This question was changed elsewhere (another tab or window). Reload to get the latest version.", {
+      conflict: "draft_changed",
+      currentRevision,
+    });
   }
 }
 
@@ -102,7 +99,6 @@ async function versionView(v: Version, conn: Db | Tx = db): Promise<QuestionVers
     })),
     publishedAt: v.publishedAt?.toISOString() ?? null,
     updatedAt: v.updatedAt.toISOString(),
-    revision: v.revision,
   };
 }
 
@@ -124,7 +120,8 @@ export const latestPublished = (questionId: string, conn: Db | Tx = db) =>
     .then((r) => r[0] ?? null);
 
 export async function questionDetail(questionId: string, conn: Db | Tx = db): Promise<QuestionDetail> {
-  const [draft, latest, versions, [usage]] = await Promise.all([
+  const [[q], draft, latest, versions, [usage]] = await Promise.all([
+    conn.select({ revision: questions.revision }).from(questions).where(eq(questions.id, questionId)).limit(1),
     draftOf(questionId, conn),
     latestPublished(questionId, conn),
     conn
@@ -140,6 +137,7 @@ export async function questionDetail(questionId: string, conn: Db | Tx = db): Pr
   ]);
   return {
     id: questionId,
+    revision: q!.revision,
     draft: draft ? await versionView(draft, conn) : null,
     latest: latest ? await versionView(latest, conn) : null,
     versions: versions.map((v) => ({ id: v.id, version: v.version!, publishedAt: v.publishedAt!.toISOString() })),
@@ -236,9 +234,24 @@ export async function candidateView(versionId: string): Promise<CandidateQuestio
 
 // --- Writes -----------------------------------------------------------------------------------------
 
-/** Serialize all writes to one question (draft creation, saves, publish) across API instances. */
-async function lockQuestion(tx: Tx, questionId: string) {
-  await tx.select({ id: questions.id }).from(questions).where(eq(questions.id, questionId)).for("update");
+/**
+ * Every write to a question's draft lifecycle goes through here: lock the question row (serializing
+ * writers across API instances), require that the client acted on the current revision, and bump it.
+ * The revision lives on the question and never resets, so "draft X replaced by a new draft Y" can't
+ * look unchanged to a stale client (the ABA problem a per-draft counter has).
+ */
+async function claimRevision(tx: Tx, questionId: string, expected: number) {
+  const [q] = await tx
+    .select({ revision: questions.revision })
+    .from(questions)
+    .where(eq(questions.id, questionId))
+    .for("update");
+  if (!q) throw new NotFound("Question not found");
+  if (q.revision !== expected) throw new DraftChanged(q.revision);
+  await tx
+    .update(questions)
+    .set({ revision: sql`${questions.revision} + 1`, updatedAt: new Date() })
+    .where(eq(questions.id, questionId));
 }
 
 async function replaceTests(tx: Tx, versionId: string, tests: QuestionDraftInput["tests"]) {
@@ -267,13 +280,13 @@ export async function createQuestion(userId: string, title: string): Promise<Que
  * Save the whole draft. If the question has no draft (it's ready and this is the first edit since),
  * a new draft is created — the published versions, and every room using them, are untouched.
  *
- * Optimistic concurrency: `input.baseRevision` must match the draft's current revision (or be null when
- * there is no draft). Checked under the question lock, so two tabs can't both "win" — the stale one
- * gets 409 and nothing is overwritten.
+ * Optimistic concurrency: `input.baseRevision` must be the question's current revision (see claimRevision),
+ * so a stale tab gets 409 and nothing is overwritten — including when it started editing from a ready
+ * version that has since been superseded.
  */
 export async function saveDraft(questionId: string, input: QuestionDraftInput): Promise<QuestionDetail> {
   return db.transaction(async (tx) => {
-    await lockQuestion(tx, questionId);
+    await claimRevision(tx, questionId, input.baseRevision);
     const content = {
       title: input.title,
       statement: input.statement,
@@ -281,13 +294,8 @@ export async function saveDraft(questionId: string, input: QuestionDraftInput): 
       starterCode: input.starterCode,
     };
     let draft = await draftOf(questionId, tx);
-    const current = draft?.revision ?? null;
-    if (input.baseRevision !== current) throw new DraftChanged(current);
     if (draft) {
-      await tx
-        .update(questionVersions)
-        .set({ ...content, revision: sql`${questionVersions.revision} + 1` })
-        .where(eq(questionVersions.id, draft.id));
+      await tx.update(questionVersions).set(content).where(eq(questionVersions.id, draft.id));
     } else {
       const [created] = await tx
         .insert(questionVersions)
@@ -296,20 +304,19 @@ export async function saveDraft(questionId: string, input: QuestionDraftInput): 
       draft = created!;
     }
     await replaceTests(tx, draft.id, input.tests);
-    await tx.update(questions).set({ updatedAt: new Date() }).where(eq(questions.id, questionId));
     return questionDetail(questionId, tx);
   });
 }
 
 /**
  * Mark the draft ready: it becomes the next immutable version. Rooms created from now on use it.
- * `revision` must be the draft the author reviewed — never publish content they haven't seen.
+ * `revision` must be the question state the author reviewed — never publish content they haven't seen.
  */
 export async function publishDraft(questionId: string, revision: number): Promise<QuestionDetail> {
   return db.transaction(async (tx) => {
-    await lockQuestion(tx, questionId);
+    await claimRevision(tx, questionId, revision);
     const draft = await draftOf(questionId, tx);
-    if (!draft || draft.revision !== revision) throw new DraftChanged(draft?.revision ?? null);
+    if (!draft) throw new HttpError(409, "No draft to publish — the latest version is already ready");
     const tests = await testsOf(draft.id, tx);
     const problems = publishProblems({ title: draft.title, statement: draft.statement, tests });
     if (problems.length > 0) throw new PublishBlocked(problems);
@@ -329,9 +336,7 @@ export async function publishDraft(questionId: string, revision: number): Promis
 /** Throw away unpublished changes. Only when there's a ready version to fall back to. */
 export async function discardDraft(questionId: string, revision: number): Promise<QuestionDetail> {
   return db.transaction(async (tx) => {
-    await lockQuestion(tx, questionId);
-    const draft = await draftOf(questionId, tx);
-    if (!draft || draft.revision !== revision) throw new DraftChanged(draft?.revision ?? null);
+    await claimRevision(tx, questionId, revision);
     if (!(await latestPublished(questionId, tx))) {
       throw new HttpError(409, "This question has never been marked ready; delete it instead");
     }
@@ -343,9 +348,9 @@ export async function discardDraft(questionId: string, revision: number): Promis
 }
 
 /** Delete a question that was never marked ready (ready versions may be pinned by rooms). */
-export async function deleteQuestion(questionId: string) {
+export async function deleteQuestion(questionId: string, revision: number) {
   await db.transaction(async (tx) => {
-    await lockQuestion(tx, questionId);
+    await claimRevision(tx, questionId, revision);
     if (await latestPublished(questionId, tx)) {
       throw new HttpError(409, "Ready questions can't be deleted: interviews may be using them");
     }

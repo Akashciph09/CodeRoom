@@ -55,19 +55,20 @@ const owned = (handler: (questionId: string, req: Parameters<Parameters<typeof a
 
 questionsRouter.get("/:id", owned((id) => questionDetail(id)));
 
-/** Save the full draft (creates one if the question is currently ready). 409 if `baseRevision` is stale. */
+/** Save the full draft (creates one if the question is currently ready). 409 if `baseRevision` isn't the question's current revision. */
 questionsRouter.put("/:id/draft", owned((id, req) => saveDraft(id, QuestionDraftInput.parse(req.body))));
 
-/** Body `{ revision }`: the draft the author is discarding. 409 if it changed since. */
+/** Body `{ revision }`: the question state the author is discarding from. 409 if it changed since. */
 questionsRouter.delete("/:id/draft", owned((id, req) => discardDraft(id, DraftRevisionRequest.parse(req.body).revision)));
 
 /**
- * Mark the draft ready → next immutable version. Body `{ revision }`: the draft the author reviewed
- * (409 if it changed since). 400 with `problems` if it isn't complete.
+ * Mark the draft ready → next immutable version. Body `{ revision }`: the question state the author
+ * reviewed (409 if it changed since). 400 with `problems` if it isn't complete.
  */
 questionsRouter.post("/:id/publish", owned((id, req) => publishDraft(id, DraftRevisionRequest.parse(req.body).revision)));
 
-questionsRouter.delete("/:id", owned(async (id) => void (await deleteQuestion(id))));
+/** Body `{ revision }`. 409 if the question changed since. */
+questionsRouter.delete("/:id", owned(async (id, req) => void (await deleteQuestion(id, DraftRevisionRequest.parse(req.body).revision))));
 
 /**
  * Exactly what a candidate would see, produced by the same code rooms use (public tests only).
