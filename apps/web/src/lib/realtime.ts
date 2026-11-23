@@ -2,7 +2,7 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 import { REALTIME_PROTOCOL, type Language, type ServerEvent } from "@coderoom/shared";
 import { auth, getAccessToken } from "./auth";
-import { codeKey, metaKey } from "./roomQuestions";
+import { casesKey, codeKey, metaKey } from "./roomQuestions";
 import { WS_URL } from "./config";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -40,6 +40,8 @@ export function connectRoomDoc(roomId: string, token: string, user: RoomUser) {
     doc,
     provider,
     textFor: (position: number) => doc.getText(codeKey(position)),
+    /** Shared custom test cases of question `position` (ADR 0010). */
+    casesFor: (position: number) => doc.getArray<unknown>(casesKey(position)),
     meta: doc.getMap<unknown>("meta"),
     destroy() {
       data.subscription.unsubscribe();

@@ -43,7 +43,8 @@ async function replay(res: Response, existing: Submission, body: CreateSubmissio
     existing.roomQuestionId === body.roomQuestionId &&
     existing.language === body.language &&
     existing.mode === body.mode &&
-    existing.code === body.code;
+    existing.code === body.code &&
+    JSON.stringify(existing.customCases ?? []) === JSON.stringify(body.customCases ?? []);
   if (!same) throw new UnprocessableEntity("Idempotency-Key was already used for a different request");
   // Cheap insurance if the original enqueue failed (jobId dedupes if it didn't).
   if (existing.status === "queued") await tryEnqueue(existing.id);
@@ -91,6 +92,7 @@ submissionsRouter.post(
           language: body.language,
           mode: body.mode,
           code: body.code,
+          customCases: body.customCases?.length ? body.customCases : null,
           idempotencyKey,
         })
         // Two concurrent requests with the same key: exactly one row wins; the other replays it.

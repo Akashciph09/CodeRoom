@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
-import { and, desc, eq, inArray, isNull, or, questions, questionVersions, roomParticipants, roomQuestions, rooms, submissions } from "@coderoom/db";
+import { and, desc, eq, inArray, isNull, or, questions, questionVersions, roomParticipants, roomQuestions, rooms, sql, submissions } from "@coderoom/db";
 import {
   CreateRoomRequest,
   JoinRoomRequest,
@@ -14,7 +14,7 @@ import {
 import { redis } from "../queue.js";
 import { latestPublished } from "../services/questions.js";
 import { revealQuestion, roomQuestionsFor } from "../services/roomQuestions.js";
-import { resultsFor, viewFor } from "../services/submissionViews.js";
+import { customResultsFor, resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
 import { asyncHandler, BadRequest, Conflict, NotFound } from "../errors.js";
@@ -108,7 +108,7 @@ roomsRouter.get(
     const role = await requireRoomRole(roomId, req.user!.userId);
 
     const [row] = await db
-      .select({ status: rooms.status, inviteCode: rooms.inviteCode })
+      .select({ status: rooms.status, inviteCode: rooms.inviteCode, createdAt: rooms.createdAt, closedAt: rooms.closedAt })
       .from(rooms)
       .where(eq(rooms.id, roomId))
       .limit(1);
@@ -121,6 +121,9 @@ roomsRouter.get(
       ...(role === "interviewer" ? { inviteCode: row.inviteCode } : {}),
       // Pinned versions, candidate view (public tests only). Candidates get revealed questions only.
       questions: await roomQuestionsFor(roomId, role),
+      createdAt: row.createdAt.toISOString(),
+      ...(row.closedAt ? { closedAt: row.closedAt.toISOString() } : {}),
+      serverTime: new Date().toISOString(),
     };
     res.json(view);
   }),
@@ -168,11 +171,16 @@ roomsRouter.get(
       .orderBy(desc(submissions.createdAt))
       .limit(50);
 
-    const results = await resultsFor(rows.map((r) => r.id));
+    const ids = rows.map((r) => r.id);
+    const [results, custom] = await Promise.all([resultsFor(ids), customResultsFor(ids)]);
 
     res.json(
       rows.map((submission) =>
-        viewFor(role, { submission, results: results.filter((r) => r.submissionId === submission.id) }),
+        viewFor(role, {
+          submission,
+          results: results.filter((r) => r.submissionId === submission.id),
+          custom: custom.filter((r) => r.submissionId === submission.id),
+        }),
       ),
     );
   }),
@@ -190,7 +198,11 @@ roomsRouter.post(
     await requireRoomRole(roomId, req.user!.userId, "interviewer");
     // Row-locking UPDATE: serialized with revealQuestion's `FOR UPDATE` and the submission insert's
     // `FOR SHARE` on the same row, so no question is revealed and no submission accepted after this commits.
-    await db.update(rooms).set({ status: "closed" }).where(eq(rooms.id, roomId));
+    // Idempotent: closing again keeps the original end time (the interview timer stops there).
+    await db
+      .update(rooms)
+      .set({ status: "closed", closedAt: sql`COALESCE(${rooms.closedAt}, now())` })
+      .where(eq(rooms.id, roomId));
     const event: RoomBusEvent = { type: "room:closed", roomId };
     redis
       .publish(roomEventsChannel(roomId), JSON.stringify(event))

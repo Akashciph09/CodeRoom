@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { RoomQuestionView, RoomView } from "@coderoom/shared";
-import { codeKey, initialLanguage, latestRevealed, mergeRoom, metaKey, nextToReveal } from "./roomQuestions";
+import {
+  addCaseRefusal,
+  casesToRun,
+  codeKey,
+  initialLanguage,
+  latestRevealed,
+  mergeRoom,
+  metaKey,
+  nextToReveal,
+  parseSharedCases,
+} from "./roomQuestions";
 
 const question = (title: string, starterCode: RoomQuestionView["question"]["starterCode"] = {}) => ({
   id: "00000000-0000-4000-8000-0000000000ff",
@@ -24,6 +34,8 @@ const room = (questions: RoomQuestionView[], status: RoomView["status"] = "open"
   status,
   role: "interviewer",
   questions,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  serverTime: "2026-01-01T00:00:00.000Z",
 });
 
 describe("room questions", () => {
@@ -63,5 +75,35 @@ describe("room questions", () => {
     // Newer data still applies.
     expect(mergeRoom(stale, current).questions.map((q) => q.revealed)).toEqual([true, true, false]);
     expect(mergeRoom(null, stale)).toBe(stale);
+  });
+
+  it("reads shared custom cases defensively (they come from the other participant's client)", () => {
+    const by = { name: "Iris", role: "interviewer" };
+    expect(
+      parseSharedCases([
+        { id: "a", input: "1 2", addedBy: by },
+        { id: "b", input: "3", expectedOutput: "3", addedBy: { name: 5, role: "admin" } },
+        { id: "c", input: 42 },
+        null,
+        "nope",
+        { id: "d", input: "x", expectedOutput: 7 },
+      ]),
+    ).toEqual([
+      { id: "a", input: "1 2", addedBy: { name: "Iris", role: "interviewer" } },
+      { id: "b", input: "3", expectedOutput: "3", addedBy: { name: "Someone", role: "candidate" } },
+    ]);
+  });
+
+  it("runs the first N custom cases in shared order when concurrent adds overflow the limit", () => {
+    const merged = Array.from({ length: 11 }, (_, i) => `case-${i}`);
+    expect(casesToRun(merged, 10)).toEqual(merged.slice(0, 10));
+    expect(casesToRun(["a"], 10)).toEqual(["a"]);
+  });
+
+  it("re-checks at the moment of adding: the limit and whether editing is still allowed", () => {
+    expect(addCaseRefusal({ count: 9, max: 10, editable: true })).toBeNull();
+    expect(addCaseRefusal({ count: 10, max: 10, editable: true })).toMatch(/already has 10/);
+    expect(addCaseRefusal({ count: 11, max: 10, editable: true })).toMatch(/already has 10/);
+    expect(addCaseRefusal({ count: 0, max: 10, editable: false })).toMatch(/can't be changed/);
   });
 });

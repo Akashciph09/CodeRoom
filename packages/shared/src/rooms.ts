@@ -72,5 +72,9 @@ export const RoomView = z.object({
    * revealed ones — unrevealed questions are never sent to the candidate, not even their count.
    */
   questions: z.array(RoomQuestionView),
+  /** For the interviewer's timer (ADR 0010): when the room was created / ended, and the server's clock now. */
+  createdAt: z.string(),
+  closedAt: z.string().optional(),
+  serverTime: z.string(),
 });
 export type RoomView = z.infer<typeof RoomView>;

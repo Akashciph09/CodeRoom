@@ -14,3 +14,4 @@ Rule for this repo: a technology goes in only if it has a "why" and a "why not t
 | [0007](0007-immutable-question-versions.md) | Rooms pin immutable, published question versions (DB-enforced) | Accepted |
 | [0008](0008-room-layout-own-splitter.md) | Room layout: question \| code over tests, own splitter, kept per browser | Accepted |
 | [0009](0009-multi-question-rooms.md) | Rooms hold an ordered list of questions, revealed by the interviewer | Accepted |
+| [0010](0010-custom-test-cases-and-timer.md) | Shared custom test cases (run-only) and an interview timer | Accepted |
