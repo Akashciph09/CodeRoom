@@ -11,7 +11,7 @@ import {
   submissions,
   testResults,
 } from "@coderoom/db";
-import type { RoomCandidateSummary, RoomReview } from "@coderoom/shared";
+import type { RoomCandidate, RoomReview } from "@coderoom/shared";
 import { db } from "../db.js";
 import { NotFound } from "../errors.js";
 import { revealWindows, scoreCandidate } from "./scoring.js";
@@ -50,47 +50,14 @@ async function passCounts(submissionIds: string[]) {
 }
 
 /**
- * For the interviewer's room list: each room's candidates with name, email and test score — computed by
- * the same `scoreCandidate` as the review page, so the two always agree. Batched for all rooms at once.
- * Interviewer rooms only: the caller must pass only rooms where the user is the interviewer.
+ * For the interviewer's room list: each room's candidates, name and email only, in join order (ADR 0013).
+ * No scoring here — scores live on the review page. The caller must pass only rooms where the user is
+ * the interviewer.
  */
-export async function candidateSummaries(roomIds: string[]): Promise<Map<string, RoomCandidateSummary[]>> {
-  const out = new Map<string, RoomCandidateSummary[]>(roomIds.map((id) => [id, []]));
-  if (roomIds.length === 0) return out;
-  const [qs, people, subs] = await Promise.all([
-    db
-      .select({ roomId: roomQuestions.roomId, id: roomQuestions.id, points: roomQuestions.points, revealedAt: roomQuestions.revealedAt })
-      .from(roomQuestions)
-      .where(inArray(roomQuestions.roomId, roomIds)),
-    candidatesOf(roomIds),
-    // Every Submit, whatever its state: completed ones score (scoreCandidate ignores the rest), and the
-    // others tell the list "still grading" / "grading failed" apart from "never submitted".
-    db
-      .select({
-        id: submissions.id,
-        roomId: submissions.roomId,
-        userId: submissions.userId,
-        roomQuestionId: submissions.roomQuestionId,
-        mode: submissions.mode,
-        status: submissions.status,
-        createdAt: submissions.createdAt,
-      })
-      .from(submissions)
-      .where(and(inArray(submissions.roomId, roomIds), eq(submissions.mode, "submit"))),
-  ]);
-  const counts = await passCounts(subs.filter((s) => s.status === "completed").map((s) => s.id));
-  for (const person of people) {
-    const mine = subs.filter((s) => s.roomId === person.roomId && s.userId === person.userId);
-    const { score } = scoreCandidate(
-      qs.filter((q) => q.roomId === person.roomId).map((q) => ({ id: q.id, points: q.points, revealed: q.revealedAt !== null })),
-      mine.map((s) => ({ ...s, passed: counts.get(s.id)?.passed ?? 0, total: counts.get(s.id)?.total ?? 0 })),
-    );
-    const submits = {
-      graded: mine.filter((s) => s.status === "completed").length,
-      pending: mine.filter((s) => s.status === "queued" || s.status === "running").length,
-      failed: mine.filter((s) => s.status === "failed").length,
-    };
-    out.get(person.roomId)!.push({ name: person.name, email: person.email, score, submits });
+export async function roomCandidates(roomIds: string[]): Promise<Map<string, RoomCandidate[]>> {
+  const out = new Map<string, RoomCandidate[]>(roomIds.map((id) => [id, []]));
+  for (const person of await candidatesOf(roomIds)) {
+    out.get(person.roomId)?.push({ name: person.name, email: person.email });
   }
   return out;
 }

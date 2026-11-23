@@ -14,7 +14,7 @@ import {
 import { redis } from "../queue.js";
 import { latestPublished } from "../services/questions.js";
 import { revealQuestion, roomQuestionsFor } from "../services/roomQuestions.js";
-import { candidateSummaries, roomReview } from "../services/review.js";
+import { roomCandidates, roomReview } from "../services/review.js";
 import { customResultsFor, resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
@@ -267,13 +267,13 @@ roomsRouter.get(
       .where(eq(roomParticipants.userId, req.user!.userId))
       .orderBy(desc(rooms.createdAt))
       .limit(50);
-    // Candidate names, emails and scores only for rooms the caller interviews (ADR 0013): a candidate's
-    // own list never carries another person's details.
-    const summaries = await candidateSummaries(rows.filter((r) => r.role === "interviewer").map((r) => r.roomId));
+    // Candidate names and emails only for rooms the caller interviews (ADR 0013): a candidate's own list
+    // never carries another person's details. (Scores are on the review page, not here.)
+    const candidates = await roomCandidates(rows.filter((r) => r.role === "interviewer").map((r) => r.roomId));
     const list: RoomSummary[] = rows.map((r) => ({
       ...r,
       createdAt: r.createdAt.toISOString(),
-      ...(r.role === "interviewer" ? { candidates: summaries.get(r.roomId) ?? [] } : {}),
+      ...(r.role === "interviewer" ? { candidates: candidates.get(r.roomId) ?? [] } : {}),
     }));
     res.json(list);
   }),

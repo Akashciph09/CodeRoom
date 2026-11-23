@@ -1,52 +1,130 @@
-import { expect, test } from "@playwright/test";
-import { replaceCode, results, startInterview } from "./helpers";
+import { randomUUID } from "node:crypto";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { openAs, signUp } from "./helpers";
 
-/** The interviewer's room list shows who interviewed and how they scored, with search (ADR 0013). */
-test("the interviewer's room list shows the candidate, their email and score, and can be searched", async ({ browser }) => {
-  const { interviewer, candidate, close } = await startInterview(browser);
-  const iv = interviewer.page;
-  const cd = candidate.page;
+/*
+ * "Your rooms" (ADR 0013): aligned columns Interview | Candidate | Your role | Status | Created | Action,
+ * candidate details only on rows you interview, no scores (those are on the review page), search, and
+ * compact cards on phones.
+ */
+
+const LONG_NAME = "Maximiliana Alexandrina Konstantinopoulou-Wetherby the Third";
+
+/** Sign up with a very long email too (the shared helper's emails are short). */
+async function signUpLong(page: Page, name: string) {
+  const email = `e2e-${randomUUID().slice(0, 8)}-a-really-quite-long-mailbox-name-for-layout@very-long-subdomain.example.test`;
+  await expect(page).toHaveURL(/\/login/);
+  await page.getByRole("button", { name: "Create account" }).first().click();
+  await page.getByLabel("Name").fill(name);
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(randomUUID());
+  await page.locator("form").getByRole("button", { name: "Create account" }).last().click();
+  await expect(page).not.toHaveURL(/\/login/);
+  return email;
+}
+
+const table = (page: Page) => page.getByRole("table", { name: "Your rooms" });
+const rowFor = (page: Page, roomPath: string) =>
+  table(page).getByRole("row").filter({ has: page.locator(`a[href="${roomPath}"]`) });
+const cell = (row: Locator, cls: string) => row.locator(`td.${cls}`);
+
+test("rooms list: aligned columns, candidate details, ended status, search, phone cards, privacy", async ({ browser }) => {
+  const iv = await openAs(browser, "Iris Interviewer");
+  const cd = await openAs(browser, LONG_NAME);
   try {
-    await replaceCode(cd, "a, b = map(int, input().split())\nprint(a + b)");
-    await cd.getByRole("button", { name: "Submit" }).click();
-    await expect(results(cd).first()).toContainText("Accepted", { timeout: 30_000 });
-    const roomPath = new URL(iv.url()).pathname;
+    // Room A: joined by a candidate with a long name and email.
+    await iv.page.goto("/");
+    await signUp(iv.page, iv.name);
+    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+    const roomA = new URL(iv.page.url()).pathname;
+    await iv.page.getByRole("button", { name: "Copy invite link" }).click();
+    const invite = await iv.page.evaluate(() => navigator.clipboard.readText());
+    await cd.page.goto(invite);
+    const email = await signUpLong(cd.page, LONG_NAME);
+    await expect(cd.page).toHaveURL(new RegExp(`${roomA}$`));
 
-    // A second room that nobody joins.
-    await iv.goto("/");
-    await iv.getByRole("button", { name: "Create room" }).click();
-    await expect(iv).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
-    await iv.goto("/");
+    // Room A ends; room B is created and nobody joins.
+    iv.page.once("dialog", (d) => d.accept());
+    await iv.page.getByRole("button", { name: "End session" }).click();
+    await expect(iv.page.getByText("This interview has ended.")).toBeVisible();
+    await iv.page.goto("/");
+    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+    const roomB = new URL(iv.page.url()).pathname;
+    await iv.page.goto("/");
 
-    const list = iv.getByRole("list", { name: "Your rooms" });
-    const row = list.getByRole("listitem").filter({ has: iv.locator(`a[href="${roomPath}"]`) });
-    await expect(row).toContainText("Casey Candidate");
-    await expect(row).toContainText(/@example\.test/);
-    await expect(row.getByLabel("Test score")).toHaveText("Score 100/100");
-    await expect(row.getByRole("link", { name: "Review" })).toHaveAttribute("href", `${roomPath}/review`);
-    await expect(list.getByRole("listitem").filter({ hasText: "No candidate joined" })).toHaveCount(1);
+    // Columns.
+    await expect(table(iv.page).getByRole("columnheader")).toHaveText(["Interview", "Candidate", "Your role", "Status", "Created", "Action"]);
 
-    // Search by candidate email, name and question.
-    const email = (await row.locator(".room-candidate .muted").textContent())!.replace("·", "").trim();
-    const search = iv.getByLabel("Search rooms");
-    await search.fill(email);
-    await expect(list.getByRole("listitem")).toHaveCount(1);
-    await expect(list.getByRole("listitem")).toContainText("Casey Candidate");
-    await search.fill("casey");
-    await expect(list.getByRole("listitem")).toHaveCount(1);
+    // Row A: candidate name with email below, compact badges, Ended, compact date with the full one available.
+    const a = rowFor(iv.page, roomA);
+    const b = rowFor(iv.page, roomB);
+    await expect(cell(a, "cell-candidate")).toContainText(LONG_NAME);
+    await expect(cell(a, "cell-candidate").locator(".candidate-email")).toHaveText(email);
+    await expect(cell(a, "cell-role")).toHaveText("Interviewer");
+    await expect(cell(a, "cell-status")).toHaveText("Ended");
+    await expect(cell(b, "cell-status")).toHaveText("Open");
+    const time = cell(a, "cell-created").locator("time");
+    await expect(time).toHaveAttribute("datetime", /^\d{4}-\d{2}-\d{2}T/);
+    await expect(time.locator("[aria-hidden=true]")).toHaveText(/^\d{1,2} [A-Z][a-z]{2}( \d{4})?, \d{2}:\d{2}$/);
+    await expect(time).toHaveAttribute("title", /\d{4}.*\d{2}:\d{2}:\d{2}/); // full timestamp on hover…
+    await expect(time.locator(".sr-only")).toHaveText(/\d{4}.*\d{2}:\d{2}:\d{2}/); // …and for screen readers
+    await expect(cell(a, "cell-action").getByRole("link", { name: "Review" })).toHaveAttribute("href", `${roomA}/review`);
+    await expect(table(iv.page)).not.toContainText(/Score|Grading|No Submit/); // scores live on the review page
+
+    // Row B: nobody joined.
+    await expect(cell(b, "cell-candidate")).toContainText("No candidate joined");
+    await expect(cell(b, "cell-candidate").locator("[aria-hidden=true]")).toHaveText("—");
+
+    // Long names/emails don't push other columns: the columns start at the same x in every row,
+    // and the candidate text stays inside its column.
+    for (const col of ["cell-role", "cell-status", "cell-created", "cell-action"]) {
+      const xa = (await cell(a, col).boundingBox())!.x;
+      const xb = (await cell(b, col).boundingBox())!.x;
+      expect(Math.abs(xa - xb), col).toBeLessThan(1);
+    }
+    // The table never grows past its card (a long unbroken email would otherwise widen the column).
+    const tableBox = (await table(iv.page).boundingBox())!;
+    const cardBox = (await table(iv.page).locator("xpath=ancestor::section[1]").boundingBox())!;
+    expect(tableBox.x + tableBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
+    expect(await iv.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const emailBox = (await cell(a, "cell-candidate").locator(".candidate-email").boundingBox())!;
+    expect(emailBox.x + emailBox.width).toBeLessThanOrEqual((await cell(a, "cell-role").boundingBox())!.x + 1);
+
+    // Search: by email, by name, by question, and no match.
+    const search = iv.page.getByLabel("Search rooms");
+    await search.fill("really-quite-long-mailbox");
+    await expect(table(iv.page).getByRole("row")).toHaveCount(2); // header + room A
+    await search.fill("konstantinopoulou");
+    await expect(rowFor(iv.page, roomA)).toBeVisible();
+    await expect(rowFor(iv.page, roomB)).toHaveCount(0);
     await search.fill("sum two");
-    await expect(list.getByRole("listitem")).toHaveCount(2);
+    await expect(table(iv.page).getByRole("row")).toHaveCount(3);
     await search.fill("nobody-like-this");
-    await expect(iv.getByText("No rooms match “nobody-like-this”.")).toBeVisible();
+    await expect(iv.page.getByText("No rooms match “nobody-like-this”.")).toBeVisible();
+    await search.fill("");
 
-    // The candidate's own list shows the room, but nothing about candidates or scores.
-    await cd.goto("/");
-    const cdList = cd.getByRole("list", { name: "Your rooms" });
-    await expect(cdList.locator(`a[href="${roomPath}"]`)).toBeVisible();
-    await expect(cdList).not.toContainText("@example.test");
-    await expect(cdList).not.toContainText("Score");
-    await expect(cdList.getByRole("link", { name: "Review" })).toHaveCount(0);
+    // Phone: compact cards, no horizontal page overflow, the full email readable, Review visible.
+    await iv.page.setViewportSize({ width: 390, height: 844 });
+    await expect(table(iv.page).getByRole("columnheader").first()).not.toBeInViewport();
+    expect(await iv.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const phoneEmail = cell(a, "cell-candidate").locator(".candidate-email");
+    expect(await phoneEmail.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true); // wrapped, not clipped
+    const phoneReview = cell(a, "cell-action").getByRole("link", { name: "Review" });
+    await phoneReview.scrollIntoViewIfNeeded(); // the list sits below the "Start an interview" form
+    await expect(phoneReview).toBeInViewport({ ratio: 1 });
+    await iv.page.setViewportSize({ width: 1400, height: 900 });
+
+    // The candidate's own list: their role, "You", no emails and no Review action.
+    await cd.page.goto("/");
+    const own = rowFor(cd.page, roomA);
+    await expect(cell(own, "cell-role")).toHaveText("Candidate");
+    await expect(cell(own, "cell-candidate")).toHaveText("You");
+    await expect(table(cd.page)).not.toContainText("@");
+    await expect(cell(own, "cell-action").getByRole("link")).toHaveCount(0);
   } finally {
-    await close();
+    await iv.close();
+    await cd.close();
   }
 });

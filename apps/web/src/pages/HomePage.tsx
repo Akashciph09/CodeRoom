@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { MAX_ROOM_QUESTIONS, type QuestionSummary, type RoomSummary } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
 import { api } from "../lib/api";
-import { submitLabel } from "../lib/roomList";
+import { candidateCell, formatRoomDate, roleLabel, roomMatches, roomStatusLabel } from "../lib/roomList";
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -66,14 +66,8 @@ export function HomePage() {
     });
   }
 
-  // Search by question, or (on rooms you interview) by candidate name or email.
-  const needle = search.trim().toLowerCase();
-  const shownRooms = (rooms ?? []).filter(
-    (r) =>
-      !needle ||
-      r.questionTitle.toLowerCase().includes(needle) ||
-      (r.candidates ?? []).some((c) => c.name.toLowerCase().includes(needle) || c.email.toLowerCase().includes(needle)),
-  );
+  // Search by question, or (on rooms you interview) by any candidate's name or email.
+  const shownRooms = (rooms ?? []).filter((r) => roomMatches(r, search));
 
   function joinRoom(e: FormEvent) {
     e.preventDefault();
@@ -182,7 +176,7 @@ export function HomePage() {
         </div>
 
         <section className="card">
-          <div className="section-head">
+          <div className="section-head rooms-head">
             <h2>Your rooms</h2>
             {rooms && rooms.length > 0 && (
               <input
@@ -202,44 +196,103 @@ export function HomePage() {
           ) : shownRooms.length === 0 ? (
             <p className="muted">No rooms match “{search.trim()}”.</p>
           ) : (
-            <ul className="room-list" aria-label="Your rooms">
-              {shownRooms.map((r) => (
-                <li key={r.roomId}>
-                  <div className="room-main">
-                    <Link to={`/rooms/${r.roomId}`}>{r.questionTitle}</Link>
-                    {r.candidates && (
-                      <div className="room-candidates small">
-                        {r.candidates.length === 0 ? (
-                          <span className="muted">No candidate joined</span>
-                        ) : (
-                          r.candidates.map((c) => (
-                            <span key={c.email} className="room-candidate">
-                              {c.name} <span className="muted">· {c.email}</span>
-                            </span>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <span className={`badge ${r.role}`}>{r.role}</span>
-                  <span className={`badge ${r.status}`}>{r.status}</span>
-                  <span className="muted small">{new Date(r.createdAt).toLocaleString()}</span>
-                  {r.candidates && r.candidates.length > 0 && (
-                    <span className="room-score small" aria-label="Test score">
-                      {r.candidates.map(submitLabel).join(" · ")}
-                    </span>
-                  )}
-                  {r.role === "interviewer" && (
-                    <Link to={`/rooms/${r.roomId}/review`} className="small">
-                      Review
-                    </Link>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <RoomsTable rooms={shownRooms} />
           )}
         </section>
       </main>
     </>
+  );
+}
+
+/**
+ * "Your rooms" as a table with fixed columns (Interview | Candidate | Your role | Status | Created |
+ * Action), so long names and emails can't push other columns out of line. Explicit ARIA roles keep the
+ * table semantics when narrow screens restyle rows as cards.
+ */
+function RoomsTable({ rooms }: { rooms: RoomSummary[] }) {
+  const now = new Date();
+  return (
+    <table className="rooms-table" role="table" aria-label="Your rooms">
+      <colgroup>
+        <col className="col-interview" />
+        <col className="col-candidate" />
+        <col className="col-role" />
+        <col className="col-status" />
+        <col className="col-created" />
+        <col className="col-action" />
+      </colgroup>
+      <thead role="rowgroup">
+        <tr role="row">
+          <th role="columnheader" scope="col">Interview</th>
+          <th role="columnheader" scope="col">Candidate</th>
+          <th role="columnheader" scope="col">Your role</th>
+          <th role="columnheader" scope="col">Status</th>
+          <th role="columnheader" scope="col">Created</th>
+          <th role="columnheader" scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody role="rowgroup">
+        {rooms.map((r) => {
+          const date = formatRoomDate(r.createdAt, now);
+          const cell = r.candidates ? candidateCell(r.candidates) : null;
+          return (
+            <tr key={r.roomId} role="row" className="room-row">
+              <td role="cell" className="cell-interview">
+                {/* No room names yet: the room is named by its first question. */}
+                <Link to={`/rooms/${r.roomId}`} className="truncate" title={r.questionTitle}>
+                  {r.questionTitle}
+                </Link>
+              </td>
+              <td role="cell" className="cell-candidate">
+                {r.role === "candidate" ? (
+                  <span className="muted">You</span>
+                ) : cell ? (
+                  <div className="candidate-stack">
+                    <span className="candidate-name">
+                      <span className="truncate" title={cell.first.name}>
+                        {cell.first.name}
+                      </span>
+                      {cell.more > 0 && (
+                        <span className="badge candidate-more" title={`Also: ${cell.others}`}>
+                          +{cell.more}
+                          <span className="sr-only"> more: {cell.others}</span>
+                        </span>
+                      )}
+                    </span>
+                    <span className="candidate-email truncate muted small" title={cell.first.email}>
+                      {cell.first.email}
+                    </span>
+                  </div>
+                ) : (
+                  <span className="muted">
+                    <span aria-hidden="true">—</span>
+                    <span className="sr-only">No candidate joined</span>
+                  </span>
+                )}
+              </td>
+              <td role="cell" className="cell-role">
+                <span className={`badge ${r.role}`}>{roleLabel(r.role)}</span>
+              </td>
+              <td role="cell" className="cell-status">
+                <span className={`badge ${r.status}`}>{roomStatusLabel(r.status)}</span>
+              </td>
+              <td role="cell" className="cell-created">
+                <time dateTime={r.createdAt} title={date.full} className="small">
+                  <span aria-hidden="true">{date.short}</span>
+                  <span className="sr-only">{date.full}</span>
+                </time>
+              </td>
+              <td role="cell" className="cell-action">
+                {r.role === "interviewer" && (
+                  <Link to={`/rooms/${r.roomId}/review`} className="small">
+                    Review
+                  </Link>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }

@@ -107,10 +107,47 @@ label input, label select { color: var(--text); font-size: 14px; }
 .home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
 .room-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
 .room-list li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
-.room-list li .room-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.room-candidates { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--text); }
-.room-score { font-weight: 600; color: var(--accent); white-space: nowrap; }
 .room-search { width: min(320px, 100%); }
+
+/* "Your rooms" table (ADR 0013): fixed columns so long names/emails never shift the others. */
+.rooms-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.rooms-table .col-interview { width: 30%; }
+.rooms-table .col-candidate { width: 30%; }
+.rooms-table .col-role { width: 112px; }
+.rooms-table .col-status { width: 76px; }
+.rooms-table .col-created { width: 118px; }
+.rooms-table .col-action { width: 64px; }
+.rooms-table th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 0 10px 8px; }
+.rooms-table td { padding: 10px; border-top: 1px solid var(--border); vertical-align: middle; min-width: 0; }
+.rooms-table th:first-child, .rooms-table td:first-child { padding-left: 0; }
+.rooms-table th:last-child, .rooms-table td:last-child { padding-right: 0; text-align: right; }
+.rooms-table .truncate { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rooms-table .cell-interview a { font-weight: 500; }
+.candidate-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.candidate-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.candidate-more { flex: none; padding: 0 6px; font-size: 10px; }
+.rooms-table .badge { font-size: 11px; padding: 1px 7px; white-space: nowrap; }
+.rooms-table time { color: var(--muted); white-space: nowrap; }
+.rooms-table .cell-action a { white-space: nowrap; }
+
+/* Narrow screens: each room is a compact card (no horizontal scrolling). */
+@media (max-width: 680px) {
+  .rooms-head { flex-wrap: wrap; }
+  .rooms-head .room-search { width: 100%; }
+  .rooms-table, .rooms-table tbody { display: block; }
+  .rooms-table colgroup { display: none; }
+  .rooms-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .rooms-table tr.room-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+    padding: 12px 0; border-top: 1px solid var(--border);
+  }
+  .rooms-table tr.room-row td { display: block; padding: 0; border: 0; text-align: left; }
+  .rooms-table tr.room-row .cell-interview, .rooms-table tr.room-row .cell-candidate { flex: 0 0 100%; min-width: 0; }
+  .rooms-table tr.room-row .cell-interview a { font-size: 14px; }
+  /* Let long names and emails wrap rather than disappear behind an ellipsis. */
+  .rooms-table tr.room-row .truncate { white-space: normal; overflow-wrap: anywhere; }
+  .rooms-table tr.room-row .cell-action { margin-left: auto; }
+}
 .picked { display: flex; flex-direction: column; gap: 8px; }
 .picked-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .picked-list li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }

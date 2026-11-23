@@ -49,22 +49,11 @@ export const QuestionSummary = z.object({
 export type QuestionSummary = z.infer<typeof QuestionSummary>;
 
 /** A room's candidate as listed for its interviewer (never sent to candidates). */
-export const RoomCandidateSummary = z.object({
+export const RoomCandidate = z.object({
   name: z.string(),
   email: z.string(),
-  /** Test score out of 100 (ADR 0011) — same rules as the review page. */
-  score: z.number(),
-  /**
-   * The candidate's Submits by state (PR #11 review), so the list can tell "nothing submitted" from
-   * "still grading" and "grading failed". Only `graded` ones count toward the score.
-   */
-  submits: z.object({
-    graded: z.number().int().nonnegative(),
-    pending: z.number().int().nonnegative(),
-    failed: z.number().int().nonnegative(),
-  }),
 });
-export type RoomCandidateSummary = z.infer<typeof RoomCandidateSummary>;
+export type RoomCandidate = z.infer<typeof RoomCandidate>;
 
 export const RoomSummary = z.object({
   roomId: z.string().uuid(),
@@ -72,8 +61,11 @@ export const RoomSummary = z.object({
   status: z.enum(["open", "closed"]),
   questionTitle: z.string(),
   createdAt: z.string(),
-  /** Interviewer rows only (ADR 0013). Absent on rooms where the caller is the candidate. */
-  candidates: z.array(RoomCandidateSummary).optional(),
+  /**
+   * Interviewer rows only (ADR 0013), in join order. Absent on rooms where the caller is the candidate.
+   * More than one only for rooms from before ADR 0012.
+   */
+  candidates: z.array(RoomCandidate).optional(),
 });
 export type RoomSummary = z.infer<typeof RoomSummary>;
 
