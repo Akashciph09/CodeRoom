@@ -5,8 +5,8 @@ import { CollaborativeEditor } from "../components/CollaborativeEditor";
 import { Presence, RemoteCursorStyles } from "../components/Presence";
 import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
-import { ResultsPanel } from "../components/ResultsPanel";
 import { RoomColumns, useRoomLayout } from "../components/RoomLayout";
+import { TestPanel } from "../components/TestPanel";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError, isRetryable, submitWithRetry } from "../lib/api";
 import { mergeHistory, upsertEntry, type SubmissionEntry } from "../lib/submissions";
@@ -46,6 +46,7 @@ export function RoomPage() {
   const [revealing, setRevealing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const layout = useRoomLayout();
 
   // Room metadata. Re-fetched on every events (re)connect and on `room:question_revealed` — see below.
@@ -146,7 +147,9 @@ export function RoomPage() {
       } else if (event.type === "room:question_revealed") {
         refreshRoom();
       } else if (event.type === "submission:queued") {
-        setEntries((prev) => upsertEntry(prev, { submissionId: event.submissionId, pending: true }));
+        setEntries((prev) =>
+          upsertEntry(prev, { submissionId: event.submissionId, pending: true, roomQuestionId: event.roomQuestionId }),
+        );
       } else if (event.type === "submission:result") {
         const view = event.result;
         setEntries((prev) => upsertEntry(prev, { submissionId: view.submissionId, pending: false, view }));
@@ -226,7 +229,7 @@ export function RoomPage() {
       try {
         const { submissionId } = await submitWithRetry(body, pendingAttempt.current.key);
         pendingAttempt.current = null;
-        setEntries((prev) => upsertEntry(prev, { submissionId, pending: true }));
+        setEntries((prev) => upsertEntry(prev, { submissionId, pending: true, roomQuestionId: body.roomQuestionId }));
       } catch (err) {
         if (!isRetryable(err)) pendingAttempt.current = null; // 4xx is final: the next click is a new action
         setNotice(err instanceof Error ? err.message : String(err));
@@ -320,7 +323,7 @@ export function RoomPage() {
         layout={layout}
         resultsKey={entries.map((e) => `${e.submissionId}:${e.pending ? "pending" : e.view.status}`).join(",")}
         question={
-          <>
+          <section className="pane question-pane">
             {multi && <QuestionNav questions={room.questions} activePosition={active.position} onSelect={setActivePosition} />}
             {!active.revealed && (
               <div className="reveal-bar" role="status">
@@ -335,29 +338,19 @@ export function RoomPage() {
               </div>
             )}
             <QuestionPanel question={active.question} />
-          </>
+          </section>
         }
-        results={
-          <ResultsPanel
-            entries={entries}
-            questions={multi ? room.questions : undefined}
-            activeQuestionId={active.id}
-          />
-        }
-        editor={
-          <section className="editor-pane">
-            <div className="editor-toolbar">
-              {multi && <span className="badge" title={active.question.title}>Q{active.position}</span>}
-              <select
-                aria-label="Language"
-                value={language}
-                onChange={(e) => changeLanguage(e.target.value as Language)}
-                disabled={!roomDoc || !active.revealed || closed}
-              >
-                <option value="python">Python</option>
-                <option value="javascript">JavaScript</option>
-              </select>
-              {notice && <span className="error small">{notice}</span>}
+        code={
+          <section className="pane code-pane" aria-label="Code">
+            <div className="pane-head">
+              <span className="pane-title">
+                <span className="pane-icon ok" aria-hidden="true">&lt;/&gt;</span> Code
+              </span>
+              {multi && (
+                <span className="badge question-badge" title={active.question.title}>
+                  Q{active.position}
+                </span>
+              )}
               <div className="spacer" />
               {isCandidate ? (
                 <>
@@ -369,8 +362,22 @@ export function RoomPage() {
                   </button>
                 </>
               ) : (
-                <span className="muted small">Only the candidate can run code. You see every test, including hidden ones.</span>
+                <span className="muted small">Only the candidate can run code</span>
               )}
+            </div>
+            <div className="pane-toolbar">
+              <select
+                className="bare-select"
+                aria-label="Language"
+                value={language}
+                onChange={(e) => changeLanguage(e.target.value as Language)}
+                disabled={!roomDoc || !active.revealed || closed}
+              >
+                <option value="python">Python</option>
+                <option value="javascript">JavaScript</option>
+              </select>
+              {notice && <span className="error small">{notice}</span>}
+              {!isCandidate && <span className="muted small">You see every test, including hidden ones.</span>}
             </div>
             {roomDoc && activeText ? (
               <CollaborativeEditor
@@ -380,12 +387,20 @@ export function RoomPage() {
                 // Unrevealed questions are read-only for the interviewer too: nothing is typed into a buffer
                 // the candidate can't see yet.
                 readOnly={closed || !active.revealed}
+                onCursor={(line, column) => setCursor({ line, column })}
               />
             ) : (
               <div className="editor center muted">Connecting…</div>
             )}
+            <div className="pane-foot">
+              <span>{closed ? "Read-only" : docStatus === "connected" ? "Synced" : "Reconnecting…"}</span>
+              <span>
+                Ln {cursor.line}, Col {cursor.column}
+              </span>
+            </div>
           </section>
         }
+        tests={<TestPanel question={active.question} roomQuestion={multi ? active : undefined} entries={entries} />}
       />
     </div>
   );

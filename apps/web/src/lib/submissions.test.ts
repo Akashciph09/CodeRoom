@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CandidateSubmissionView } from "@coderoom/shared";
-import { mergeHistory, upsertEntry, type SubmissionEntry } from "./submissions";
+import { mergeHistory, questionOf, upsertEntry, type SubmissionEntry } from "./submissions";
 
 const view = (id: string, status: CandidateSubmissionView["status"]): CandidateSubmissionView => ({
   submissionId: id,
@@ -46,6 +46,15 @@ describe("upsertEntry", () => {
   it("ignores a late 'queued' after the result", () => {
     const list = upsertEntry([entry("a", "completed")], { submissionId: "a", pending: true });
     expect(statusOf(list, "a")).toBe("completed");
+  });
+
+  it("files a run under its question from submit until the result, without losing it in between", () => {
+    // Our own submit knows the question; a queued event arriving later (e.g. from an older API) may not.
+    let list = upsertEntry([], { submissionId: "a", pending: true, roomQuestionId: "rq-2" });
+    list = upsertEntry(list, { submissionId: "a", pending: true });
+    expect(questionOf(list[0]!)).toBe("rq-2");
+    list = upsertEntry(list, { submissionId: "a", pending: false, view: { ...view("a", "completed"), roomQuestionId: "rq-2" } });
+    expect(questionOf(list[0]!)).toBe("rq-2");
   });
 
   it("adds unknown submissions on top", () => {

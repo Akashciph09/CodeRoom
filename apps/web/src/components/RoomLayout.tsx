@@ -10,30 +10,33 @@ import {
 } from "react";
 import {
   DEFAULT_LAYOUT,
-  DIVIDER_WIDTH,
+  DIVIDER,
   fitLayout,
   isDefaultLayout,
   isNarrow,
   KEY_STEP,
   KEY_STEP_LARGE,
   loadLayout,
-  maxWidth,
-  MIN_WIDTH,
+  maxSize,
+  MIN_SIZE,
   resizePanel,
   saveLayout,
+  type Area,
+  type Divider,
   type RoomLayout,
-  type SidePanel,
 } from "../lib/roomLayout";
 
 /**
- * The room's column layout, local to this browser (ADR 0008). Never synced through Yjs/awareness:
- * each participant sizes their own screen.
+ * The room's layout, local to this browser (ADR 0008). Never synced through Yjs/awareness: each
+ * participant sizes their own screen.
  */
 export function useRoomLayout() {
   // A callback ref, not useRef: the container mounts only once the room has loaded, after this hook's
   // first render, so the observer must attach whenever the element appears.
   const [container, containerRef] = useState<HTMLDivElement | null>(null);
-  const [width, setWidth] = useState(() => (typeof window === "undefined" ? 1280 : window.innerWidth));
+  const [area, setArea] = useState<Area>(() =>
+    typeof window === "undefined" ? { width: 1280, height: 720 } : { width: window.innerWidth, height: window.innerHeight - 52 },
+  );
   const [saved, setSavedState] = useState<RoomLayout>(() => loadLayout());
   const savedRef = useRef(saved);
 
@@ -44,77 +47,75 @@ export function useRoomLayout() {
 
   useLayoutEffect(() => {
     if (!container) return;
-    setWidth(container.clientWidth);
-    const observer = new ResizeObserver(() => setWidth(container.clientWidth));
+    const measure = () => setArea({ width: container.clientWidth, height: container.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(container);
     return () => observer.disconnect();
   }, [container]);
 
-  /**
-   * Resize one panel. Saves both panels as displayed (see `resizePanel`), so the other panel stays
-   * exactly where it is even when the saved preferences don't fit this window.
-   */
+  /** Set one divider. Saves both sizes as displayed (see `resizePanel`), so the other never moves. */
   const resize = useCallback(
-    (panel: SidePanel, size: number) => {
-      const next = resizePanel(savedRef.current, panel, size, width);
+    (divider: Divider, size: number) => {
+      const next = resizePanel(savedRef.current, divider, size, area);
       const current = savedRef.current;
-      if (next.question !== current.question || next.results !== current.results) setSaved(next);
+      if (next.question !== current.question || next.tests !== current.tests) setSaved(next);
     },
-    [width, setSaved],
+    [area, setSaved],
   );
   const commit = useCallback(() => saveLayout(savedRef.current), []);
   const reset = useCallback(() => {
     setSaved({ ...DEFAULT_LAYOUT });
     saveLayout(DEFAULT_LAYOUT);
   }, [setSaved]);
-  /** Double-click: this panel back to its default width (as far as it fits); the other doesn't move. */
-  const resetPanel = useCallback(
-    (panel: SidePanel) => {
-      setSaved(resizePanel(savedRef.current, panel, DEFAULT_LAYOUT[panel], width));
+  /** Double-click a divider: that size back to its default (as far as it fits). */
+  const resetDivider = useCallback(
+    (divider: Divider) => {
+      setSaved(resizePanel(savedRef.current, divider, DEFAULT_LAYOUT[divider], area));
       saveLayout(savedRef.current);
     },
-    [width, setSaved],
+    [area, setSaved],
   );
 
   return {
     containerRef,
-    width,
-    narrow: isNarrow(width),
-    displayed: fitLayout(saved, width),
+    area,
+    narrow: isNarrow(area.width),
+    displayed: fitLayout(saved, area),
     saved,
     isDefault: isDefaultLayout(saved),
     resize,
     commit,
     reset,
-    resetPanel,
+    resetDivider,
   };
 }
 
 export type RoomLayoutState = ReturnType<typeof useRoomLayout>;
 
-type Tab = "question" | "code" | "results";
+type Tab = "question" | "code" | "tests";
 const TABS: { id: Tab; label: string }[] = [
   { id: "question", label: "Question" },
   { id: "code", label: "Code" },
-  { id: "results", label: "Results" },
+  { id: "tests", label: "Tests" },
 ];
 
 interface Props {
   layout: RoomLayoutState;
   question: ReactNode;
-  editor: ReactNode;
-  results: ReactNode;
-  /** Changes whenever results change; on narrow screens it marks the Results tab as unseen. */
+  code: ReactNode;
+  tests: ReactNode;
+  /** Changes whenever results change; on narrow screens it marks the Tests tab as unseen. */
   resultsKey: string;
 }
 
 /**
- * Three columns with draggable separators; tabs on narrow screens. All three columns are always
- * rendered, in the same positions, in every mode: switching modes or resizing only changes CSS, so
- * the editor (Monaco + its Yjs binding) is never remounted.
+ * Question | Code over Tests, with draggable dividers; tabs on narrow screens. Every panel is always
+ * rendered, in the same position, in every mode: switching modes or resizing only changes CSS, so the
+ * editor (Monaco + its Yjs binding) is never remounted.
  */
-export function RoomColumns({ layout, question, editor, results, resultsKey }: Props) {
-  const { containerRef, narrow, displayed, width } = layout;
+export function RoomColumns({ layout, question, code, tests, resultsKey }: Props) {
+  const { containerRef, narrow, displayed, area } = layout;
   const [tab, setTab] = useState<Tab>("code");
   const [unseen, setUnseen] = useState(false);
 
@@ -122,15 +123,15 @@ export function RoomColumns({ layout, question, editor, results, resultsKey }: P
   useEffect(() => {
     if (resultsKey === firstResults.current) return;
     firstResults.current = resultsKey;
-    if (narrow && tab !== "results") setUnseen(true);
+    if (narrow && tab !== "tests") setUnseen(true);
     // Only react to new results, not to tab/mode changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultsKey]);
   useEffect(() => {
-    if (tab === "results" || !narrow) setUnseen(false);
+    if (tab === "tests" || !narrow) setUnseen(false);
   }, [tab, narrow]);
 
-  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ question: null, code: null, results: null });
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({ question: null, code: null, tests: null });
   function onTabKey(e: KeyboardEvent) {
     const i = TABS.findIndex((t) => t.id === tab);
     const next =
@@ -141,7 +142,7 @@ export function RoomColumns({ layout, question, editor, results, resultsKey }: P
     tabRefs.current[next.id]?.focus();
   }
 
-  const column = (id: Tab, content: ReactNode) => (
+  const pane = (id: Tab, content: ReactNode) => (
     <div
       className={`room-col room-col-${id}`}
       id={`room-col-${id}`}
@@ -157,11 +158,7 @@ export function RoomColumns({ layout, question, editor, results, resultsKey }: P
     <div
       ref={containerRef}
       className={`room-layout ${narrow ? "narrow" : "wide"}`}
-      style={
-        narrow
-          ? undefined
-          : { gridTemplateColumns: `${displayed.question}px ${DIVIDER_WIDTH}px minmax(0, 1fr) ${DIVIDER_WIDTH}px ${displayed.results}px` }
-      }
+      style={narrow ? undefined : { gridTemplateColumns: `${displayed.question}px ${DIVIDER}px minmax(0, 1fr)` }}
     >
       {narrow && (
         <div className="room-tabs tabs" role="tablist" aria-label="Room panels" onKeyDown={onTabKey}>
@@ -180,7 +177,7 @@ export function RoomColumns({ layout, question, editor, results, resultsKey }: P
               onClick={() => setTab(t.id)}
             >
               {t.label}
-              {t.id === "results" && unseen && (
+              {t.id === "tests" && unseen && (
                 <>
                   <span className="unseen-dot" aria-hidden="true" />
                   <span className="sr-only"> (new)</span>
@@ -190,40 +187,49 @@ export function RoomColumns({ layout, question, editor, results, resultsKey }: P
           ))}
         </div>
       )}
-      {column("question", question)}
-      {!narrow && <Separator panel="question" label="Resize question panel" layout={layout} max={maxWidth("question", layout.saved, width)} />}
-      {column("code", editor)}
-      {!narrow && <Separator panel="results" label="Resize results panel" layout={layout} max={maxWidth("results", layout.saved, width)} />}
-      {column("results", results)}
+      {pane("question", question)}
+      {!narrow && (
+        <Separator divider="question" label="Resize question panel" layout={layout} max={maxSize("question", area)} />
+      )}
+      <div
+        className="room-right"
+        style={narrow ? undefined : { gridTemplateRows: `minmax(0, 1fr) ${DIVIDER}px ${displayed.tests}px` }}
+      >
+        {pane("code", code)}
+        {!narrow && <Separator divider="tests" label="Resize test panel" layout={layout} max={maxSize("tests", area)} />}
+        {pane("tests", tests)}
+      </div>
     </div>
   );
 }
 
 /**
- * WAI-ARIA window splitter. Its value is the width of the side panel it controls. Drag with the
- * pointer, or focus it and use ←/→ (Shift = larger steps) and Home/End; double-click resets the panel.
- * The separator sits on the panel's inner edge, so for the results panel moving right shrinks it.
+ * WAI-ARIA window splitter. Its value is the size of the panel it controls: the question column's
+ * width (vertical divider) or the test panel's height (horizontal divider, below the editor — so
+ * dragging/arrowing it *up* makes the test panel taller). Drag with the pointer, or focus it and use
+ * the arrow keys (Shift = larger steps) and Home/End; double-click resets it.
  */
-function Separator({ panel, label, layout, max }: { panel: SidePanel; label: string; layout: RoomLayoutState; max: number }) {
-  const value = layout.displayed[panel];
-  const min = MIN_WIDTH[panel];
-  const direction = panel === "question" ? 1 : -1;
-  const drag = useRef<{ x: number; start: number } | null>(null);
+function Separator({ divider, label, layout, max }: { divider: Divider; label: string; layout: RoomLayoutState; max: number }) {
+  const value = layout.displayed[divider];
+  const min = MIN_SIZE[divider];
+  const vertical = divider === "question";
+  const drag = useRef<{ at: number; start: number } | null>(null);
+  const pos = (e: PointerEvent) => (vertical ? e.clientX : e.clientY);
 
   function end() {
     if (!drag.current) return;
     drag.current = null;
-    document.body.classList.remove("resizing");
+    document.body.classList.remove("resizing", "resizing-row");
     layout.commit();
   }
 
   return (
     <div
-      className="splitter"
+      className={`splitter ${vertical ? "splitter-col" : "splitter-row"}`}
       role="separator"
-      aria-orientation="vertical"
+      aria-orientation={vertical ? "vertical" : "horizontal"}
       aria-label={label}
-      aria-controls={`room-col-${panel}`}
+      aria-controls={`room-col-${vertical ? "question" : "tests"}`}
       aria-valuenow={value}
       aria-valuemin={min}
       aria-valuemax={max}
@@ -234,26 +240,30 @@ function Separator({ panel, label, layout, max }: { panel: SidePanel; label: str
         if (e.button !== 0) return;
         e.preventDefault(); // don't move focus out of the editor or start a text selection
         e.currentTarget.setPointerCapture(e.pointerId);
-        drag.current = { x: e.clientX, start: value };
-        document.body.classList.add("resizing");
+        drag.current = { at: pos(e), start: value };
+        document.body.classList.add(vertical ? "resizing" : "resizing-row");
       }}
       onPointerMove={(e) => {
-        if (drag.current) layout.resize(panel, drag.current.start + direction * (e.clientX - drag.current.x));
+        if (!drag.current) return;
+        const delta = pos(e) - drag.current.at;
+        layout.resize(divider, drag.current.start + (vertical ? delta : -delta));
       }}
       onPointerUp={end}
       onPointerCancel={end}
       onLostPointerCapture={end}
-      onDoubleClick={() => layout.resetPanel(panel)}
+      onDoubleClick={() => layout.resetDivider(divider)}
       onKeyDown={(e) => {
         const step = e.shiftKey ? KEY_STEP_LARGE : KEY_STEP;
+        const grow = vertical ? "ArrowRight" : "ArrowUp";
+        const shrink = vertical ? "ArrowLeft" : "ArrowDown";
         let next: number;
-        if (e.key === "ArrowRight") next = value + direction * step;
-        else if (e.key === "ArrowLeft") next = value - direction * step;
+        if (e.key === grow) next = value + step;
+        else if (e.key === shrink) next = value - step;
         else if (e.key === "Home") next = min;
         else if (e.key === "End") next = max;
         else return;
         e.preventDefault();
-        layout.resize(panel, next);
+        layout.resize(divider, next);
         layout.commit();
       }}
     />

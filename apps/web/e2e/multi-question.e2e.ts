@@ -14,6 +14,9 @@ const field = (page: Page, label: string) => page.getByLabel(label, { exact: tru
 const questionPanel = (page: Page) => page.getByRole("complementary", { name: "Question" });
 const nav = (page: Page) => page.getByRole("navigation", { name: "Questions" });
 const navButton = (page: Page, n: number) => nav(page).getByRole("button", { name: new RegExp(`^Q${n}:`) });
+const resultsHeading = (page: Page) => page.locator(".results-panel h2");
+/** Test-case rows of the newest result card. */
+const testRows = (page: Page) => results(page).first().locator("table.tests tr");
 
 /** Author and publish a question with one public test, through the UI. */
 async function authorQuestion(page: Page, title: string, starter: string, input: string, output: string) {
@@ -116,10 +119,15 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
 
       await replaceCode(cd, PRODUCT);
       await cd.getByRole("button", { name: "Submit" }).click();
-      await expect(results(cd)).toHaveCount(2);
+      // The results panel follows the question: only Q2's run, with Q2's single example as its test rows.
+      await expect(resultsHeading(cd)).toHaveText("Results · Q2");
+      await expect(results(cd)).toHaveCount(1);
       await expect(results(cd).first()).toContainText("Accepted"); // graded on Q2's tests
-      await expect(results(cd).first()).toContainText("Q2");
+      await expect(testRows(cd)).toHaveCount(1);
+      await expect(testRows(cd)).toContainText(["Example 1"]);
       await expect.poll(() => editorText(iv)).toBe(PRODUCT); // interviewer is on Q2 too: same buffer
+      await expect(resultsHeading(iv)).toHaveText("Results · Q2");
+      await expect(results(iv)).toHaveCount(1); // the interviewer's panel follows their own question
     });
 
     await test.step("each question keeps its own code", async () => {
@@ -127,12 +135,13 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expect.poll(() => editorText(cd)).toBe(SUM);
       await expectUnchanged(() => editorText(iv), PRODUCT, 800); // the interviewer's Q2 view is unaffected
 
-      // Results can be narrowed to the question being viewed.
-      await cd.getByLabel("This question only").check();
+      // …and its own results: back on Q1, only Q1's run with Q1's two examples.
+      await expect(resultsHeading(cd)).toHaveText("Results · Q1");
       await expect(results(cd)).toHaveCount(1);
-      await expect(results(cd).first()).toContainText("Q1");
-      await cd.getByLabel("This question only").uncheck();
-      await expect(results(cd)).toHaveCount(2);
+      await expect(results(cd).first()).toContainText("Accepted");
+      await expect(testRows(cd)).toHaveCount(2);
+      await expect(results(iv)).toHaveCount(1); // the interviewer, still on Q2, still sees only Q2's run
+      await expect(resultsHeading(iv)).toHaveText("Results · Q2");
     });
 
     await test.step("a reveal missed while disconnected arrives on reconnect", async () => {
@@ -148,9 +157,9 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expect.poll(() => editorText(cd)).toBe("# subtract");
       await replaceCode(cd, DIFFERENCE);
       await cd.getByRole("button", { name: "Run" }).click();
-      await expect(results(cd)).toHaveCount(3);
+      await expect(resultsHeading(cd)).toHaveText("Results · Q3");
+      await expect(results(cd)).toHaveCount(1);
       await expect(results(cd).first()).toContainText("Accepted");
-      await expect(results(cd).first()).toContainText("Q3");
     });
 
     await test.step("after a reload everything is still there", async () => {
@@ -158,7 +167,11 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expect(nav(cd).getByRole("button")).toHaveCount(3);
       await navButton(cd, 2).click();
       await expect.poll(() => editorText(cd)).toBe(PRODUCT);
-      await expect(results(cd)).toHaveCount(3);
+      await expect(results(cd)).toHaveCount(1); // history re-fetched, still filed per question
+      await expect(results(cd).first()).toContainText("Accepted");
+      await navButton(cd, 1).click();
+      await expect(results(cd)).toHaveCount(1);
+      await expect(testRows(cd)).toHaveCount(2);
     });
   } finally {
     await interviewer.close();

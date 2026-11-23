@@ -1,81 +1,74 @@
 /**
- * Layout math for the room's three columns (question | editor | results). Pure functions, unit tested;
- * the component in `components/RoomLayout.tsx` only wires them to pointer/keyboard events (ADR 0008).
+ * Layout math for the room (ADR 0008): the question on the left, and on the right the code editor
+ * stacked over the test panel (Testcase / Test Result). Two sizes are user-adjustable:
+ *  - `question` — width of the question column (vertical divider);
+ *  - `tests`    — height of the test panel (horizontal divider).
+ * Pure functions, unit tested; `components/RoomLayout.tsx` only wires them to pointer/keyboard events.
  *
- * Sizes are pixels. The editor always takes what's left, and never less than `MIN_WIDTH.editor`.
+ * Sizes are pixels. The editor always takes what's left, and never less than its minimum width/height.
  * A saved layout is a *preference*: when the window is too small it is shown clamped (`fitLayout`)
  * but not rewritten, so it comes back when the window grows again. An explicit resize saves what is
- * on screen (`resizePanel`), so the panel the user didn't touch never moves.
+ * on screen (`resizePanel`).
  */
 
-export type SidePanel = "question" | "results";
+export type Divider = "question" | "tests";
 
 export interface RoomLayout {
   question: number;
-  results: number;
+  tests: number;
 }
 
-export const DEFAULT_LAYOUT: Readonly<RoomLayout> = { question: 320, results: 360 };
-export const MIN_WIDTH = { question: 220, editor: 320, results: 260 } as const;
-/** Width of each draggable divider (two of them). */
-export const DIVIDER_WIDTH = 6;
-/** Below this room width the columns become tabs. Must exceed the sum of minimums + dividers (812). */
-export const NARROW_BREAKPOINT = 900;
-/** Keyboard step for the separators; Shift multiplies it. */
+/** Size of the area the layout is fitted into (the room below the top bar). */
+export interface Area {
+  width: number;
+  height: number;
+}
+
+export const DEFAULT_LAYOUT: Readonly<RoomLayout> = { question: 420, tests: 300 };
+export const MIN_SIZE = { question: 260, codeWidth: 380, codeHeight: 160, tests: 140 } as const;
+/** Thickness of a divider, and of the gap around the cards. */
+export const DIVIDER = 6;
+/** Below this room width the panels become tabs. Must exceed the side-by-side minimums (664). */
+export const NARROW_BREAKPOINT = 768;
+/** Keyboard step for the dividers; Shift multiplies it. */
 export const KEY_STEP = 16;
 export const KEY_STEP_LARGE = 64;
 
-export const STORAGE_KEY = "coderoom:room-layout:v1";
+export const STORAGE_KEY = "coderoom:room-layout:v2";
 
-const other = (panel: SidePanel): SidePanel => (panel === "question" ? "results" : "question");
-const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
+const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), Math.max(lo, hi));
 
 export const isNarrow = (width: number) => width < NARROW_BREAKPOINT;
 
-/** Space the two side panels can share at this room width. */
-const sideBudget = (width: number) => width - 2 * DIVIDER_WIDTH - MIN_WIDTH.editor;
-
 /**
- * The layout to *display* at this width: each side panel at least its minimum, and together small
- * enough to leave the editor its minimum. When they must shrink, each gives up space in proportion
- * to how far it is above its own minimum.
+ * Largest size a divider may give its panel in this area (never below the panel's minimum).
+ * Each axis has the outer gap on both sides plus the divider itself: 3 × DIVIDER.
  */
-export function fitLayout(layout: RoomLayout, width: number): RoomLayout {
-  const q = Math.max(Math.round(layout.question), MIN_WIDTH.question);
-  const r = Math.max(Math.round(layout.results), MIN_WIDTH.results);
-  const overflow = q + r - sideBudget(width);
-  if (overflow <= 0) return { question: q, results: r };
-
-  const qSlack = q - MIN_WIDTH.question;
-  const rSlack = r - MIN_WIDTH.results;
-  const slack = qSlack + rSlack;
-  if (slack <= overflow) return { question: MIN_WIDTH.question, results: MIN_WIDTH.results };
-  const qCut = Math.round((overflow * qSlack) / slack);
-  return { question: q - qCut, results: r - (overflow - qCut) };
+export function maxSize(divider: Divider, area: Area): number {
+  return divider === "question"
+    ? Math.max(MIN_SIZE.question, area.width - 3 * DIVIDER - MIN_SIZE.codeWidth)
+    : Math.max(MIN_SIZE.tests, area.height - 3 * DIVIDER - MIN_SIZE.codeHeight);
 }
 
-/** Largest width `panel` may take at this room width, given the other panel's displayed width. */
-export function maxWidth(panel: SidePanel, layout: RoomLayout, width: number): number {
-  const fitted = fitLayout(layout, width);
-  return Math.max(MIN_WIDTH[panel], sideBudget(width) - fitted[other(panel)]);
+/** The layout to *display* in this area: each size within its minimum and what leaves the editor its minimum. */
+export function fitLayout(layout: RoomLayout, area: Area): RoomLayout {
+  return {
+    question: Math.round(clamp(layout.question, MIN_SIZE.question, maxSize("question", area))),
+    tests: Math.round(clamp(layout.tests, MIN_SIZE.tests, maxSize("tests", area))),
+  };
 }
 
 /**
- * The layout to save after the user sets one side panel's width: that panel clamped to its minimum and
- * to what the room can fit, and the *other* panel pinned at the width it is displayed at now.
- *
- * Both panels are saved as displayed, never "the new width + the other's old preference": when the
- * window is too small for the saved preferences, mixing a displayed width with an oversized preference
- * would be re-fitted on the next render and visibly move the panel the user didn't touch. The result
- * always fits at this width (`fitLayout(result, width)` returns it unchanged).
+ * The layout to save after the user sets one divider: that size clamped, and the other size pinned at
+ * what is displayed now — what's saved is exactly what's on screen (`fitLayout(result) === result`).
  */
-export function resizePanel(layout: RoomLayout, panel: SidePanel, size: number, width: number): RoomLayout {
-  const fitted = fitLayout(layout, width);
-  return { ...fitted, [panel]: Math.round(clamp(size, MIN_WIDTH[panel], maxWidth(panel, layout, width))) };
+export function resizePanel(layout: RoomLayout, divider: Divider, size: number, area: Area): RoomLayout {
+  const fitted = fitLayout(layout, area);
+  return { ...fitted, [divider]: Math.round(clamp(size, MIN_SIZE[divider], maxSize(divider, area))) };
 }
 
 export const isDefaultLayout = (layout: RoomLayout) =>
-  layout.question === DEFAULT_LAYOUT.question && layout.results === DEFAULT_LAYOUT.results;
+  layout.question === DEFAULT_LAYOUT.question && layout.tests === DEFAULT_LAYOUT.tests;
 
 /** Read the saved layout; anything missing, malformed or out of range falls back to the default. */
 export function loadLayout(storage: Pick<Storage, "getItem"> | undefined = safeStorage()): RoomLayout {
@@ -84,10 +77,10 @@ export function loadLayout(storage: Pick<Storage, "getItem"> | undefined = safeS
     if (!raw) return { ...DEFAULT_LAYOUT };
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return { ...DEFAULT_LAYOUT };
-    const { question, results } = parsed as Record<string, unknown>;
+    const { question, tests } = parsed as Record<string, unknown>;
     const valid = (v: unknown, min: number): v is number => typeof v === "number" && Number.isFinite(v) && v >= min && v <= 4000;
-    if (!valid(question, MIN_WIDTH.question) || !valid(results, MIN_WIDTH.results)) return { ...DEFAULT_LAYOUT };
-    return { question: Math.round(question), results: Math.round(results) };
+    if (!valid(question, MIN_SIZE.question) || !valid(tests, MIN_SIZE.tests)) return { ...DEFAULT_LAYOUT };
+    return { question: Math.round(question), tests: Math.round(tests) };
   } catch {
     return { ...DEFAULT_LAYOUT };
   }
