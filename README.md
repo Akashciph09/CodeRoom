@@ -47,7 +47,7 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 - **Untrusted code never touches the API server.** The API validates, stores and enqueues; separate workers execute.
 - **Per-run Docker sandbox** with no network, memory/CPU/PID limits, read-only filesystem, dropped capabilities, non-root user and a hard timeout. An infinite loop is killed; a memory bomb is stopped; outbound HTTP fails.
 - **Hidden tests stay hidden** — enforced three ways: a candidate-only serializer, a database `CHECK` constraint that refuses to store hidden-test output, and Row Level Security that blocks direct table access via Supabase's public API.
-- **Per-room roles.** The same user can interview in one room and be a candidate in another; every request is checked against room membership.
+- **Per-room roles, one candidate per room.** The same user can interview in one room and be a candidate in another; every request is checked against room membership. Each room has exactly one interviewer and one candidate: the first person to open the invite link takes the seat, anyone else gets `409` and no access — enforced by a unique index, so simultaneous joins can't both get in ([ADR 0012](docs/decisions/0012-one-candidate-per-room.md)).
 - **Horizontally scalable execution.** Stateless BullMQ workers; add processes to add throughput. Retries are idempotent.
 - **Collaborative editing that scales out.** Yjs (CRDT) over our own WebSocket gateway; interviewer and candidate can be connected to *different* API instances and stay in sync via Redis pub/sub. Concurrent edits converge; the document survives everyone leaving.
 - **Live, role-aware results.** When the worker finishes, every connected participant gets the submission pushed over WebSocket — candidates the redacted view, interviewers the full one.
@@ -252,7 +252,7 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `GET` | `/rooms` | any user | Rooms the caller participates in |
 | `GET` | `/rooms/:id/review` | interviewer | Per candidate: test score + breakdown, reveal window per question, every run/submission with code (ADR 0011) |
 | `POST` | `/rooms` | any user | `{ questionIds, questionPoints? }` (1–5, ordered; your own or library questions; points 1–100 each, default equal). **Pins each question's latest ready version**; Q1 is revealed. Caller becomes interviewer |
-| `POST` | `/rooms/join` | any user | Join with invite code as candidate |
+| `POST` | `/rooms/join` | any user | Join with invite code as the room's candidate; the same candidate can rejoin, anyone else gets `409` (one candidate per room) |
 | `GET` | `/rooms/:id` | participant | Questions (pinned versions, public tests only), caller's role, invite code for the interviewer. Candidates get only revealed questions |
 | `POST` | `/rooms/:id/questions/:roomQuestionId/reveal` | interviewer | Reveal the next question to the candidate (in order; repeating is a no-op; `409` if out of order) |
 | `GET` | `/rooms/:id/submissions` | participant | History, newest first, in the caller's role view (candidates see only their own) |
@@ -311,7 +311,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~100 s for all twenty-one tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~100 s for all twenty-two tests):
 
 | Step | Checked |
 |---|---|
@@ -331,6 +331,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Test panel | example cases one at a time (never hidden tests), switches to Test Result on a run, status bar shows the cursor |
 | Small window with oversized saved sizes | shown squeezed without being lost (they return in a bigger window); resizing one divider never moves the other |
 | Type while dragging a divider | every keystroke lands, still synced, editor never remounted |
+| A third person opens the invite link | "This interview already has a candidate", no access to the room; the interviewer still sees only two people; the candidate can rejoin with the link |
 | Post-interview review | score 100/100 from the best Submit, timeline with hidden-test counts and a "counted" mark, diff between Submits; candidates get "only the interviewer"; points set in the picker show on the review; the open review updates by itself as submissions finish — live (events) and after the session ended (polling) |
 | Custom test cases | interviewer adds one, candidate sees it (and who added it); candidate adds one, interviewer sees it; Run shows both outputs on both sides (checked one matched, unchecked one "Ran"); removing one removes it for both; Submit runs no custom cases; cases survive a reload |
 | Interview timer | shown to both; ticks; stops at the same value for both when the session ends, and stays stopped after a reload |

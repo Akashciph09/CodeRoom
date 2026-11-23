@@ -92,6 +92,13 @@
       "when": 1795444898674,
       "tag": "20261123144138_room_question_points",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795448213773,
+      "tag": "20261123153653_one_candidate_per_room",
+      "breakpoints": true
     }
   ]
 }

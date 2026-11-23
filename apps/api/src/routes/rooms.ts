@@ -71,7 +71,11 @@ roomsRouter.post(
   }),
 );
 
-/** Joining with an invite code grants the candidate role. */
+/**
+ * Joining with an invite code grants the candidate role — to one person per room (ADR 0012). The
+ * candidate can rejoin (idempotent); anyone else gets 409 and never becomes a participant. The limit is
+ * a unique index, so two people joining at the same instant can't both get in.
+ */
 roomsRouter.post(
   "/join",
   asyncHandler(async (req, res) => {
@@ -92,10 +96,21 @@ roomsRouter.post(
       .limit(1);
     if (existing?.role === "interviewer") throw new Conflict("Interviewer cannot join as candidate");
     if (!existing) {
-      await db
+      // Conflicts on the primary key (same user, concurrent retry) or on the one-candidate index
+      // (someone else took the seat) both insert nothing; only the second case is a refusal.
+      const inserted = await db
         .insert(roomParticipants)
         .values({ roomId: room.id, userId, role: "candidate" })
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ userId: roomParticipants.userId });
+      if (inserted.length === 0) {
+        const [now] = await db
+          .select({ role: roomParticipants.role })
+          .from(roomParticipants)
+          .where(and(eq(roomParticipants.roomId, room.id), eq(roomParticipants.userId, userId)))
+          .limit(1);
+        if (now?.role !== "candidate") throw new Conflict("This interview already has a candidate");
+      }
     }
 
     const response: JoinRoomResponse = { roomId: room.id, role: "candidate" };

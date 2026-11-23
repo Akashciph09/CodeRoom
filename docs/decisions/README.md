@@ -16,3 +16,4 @@ Rule for this repo: a technology goes in only if it has a "why" and a "why not t
 | [0009](0009-multi-question-rooms.md) | Rooms hold an ordered list of questions, revealed by the interviewer | Accepted |
 | [0010](0010-custom-test-cases-and-timer.md) | Shared custom test cases (run-only) and an interview timer | Accepted |
 | [0011](0011-interview-review-and-test-score.md) | Interview review page and a test score out of 100 (evidence, not a decision) | Accepted |
+| [0012](0012-one-candidate-per-room.md) | One interviewer and one candidate per room, enforced by the database | Accepted |

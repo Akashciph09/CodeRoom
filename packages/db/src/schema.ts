@@ -163,8 +163,18 @@ export const roomParticipants = pgTable(
       .references(() => authUsers.id, { onDelete: "cascade" }),
     role: roleEnum("role").notNull(),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * A second candidate from before rooms were limited to one (ADR 0012). Kept so their submissions
+     * stay reviewable; ignored by the one-candidate index. Never set for new rows.
+     */
+    legacyExtra: boolean("legacy_extra").notNull().default(false),
   },
-  (t) => [primaryKey({ columns: [t.roomId, t.userId] })],
+  (t) => [
+    primaryKey({ columns: [t.roomId, t.userId] }),
+    // At most one candidate and one interviewer per room — enforced here, so concurrent joins can't race past it.
+    uniqueIndex("room_participants_one_candidate").on(t.roomId).where(sql`${t.role} = 'candidate' AND NOT ${t.legacyExtra}`),
+    uniqueIndex("room_participants_one_interviewer").on(t.roomId).where(sql`${t.role} = 'interviewer'`),
+  ],
 ).enableRLS();
 
 export const submissions = pgTable(
