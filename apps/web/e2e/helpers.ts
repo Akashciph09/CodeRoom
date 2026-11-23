@@ -83,14 +83,33 @@ export async function startInterview(browser: Browser) {
 /** The "live" / "reconnecting…" label in the room's top bar. */
 export const liveStatus = (page: Page) => page.locator(".topbar-center .status-dot + span");
 
-/** Sign up a throwaway user on the (already displayed) sign-in page. Local Supabase only. */
-export async function signUp(page: Page, name: string) {
+export interface Credentials {
+  email: string;
+  password: string;
+}
+
+/**
+ * Sign up a throwaway user on the (already displayed) sign-in page. Local Supabase only.
+ * Returns the credentials so the same user can sign in again elsewhere (e.g. a second window).
+ */
+export async function signUp(page: Page, name: string): Promise<Credentials> {
+  const creds = { email: `e2e-${randomUUID().slice(0, 8)}@example.test`, password: randomUUID() };
   await expect(page).toHaveURL(/\/login/);
   await page.getByRole("button", { name: "Create account" }).first().click(); // the tab
   await page.getByLabel("Name").fill(name);
-  await page.getByLabel("Email").fill(`e2e-${randomUUID().slice(0, 8)}@example.test`);
-  await page.getByLabel("Password").fill(randomUUID());
+  await page.getByLabel("Email").fill(creds.email);
+  await page.getByLabel("Password").fill(creds.password);
   await page.locator("form").getByRole("button", { name: "Create account" }).last().click(); // submit
+  await expect(page).not.toHaveURL(/\/login/);
+  return creds;
+}
+
+/** Sign in an existing user on the (already displayed) sign-in page. */
+export async function signIn(page: Page, creds: Credentials) {
+  await expect(page).toHaveURL(/\/login/);
+  await page.getByLabel("Email").fill(creds.email);
+  await page.getByLabel("Password").fill(creds.password);
+  await page.locator("form").getByRole("button", { name: "Sign in" }).last().click();
   await expect(page).not.toHaveURL(/\/login/);
 }
 

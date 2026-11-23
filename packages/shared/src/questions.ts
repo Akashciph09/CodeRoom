@@ -22,8 +22,13 @@ export type TestCaseInput = z.infer<typeof TestCaseInput>;
 /**
  * Full content of a draft. Saving replaces the whole draft — test order in `tests` is the order
  * candidates see and the order results are reported in.
+ *
+ * `baseRevision` is the draft revision this edit started from (`null` = there was no draft, the edit
+ * started from the ready version). If the draft has moved on since — another tab saved, published or
+ * discarded it — the server answers 409 instead of overwriting.
  */
 export const QuestionDraftInput = z.object({
+  baseRevision: z.number().int().positive().nullable(),
   title: z.string().trim().min(1, "Title is required").max(200),
   statement: z.string().max(20_000),
   constraints: z.string().max(5_000).default(""),
@@ -31,6 +36,21 @@ export const QuestionDraftInput = z.object({
   tests: z.array(TestCaseInput).max(MAX_TESTS_PER_QUESTION),
 });
 export type QuestionDraftInput = z.infer<typeof QuestionDraftInput>;
+
+/** Publish / discard act on the draft the client has seen; 409 if it has changed since. */
+export const DraftRevisionRequest = z.object({
+  revision: z.number().int().positive(),
+});
+export type DraftRevisionRequest = z.infer<typeof DraftRevisionRequest>;
+
+/** Body of a 409 from draft endpoints. */
+export const DraftConflict = z.object({
+  error: z.string(),
+  conflict: z.literal("draft_changed"),
+  /** The draft's current revision on the server (`null` if there's no draft any more). */
+  currentRevision: z.number().int().nullable(),
+});
+export type DraftConflict = z.infer<typeof DraftConflict>;
 
 export const CreateQuestionRequest = z.object({
   title: z.string().trim().min(1).max(200).default("Untitled question"),
@@ -52,6 +72,8 @@ export const QuestionVersionView = z.object({
   tests: z.array(TestCaseView),
   publishedAt: z.string().nullable(),
   updatedAt: z.string(),
+  /** Draft revision; send it back as `baseRevision` / `revision`. */
+  revision: z.number().int(),
 });
 export type QuestionVersionView = z.infer<typeof QuestionVersionView>;
 

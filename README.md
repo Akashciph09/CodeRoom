@@ -203,9 +203,9 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `GET` | `/questions/mine` | any user | Your questions with status (`draft` / `ready` vN / unpublished changes) |
 | `POST` | `/questions` | any user | Create a question (starts as a draft) |
 | `GET` | `/questions/:id` | owner | Editor view: current draft, latest ready version, version list, rooms using it |
-| `PUT` | `/questions/:id/draft` | owner | Save the whole draft (statement, constraints, starter code, ordered tests). Creates a new draft if the question is ready |
-| `POST` | `/questions/:id/publish` | owner | Mark ready → next immutable version. `400` with `problems` if incomplete |
-| `DELETE` | `/questions/:id/draft` | owner | Discard unpublished changes |
+| `PUT` | `/questions/:id/draft` | owner | Save the whole draft (statement, constraints, starter code, ordered tests) with `baseRevision`. Creates a new draft if the question is ready. `409` if the draft changed since (stale tab) |
+| `POST` | `/questions/:id/publish` | owner | `{ revision }` → next immutable version. `400` with `problems` if incomplete, `409` if the draft changed since |
+| `DELETE` | `/questions/:id/draft` | owner | `{ revision }` → discard unpublished changes (`409` if stale) |
 | `GET` | `/questions/:id/preview?of=draft\|latest` | owner | Exactly the candidate's view (public tests only) |
 | `DELETE` | `/questions/:id` | owner | Delete a never-ready question (`409` once ready) |
 | `GET` | `/rooms` | any user | Rooms the caller participates in |
@@ -231,7 +231,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 ## Testing
 
 - **Unit tests** — every sandbox `docker run` flag, verdict mapping, the candidate/interviewer serializers (hidden test ids never appear in the candidate view), the document manager against a fake database (failed saves are retried, saves never overlap, unload waits for an in-flight save, edits are retained and recovered — even by a new process — when the DB is down, read-only rooms drop writes), and the browser's history merge (a result is never rolled back by an older snapshot).
-- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack, then `questions-smoke.ts` checks 28 more for authoring, ownership and versioning (an interview on v1 keeps showing and grading v1 after v2 is ready; the DB rejects edits to a published version). Latest local run of the first part:
+- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack, then `questions-smoke.ts` checks 34 more for authoring, ownership, versioning and two-tab conflicts (an interview on v1 keeps showing and grading v1 after v2 is ready; the DB rejects edits to a published version). Latest local run of the first part:
 
 | Case | Result |
 |---|---|
@@ -267,7 +267,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~30 s for all four tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~30 s for all six tests):
 
 | Step | Checked |
 |---|---|
@@ -286,6 +286,8 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | **Authoring:** My questions → create → statement, constraints, starter code → add/hide/reorder/remove tests → "Mark ready" blocked without a public test → save, preview, mark ready v1 | preview shows public examples only and the starter code; status "Ready v1" |
 | Start an interview with it; candidate joins | sees the authored statement/constraints and starter code; correct solution "Accepted, hidden tests 1/1" |
 | Author changes an expected output and marks v2 ready | the running interview still shows v1's example and grades on v1 |
+| Author keeps typing while "Save draft" is in flight (response held by the test) | the later typing survives the response and is still marked unsaved |
+| Same author edits in two windows; the second one saves after the first | conflict banner, its text kept locally, nothing overwritten or published on the server; "Reload latest" recovers |
 | **Reconnect:** candidate submits, then their realtime connection drops; the run finishes and both type during the gap; connection returns | no reload needed: the missed "Accepted" result appears (no duplicate card), both offline edits reach both sides, editors converge |
 
 The tests refuse to run unless Supabase and the API are on `localhost` (they create throwaway accounts), and they fail fast if the API isn't healthy. They use the installed Google Chrome; set `PLAYWRIGHT_CHANNEL=""` and run `pnpm --filter @coderoom/web exec playwright install chromium` to use Playwright's bundled browser instead (e.g. CI). Each assertion was checked to fail when the behaviour it guards is broken — for example, disabling the editor's read-only mode fails the end-of-session step, removing the history refetch on reconnect fails the reconnect test, and blocking interviewer edits fails the two-way typing step. Connection drops are simulated by proxying the page's WebSockets through the test (`routeWebSocket`), so they're deterministic.

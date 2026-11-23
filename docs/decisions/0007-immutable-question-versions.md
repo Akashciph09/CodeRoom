@@ -12,11 +12,14 @@ Interviewers write their own questions: statement, constraints, starter code, pu
 - **Immutability is enforced by the database**, not only the API: triggers reject `UPDATE`/`DELETE` of a published version and any insert/update/delete of its test cases. A buggy code path or a manual SQL edit can't rewrite history either.
 - **Ownership:** only a question's owner can read the editor view, edit, preview, publish or open rooms with it; others get `404` (not `403`, so ids can't be probed). Questions with no owner are a shared library: anyone can interview with them, nobody can edit them.
 - **Preview is the candidate view.** The editor's preview and the room both render the server's `candidateView()` (public tests only, filtered in SQL), so the preview can't drift from what candidates see.
+- **Drafts use optimistic concurrency.** Each draft has a `revision` (+1 per save). Save, publish and discard must send the revision the client is working from; the check runs under the per-question row lock, so a stale writer (another tab, another window) gets `409 draft_changed` and nothing is written. Publishing also requires the reviewed revision, so an author can't publish draft content they haven't seen.
+- **The editor never drops typing.** A save remembers the exact content it sent; when the response arrives the form is only replaced if it still holds that content, otherwise later keystrokes are kept and stay marked unsaved. Operations that replace the content (publish, discard, delete) make the form read-only while they run.
 
 ## Alternatives considered
 - **Edit in place + copy tests into the room** — duplicates data per room and still loses the link between a result and "the question it came from".
 - **Soft-versioning with `valid_from/valid_to` timestamps** — rooms would resolve "the version at my creation time"; harder to reason about and to enforce than an explicit foreign key.
 - **API-only immutability** — one forgotten code path or ad-hoc fix breaks the guarantee silently.
+- **Last-write-wins on drafts** — the row lock serializes saves but each save replaces the whole draft, so the slower of two tabs silently erases the other's work. Field-level merging was rejected as overkill for single-author drafts; a clear conflict + "Reload latest" is predictable.
 
 ## Migration
 Existing data was migrated without loss in three steps: add the new table/columns and backfill (each existing question became its own `v1`, and test cases, rooms and submissions were pointed at it), then make the new references `NOT NULL` and drop the old columns, then add the triggers. Rehearsed on a copy of the local database before applying.

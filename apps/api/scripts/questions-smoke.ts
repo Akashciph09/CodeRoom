@@ -22,6 +22,41 @@ async function waitFor(id: string, token: string) {
   throw new Error(`submission ${id} did not finish`);
 }
 
+/**
+ * Acts like one open editor tab: remembers the draft revision it last saw and sends it back on every
+ * save / publish / discard, exactly like the web editor does.
+ */
+function editorTab(token: string, qid: () => string) {
+  let rev: number | null = null;
+  const sync = (detail: any) => (rev = detail?.draft?.revision ?? null);
+  return {
+    get revision() {
+      return rev;
+    },
+    sync,
+    async load() {
+      const r = await call("GET", `/questions/${qid()}`, token);
+      sync(r.json);
+      return r;
+    },
+    async save(body: object) {
+      const r = await call("PUT", `/questions/${qid()}/draft`, token, { ...body, baseRevision: rev });
+      if (r.status === 200) sync(r.json);
+      return r;
+    },
+    async publish() {
+      const r = await call("POST", `/questions/${qid()}/publish`, token, { revision: rev ?? 1 });
+      if (r.status === 200) sync(r.json);
+      return r;
+    },
+    async discard() {
+      const r = await call("DELETE", `/questions/${qid()}/draft`, token, { revision: rev ?? 1 });
+      if (r.status === 200) sync(r.json);
+      return r;
+    },
+  };
+}
+
 async function main() {
   const owner = await signUp("author");
   const other = await signUp("other-author");
@@ -30,6 +65,8 @@ async function main() {
   // --- Create + draft -----------------------------------------------------------------------------
   const created = await call("POST", "/questions", owner, { title: "Add two numbers" });
   const qid = created.json?.id as string;
+  const tab = editorTab(owner, () => qid);
+  tab.sync(created.json);
   check("create question → draft", created.status === 201 && created.json.draft?.status === "draft" && !created.json.latest);
   const mine0 = await call("GET", "/questions/mine", owner);
   check(
@@ -46,12 +83,12 @@ async function main() {
   check("non-owner can't publish it → 404", (await call("POST", `/questions/${qid}/publish`, other)).status === 404);
 
   // --- Publish validation ------------------------------------------------------------------------------
-  await call("PUT", `/questions/${qid}/draft`, owner, {
+  await tab.save({
     title: "Add two numbers",
     statement: "Print a + b.",
     tests: [{ input: "1 2\n", expectedOutput: "3", isHidden: true }],
   });
-  const blocked = await call("POST", `/questions/${qid}/publish`, owner);
+  const blocked = await tab.publish();
   check(
     "can't mark ready without a public test → 400 with problems",
     blocked.status === 400 && blocked.json.problems?.includes("no_public_tests"),
@@ -70,9 +107,9 @@ async function main() {
       { input: "5 5\n", expectedOutput: "10", isHidden: true },
     ],
   };
-  const saved = await call("PUT", `/questions/${qid}/draft`, owner, v1Draft);
+  const saved = await tab.save(v1Draft);
   check("save draft with tests", saved.status === 200 && saved.json.draft.tests.length === 2);
-  const p1 = await call("POST", `/questions/${qid}/publish`, owner);
+  const p1 = await tab.publish();
   check("mark ready → version 1", p1.status === 200 && p1.json.latest?.version === 1 && p1.json.draft === null);
 
   const preview = await call("GET", `/questions/${qid}/preview?of=latest`, owner);
@@ -116,7 +153,7 @@ async function main() {
       { input: "4 5\n", expectedOutput: "20", isHidden: true },
     ],
   };
-  await call("PUT", `/questions/${qid}/draft`, owner, v2Draft);
+  await tab.save(v2Draft);
   const mine1 = await call("GET", "/questions/mine", owner);
   check(
     "editing a ready question → 'ready v1 + unpublished changes'",
@@ -124,7 +161,7 @@ async function main() {
   );
   const room1Mid = await call("GET", `/rooms/${r1.json.roomId}`, candidate);
   check("unpublished edits don't reach an existing room", room1Mid.json.question.statement === v1Draft.statement);
-  const p2 = await call("POST", `/questions/${qid}/publish`, owner);
+  const p2 = await tab.publish();
   check("mark ready again → version 2", p2.json.latest?.version === 2 && p2.json.versions.length === 2);
 
   // --- Room 1 still runs v1; room 2 runs v2 -----------------------------------------------------------
@@ -143,12 +180,53 @@ async function main() {
   check("…and grades on v2 tests (sum code now wrong)", (await waitFor(s3.json.submissionId, candidate)).overall === "wrong_answer");
 
   // --- Discard / delete -------------------------------------------------------------------------------
-  await call("PUT", `/questions/${qid}/draft`, owner, { ...v2Draft, title: "scratch edit" });
-  const discarded = await call("DELETE", `/questions/${qid}/draft`, owner);
+  await tab.save({ ...v2Draft, title: "scratch edit" });
+  const discarded = await tab.discard();
   check("discard draft → back to the ready version", discarded.status === 200 && discarded.json.draft === null && discarded.json.latest.version === 2);
   check("ready questions can't be deleted → 409", (await call("DELETE", `/questions/${qid}`, owner)).status === 409);
   const throwaway = await call("POST", "/questions", owner, {});
   check("never-ready question can be deleted → 204", (await call("DELETE", `/questions/${throwaway.json.id}`, owner)).status === 204);
+
+  // --- Two tabs editing the same question: optimistic concurrency ---------------------------------------
+  // The question is ready (v2) with no draft. Both tabs open the editor.
+  const tabA = editorTab(owner, () => qid);
+  const tabB = editorTab(owner, () => qid);
+  await tabA.load();
+  await tabB.load();
+  check("both tabs start with no draft", tabA.revision === null && tabB.revision === null);
+
+  const aFirst = await tabA.save({ ...v2Draft, title: "Edited in tab A" });
+  const bStale = await tabB.save({ ...v2Draft, title: "Edited in tab B" });
+  check(
+    "first edit wins; the other tab's save → 409 (nothing overwritten)",
+    aFirst.status === 200 &&
+      bStale.status === 409 &&
+      bStale.json.conflict === "draft_changed" &&
+      bStale.json.currentRevision === aFirst.json.draft.revision &&
+      (await call("GET", `/questions/${qid}`, owner)).json.draft.title === "Edited in tab A",
+  );
+
+  await tabB.load(); // tab B reloads and sees A's draft
+  const aAgain = await tabA.save({ ...v2Draft, title: "Edited in tab A, twice" });
+  const bPublish = await tabB.publish();
+  check(
+    "publishing a revision you haven't seen → 409, not published",
+    aAgain.status === 200 && bPublish.status === 409 && (await call("GET", `/questions/${qid}`, owner)).json.latest.version === 2,
+  );
+  check("discarding a revision you haven't seen → 409", (await tabB.discard()).status === 409);
+
+  await tabB.load();
+  const [raceA, raceB] = await Promise.all([
+    tabA.save({ ...v2Draft, title: "race A" }),
+    tabB.save({ ...v2Draft, title: "race B" }),
+  ]);
+  check(
+    "two simultaneous saves from the same revision → exactly one wins",
+    [raceA.status, raceB.status].sort().join(",") === "200,409",
+    `(${raceA.status}, ${raceB.status})`,
+  );
+  const winner = raceA.status === 200 ? tabA : tabB;
+  check("the up-to-date tab can still publish", (await winner.publish()).json?.latest?.version === 3);
 
   // --- Immutability is enforced by the database, not just the API -------------------------------------
   const { db, close } = createDb(process.env.DATABASE_URL!, { max: 1 });

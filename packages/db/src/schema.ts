@@ -71,6 +71,11 @@ export const questionVersions = pgTable(
     /** Per-language starter code, e.g. { "python": "...", "javascript": "..." }. */
     starterCode: jsonb("starter_code").$type<Partial<Record<Language, string>>>().notNull().default({}),
     publishedAt: timestamp("published_at", { withTimezone: true }),
+    /**
+     * Optimistic-concurrency counter for drafts: +1 on every save. Writers must send the revision they
+     * edited; a stale one gets 409 instead of overwriting someone else's (e.g. another tab's) changes.
+     */
+    revision: integer("revision").notNull().default(1),
     ...timestamps,
   },
   (t) => [

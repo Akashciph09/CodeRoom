@@ -195,3 +195,6 @@ label.inline { flex-direction: row; align-items: center; gap: 6px; color: var(--
 .preview .panel { border-radius: var(--radius); }
 pre.constraints { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
 @media (max-width: 800px) { .preview-grid { grid-template-columns: 1fr; } }
+
+fieldset.editor-form { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset.editor-form:disabled { opacity: 0.7; }

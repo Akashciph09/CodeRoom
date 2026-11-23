@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { CreateQuestionRequest, QuestionDraftInput } from "@coderoom/shared";
+import { CreateQuestionRequest, DraftRevisionRequest, QuestionDraftInput } from "@coderoom/shared";
 import { asyncHandler, NotFound } from "../errors.js";
 import {
   candidateView,
@@ -55,13 +55,17 @@ const owned = (handler: (questionId: string, req: Parameters<Parameters<typeof a
 
 questionsRouter.get("/:id", owned((id) => questionDetail(id)));
 
-/** Save the full draft (creates one if the question is currently ready). */
+/** Save the full draft (creates one if the question is currently ready). 409 if `baseRevision` is stale. */
 questionsRouter.put("/:id/draft", owned((id, req) => saveDraft(id, QuestionDraftInput.parse(req.body))));
 
-questionsRouter.delete("/:id/draft", owned((id) => discardDraft(id)));
+/** Body `{ revision }`: the draft the author is discarding. 409 if it changed since. */
+questionsRouter.delete("/:id/draft", owned((id, req) => discardDraft(id, DraftRevisionRequest.parse(req.body).revision)));
 
-/** Mark the draft ready → next immutable version. 400 with `problems` if it isn't complete. */
-questionsRouter.post("/:id/publish", owned((id) => publishDraft(id)));
+/**
+ * Mark the draft ready → next immutable version. Body `{ revision }`: the draft the author reviewed
+ * (409 if it changed since). 400 with `problems` if it isn't complete.
+ */
+questionsRouter.post("/:id/publish", owned((id, req) => publishDraft(id, DraftRevisionRequest.parse(req.body).revision)));
 
 questionsRouter.delete("/:id", owned(async (id) => void (await deleteQuestion(id))));
 

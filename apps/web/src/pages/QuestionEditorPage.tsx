@@ -10,7 +10,7 @@ import type {
 } from "@coderoom/shared";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { TopBar } from "../components/TopBar";
-import { api, ApiError, publishProblemsOf } from "../lib/api";
+import { api, ApiError, isDraftConflict, publishProblemsOf } from "../lib/api";
 
 interface TestRow {
   key: string;
@@ -52,7 +52,8 @@ function formFrom(v: QuestionVersionView): Form {
   };
 }
 
-function toDraftInput(f: Form): QuestionDraftInput {
+/** Draft content from the form (the revision is added when sending). */
+function toDraftInput(f: Form): Omit<QuestionDraftInput, "baseRevision"> {
   return {
     title: f.title.trim() || "Untitled question",
     statement: f.statement,
@@ -77,23 +78,33 @@ export function QuestionEditorPage() {
   const [problems, setProblems] = useState<PublishProblem[]>([]);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Form is read-only while an operation that replaces its content (publish/discard/delete) runs. */
+  const [locked, setLocked] = useState(false);
+  /** The draft changed elsewhere since this tab loaded it; saving would overwrite someone's work. */
+  const [conflict, setConflict] = useState(false);
 
-  const load = useCallback((d: QuestionDetail) => {
+  /**
+   * Apply a server response. The form is replaced with the server's content only if it still holds
+   * exactly what was sent (`sent`); edits typed while the request was in flight are kept — and stay
+   * "unsaved", because the baseline becomes what the server now has. `sent` omitted = replace.
+   */
+  const applyServer = useCallback((d: QuestionDetail, sent?: string) => {
     setDetail(d);
+    setConflict(false);
     const source = d.draft ?? d.latest;
-    const f = source ? formFrom(source) : null;
-    setForm(f);
-    setBaseline(snapshot(f));
+    const serverForm = source ? formFrom(source) : null;
+    setBaseline(snapshot(serverForm));
+    setForm((current) => (sent === undefined || !current || snapshot(current) === sent ? serverForm : current));
   }, []);
 
   useEffect(() => {
-    api.question(questionId).then(load, (err: unknown) =>
+    api.question(questionId).then((d) => applyServer(d), (err: unknown) =>
       setMessage({
         kind: "error",
         text: err instanceof ApiError && err.status === 404 ? "Question not found." : String(err),
       }),
     );
-  }, [questionId, load]);
+  }, [questionId, applyServer]);
 
   const dirty = useMemo(() => form !== null && snapshot(form) !== baseline, [form, baseline]);
 
@@ -117,25 +128,40 @@ export function QuestionEditorPage() {
       return { ...f, tests };
     });
 
-  /** Run an action with shared busy/error handling. */
-  async function run(action: () => Promise<void>) {
+  /** Run an action with shared busy/error handling. `lock` makes the form read-only meanwhile. */
+  async function run(action: () => Promise<void>, opts: { lock?: boolean } = {}) {
     setBusy(true);
+    setLocked(Boolean(opts.lock));
     setMessage(null);
     try {
       await action();
     } catch (err) {
-      setMessage({ kind: "error", text: err instanceof Error ? err.message : String(err) });
+      if (isDraftConflict(err)) setConflict(true);
+      else setMessage({ kind: "error", text: err instanceof Error ? err.message : String(err) });
     } finally {
       setBusy(false);
+      setLocked(false);
     }
   }
 
+  /** The draft revision this tab's edits are based on (null = editing on top of the ready version). */
+  const baseRevision = detail?.draft?.revision ?? null;
+
   async function saveIfDirty(): Promise<QuestionDetail | null> {
     if (!form || !dirty) return detail;
-    const d = await api.saveDraft(questionId, toDraftInput(form));
-    load(d);
+    const payload = toDraftInput(form);
+    const sent = snapshot(form);
+    const d = await api.saveDraft(questionId, { ...payload, baseRevision });
+    applyServer(d, sent);
     return d;
   }
+
+  /** Drop local edits and load what the server has now (after a conflict). */
+  const reloadLatest = () =>
+    run(async () => {
+      applyServer(await api.question(questionId));
+      setMessage({ kind: "ok", text: "Loaded the latest version." });
+    });
 
   const save = () =>
     run(async () => {
@@ -151,33 +177,45 @@ export function QuestionEditorPage() {
     });
 
   const markReady = () =>
-    run(async () => {
-      await saveIfDirty();
-      try {
-        const d = await api.publishQuestion(questionId);
-        load(d);
-        setProblems([]);
-        setMessage({ kind: "ok", text: `Marked ready as version ${d.latest?.version}. New interviews will use it.` });
-      } catch (err) {
-        const found = publishProblemsOf(err);
-        if (found.length === 0) throw err;
-        setProblems(found);
-      }
-    });
+    run(
+      async () => {
+        const saved = await saveIfDirty();
+        const revision = saved?.draft?.revision;
+        if (revision === undefined) return;
+        try {
+          const d = await api.publishQuestion(questionId, revision);
+          applyServer(d);
+          setProblems([]);
+          setMessage({ kind: "ok", text: `Marked ready as version ${d.latest?.version}. New interviews will use it.` });
+        } catch (err) {
+          const found = publishProblemsOf(err);
+          if (found.length === 0) throw err;
+          setProblems(found);
+        }
+      },
+      { lock: true },
+    );
 
   const discard = () =>
-    run(async () => {
-      if (!confirm("Discard your unpublished changes? The ready version stays as it is.")) return;
-      load(await api.discardDraft(questionId));
-      setMessage({ kind: "ok", text: "Changes discarded." });
-    });
+    run(
+      async () => {
+        if (baseRevision === null) return;
+        if (!confirm("Discard your unpublished changes? The ready version stays as it is.")) return;
+        applyServer(await api.discardDraft(questionId, baseRevision));
+        setMessage({ kind: "ok", text: "Changes discarded." });
+      },
+      { lock: true },
+    );
 
   const remove = () =>
-    run(async () => {
-      if (!confirm("Delete this question? This can't be undone.")) return;
-      await api.deleteQuestion(questionId);
-      navigate("/questions");
-    });
+    run(
+      async () => {
+        if (!confirm("Delete this question? This can't be undone.")) return;
+        await api.deleteQuestion(questionId);
+        navigate("/questions");
+      },
+      { lock: true },
+    );
 
   const startInterview = () =>
     run(async () => {
@@ -241,6 +279,17 @@ export function QuestionEditorPage() {
           </div>
         </div>
 
+        {conflict && (
+          <div className="error-box" role="alert" aria-label="Draft conflict">
+            <strong>This draft was changed in another tab or window.</strong> Your edits here weren't saved, so
+            nothing was overwritten. Copy anything you want to keep, then reload the latest version.
+            <div className="actions" style={{ marginTop: 8 }}>
+              <button onClick={reloadLatest} disabled={busy}>
+                Reload latest
+              </button>
+            </div>
+          </div>
+        )}
         {message && <p className={message.kind === "ok" ? "notice" : "error"}>{message.text}</p>}
         {problems.length > 0 && (
           <div className="error-box" role="alert">
@@ -272,15 +321,16 @@ export function QuestionEditorPage() {
             </div>
           </section>
         ) : (
-          <div className="editor-form">
+          <fieldset className="editor-form" disabled={locked} aria-busy={locked}>
             <section className="card">
               <label>
                 Title
-                <input value={form.title} onChange={(e) => update({ title: e.target.value })} maxLength={200} />
+                <input aria-label="Title" value={form.title} onChange={(e) => update({ title: e.target.value })} maxLength={200} />
               </label>
               <label>
                 Problem statement
                 <textarea
+                  aria-label="Problem statement"
                   rows={8}
                   value={form.statement}
                   onChange={(e) => update({ statement: e.target.value })}
@@ -290,6 +340,7 @@ export function QuestionEditorPage() {
               <label>
                 Constraints
                 <textarea
+                  aria-label="Constraints"
                   rows={3}
                   className="mono"
                   value={form.constraints}
@@ -422,7 +473,7 @@ export function QuestionEditorPage() {
                 </span>
               )}
             </section>
-          </div>
+          </fieldset>
         )}
       </main>
     </>

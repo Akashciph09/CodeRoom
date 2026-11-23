@@ -32,6 +32,9 @@ export class ApiError extends Error {
   }
 }
 
+/** True if this is the server saying the draft changed elsewhere since this tab loaded it. */
+export const isDraftConflict = (err: unknown) => err instanceof ApiError && err.body?.conflict === "draft_changed";
+
 /** The reasons a question can't be marked ready, if that's what this error is. */
 export const publishProblemsOf = (err: unknown): PublishProblem[] =>
   err instanceof ApiError && Array.isArray(err.body?.problems) ? (err.body.problems as PublishProblem[]) : [];
@@ -76,8 +79,10 @@ export const api = {
   question: (id: string) => request<QuestionDetail>("GET", `/questions/${id}`),
   createQuestion: (title?: string) => request<QuestionDetail>("POST", "/questions", title ? { title } : {}),
   saveDraft: (id: string, draft: QuestionDraftInput) => request<QuestionDetail>("PUT", `/questions/${id}/draft`, draft),
-  discardDraft: (id: string) => request<QuestionDetail>("DELETE", `/questions/${id}/draft`),
-  publishQuestion: (id: string) => request<QuestionDetail>("POST", `/questions/${id}/publish`),
+  discardDraft: (id: string, revision: number) =>
+    request<QuestionDetail>("DELETE", `/questions/${id}/draft`, { revision }),
+  publishQuestion: (id: string, revision: number) =>
+    request<QuestionDetail>("POST", `/questions/${id}/publish`, { revision }),
   deleteQuestion: (id: string) => request<void>("DELETE", `/questions/${id}`),
   previewQuestion: (id: string, of: "draft" | "latest") =>
     request<CandidateQuestionView>("GET", `/questions/${id}/preview?of=${of}`),
