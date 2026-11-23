@@ -326,9 +326,8 @@ export function RoomPage() {
       {roomDoc && <RemoteCursorStyles awareness={roomDoc.provider.awareness} />}
       <TopBar>
         <span className={`badge ${room.role}`}>{room.role}</span>
-        {room.role === "interviewer" && (
-          <InterviewTimer createdAt={room.createdAt} closedAt={room.closedAt} serverTime={room.serverTime} ended={closed} />
-        )}
+        {/* Both roles see the same elapsed time (server timestamps), stopping when the session ends. */}
+        <InterviewTimer createdAt={room.createdAt} closedAt={room.closedAt} serverTime={room.serverTime} ended={closed} />
         <span className={`status-dot ${live ? "on" : "off"}`} title={`editor: ${docStatus}, events: ${eventStatus}`} />
         <span className="muted small">{live ? "live" : "reconnecting…"}</span>
         {roomDoc && <Presence awareness={roomDoc.provider.awareness} />}
