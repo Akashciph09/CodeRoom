@@ -6,7 +6,7 @@
 An interviewer's room list showed only the first question's title, role, status and date. With many interviews of the same question, finding "Casey's interview" meant opening rooms one by one, and seeing how someone did meant opening each review.
 
 ## Decision
-- **Interviewer rows carry their candidates:** name, email and the test score (ADR 0011), plus `hasSubmit` so "0 because nothing was submitted" isn't shown as a failing score. Rooms nobody joined list none ("No candidate joined"). The list is an array because rooms from before ADR 0012 can have more than one candidate.
+- **Interviewer rows carry their candidates:** name, email and the test score (ADR 0011), plus their Submits counted by state (`graded` / `pending` / `failed`). Only graded Submits score; the others make the list say "Grading…" or "Grading failed" instead of "No Submit yet", so an attempt the review timeline shows is never described as missing, and "0 because nothing was submitted" isn't shown as a failing score. Rooms nobody joined list none ("No candidate joined"). The list is an array because rooms from before ADR 0012 can have more than one candidate.
 - **The same scoring code as the review page.** `candidateSummaries` batches the list's rooms and calls the same `scoreCandidate`, with the same pass-count query, so the list and the review can't disagree. Smoke tests compare the two.
 - **Privacy: interviewer rows only.** The API adds `candidates` only to rows where the caller is the interviewer. On a candidate's own list nothing changes: no names, emails or scores of anyone. Emails are personal data and appear on no candidate-facing view or in logs.
 - **Search** filters the list client-side by question title, candidate name or email (the list is the 50 most recent rooms).

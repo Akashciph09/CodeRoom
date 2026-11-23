@@ -63,7 +63,8 @@ export async function candidateSummaries(roomIds: string[]): Promise<Map<string,
       .from(roomQuestions)
       .where(inArray(roomQuestions.roomId, roomIds)),
     candidatesOf(roomIds),
-    // Only completed Submits can score (scoreCandidate ignores the rest anyway).
+    // Every Submit, whatever its state: completed ones score (scoreCandidate ignores the rest), and the
+    // others tell the list "still grading" / "grading failed" apart from "never submitted".
     db
       .select({
         id: submissions.id,
@@ -75,16 +76,21 @@ export async function candidateSummaries(roomIds: string[]): Promise<Map<string,
         createdAt: submissions.createdAt,
       })
       .from(submissions)
-      .where(and(inArray(submissions.roomId, roomIds), eq(submissions.mode, "submit"), eq(submissions.status, "completed"))),
+      .where(and(inArray(submissions.roomId, roomIds), eq(submissions.mode, "submit"))),
   ]);
-  const counts = await passCounts(subs.map((s) => s.id));
+  const counts = await passCounts(subs.filter((s) => s.status === "completed").map((s) => s.id));
   for (const person of people) {
     const mine = subs.filter((s) => s.roomId === person.roomId && s.userId === person.userId);
     const { score } = scoreCandidate(
       qs.filter((q) => q.roomId === person.roomId).map((q) => ({ id: q.id, points: q.points, revealed: q.revealedAt !== null })),
       mine.map((s) => ({ ...s, passed: counts.get(s.id)?.passed ?? 0, total: counts.get(s.id)?.total ?? 0 })),
     );
-    out.get(person.roomId)!.push({ name: person.name, email: person.email, score, hasSubmit: mine.length > 0 });
+    const submits = {
+      graded: mine.filter((s) => s.status === "completed").length,
+      pending: mine.filter((s) => s.status === "queued" || s.status === "running").length,
+      failed: mine.filter((s) => s.status === "failed").length,
+    };
+    out.get(person.roomId)!.push({ name: person.name, email: person.email, score, submits });
   }
   return out;
 }

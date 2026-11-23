@@ -54,8 +54,15 @@ export const RoomCandidateSummary = z.object({
   email: z.string(),
   /** Test score out of 100 (ADR 0011) — same rules as the review page. */
   score: z.number(),
-  /** False until a Submit has been graded: the score is 0 because nothing was submitted, not because it failed. */
-  hasSubmit: z.boolean(),
+  /**
+   * The candidate's Submits by state (PR #11 review), so the list can tell "nothing submitted" from
+   * "still grading" and "grading failed". Only `graded` ones count toward the score.
+   */
+  submits: z.object({
+    graded: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
 });
 export type RoomCandidateSummary = z.infer<typeof RoomCandidateSummary>;
 

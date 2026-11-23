@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { MAX_ROOM_QUESTIONS, type QuestionSummary, type RoomSummary } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
 import { api } from "../lib/api";
+import { submitLabel } from "../lib/roomList";
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -225,7 +226,7 @@ export function HomePage() {
                   <span className="muted small">{new Date(r.createdAt).toLocaleString()}</span>
                   {r.candidates && r.candidates.length > 0 && (
                     <span className="room-score small" aria-label="Test score">
-                      {r.candidates.map((c) => (c.hasSubmit ? `Score ${c.score}/100` : "No Submit yet")).join(" · ")}
+                      {r.candidates.map(submitLabel).join(" · ")}
                     </span>
                   )}
                   {r.role === "interviewer" && (

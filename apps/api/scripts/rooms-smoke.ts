@@ -347,7 +347,7 @@ async function main() {
         aliceRow.candidates[0].name.startsWith("rv-alice") &&
         /^rv-alice-.*@example\.test$/.test(aliceRow.candidates[0].email) &&
         aliceRow.candidates[0].score === a.score &&
-        aliceRow.candidates[0].hasSubmit === true,
+        aliceRow.candidates[0].submits?.graded === 5 - 1, // 4 Submits graded (her Run doesn't count)
       `(${JSON.stringify(aliceRow?.candidates)} vs review ${a.score})`,
     );
     const bobRow = ivList.find((r) => r.roomId === rvBob.json.roomId);
@@ -392,9 +392,56 @@ async function main() {
         (await call("GET", `/rooms/${soloId}/review`, second)).status === 403,
     );
     const soloRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === soloId);
+    const none = { graded: 0, pending: 0, failed: 0 };
     check(
-      "a candidate who hasn't submitted is listed with 'no Submit yet' (score 0, hasSubmit false)",
-      soloRow?.candidates?.length === 1 && soloRow.candidates[0].hasSubmit === false && soloRow.candidates[0].score === 0,
+      "a candidate who never submitted: no Submits of any kind, score 0",
+      soloRow?.candidates?.length === 1 && JSON.stringify(soloRow.candidates[0].submits) === JSON.stringify(none) && soloRow.candidates[0].score === 0,
+      `(${JSON.stringify(soloRow?.candidates?.[0])})`,
+    );
+
+    // A Submit still being graded is not "no Submit" (PR #11 review).
+    const pendRoom = await create(interviewer, [QUESTION_ID]);
+    const pender = await signUp("list-pending");
+    await call("POST", "/rooms/join", pender, { inviteCode: pendRoom.json.inviteCode });
+    const [pendQ] = (await roomQuestionIds(pendRoom.json.roomId, interviewer)) as [string];
+    const slow = "import time\ntime.sleep(1.2)\na, b = map(int, input().split())\nprint(a + b)";
+    const pendSub = await call("POST", "/submissions", pender, { roomId: pendRoom.json.roomId, roomQuestionId: pendQ, language: "python", mode: "submit", code: slow });
+    const pendRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === pendRoom.json.roomId);
+    check(
+      "a candidate whose Submit is still grading is listed as pending, not as never submitted",
+      pendRow?.candidates?.[0]?.submits?.pending === 1 && pendRow.candidates[0].submits.graded === 0,
+      `(${JSON.stringify(pendRow?.candidates?.[0]?.submits)})`,
+    );
+    await waitFor(pendSub.json.submissionId, pender);
+    const pendDone = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === pendRoom.json.roomId);
+    check(
+      "…and once graded, scored like the review (100)",
+      pendDone?.candidates?.[0]?.submits?.graded === 1 && pendDone.candidates[0].submits.pending === 0 && pendDone.candidates[0].score === 100,
+    );
+
+    // A Submit whose grading failed (the worker gives up after its retries) is shown as such.
+    const failRoom = await create(interviewer, [QUESTION_ID]);
+    const failer = await signUp("list-failed");
+    await call("POST", "/rooms/join", failer, { inviteCode: failRoom.json.inviteCode });
+    const { db: failDb, close: closeFailDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    const [failQ] = await failDb.select().from(roomQuestions).where(eq(roomQuestions.roomId, failRoom.json.roomId));
+    await failDb.insert(submissions).values({
+      roomId: failRoom.json.roomId,
+      roomQuestionId: failQ!.id,
+      questionVersionId: failQ!.questionVersionId,
+      userId: userIdOf(failer),
+      language: "python",
+      mode: "submit",
+      code: "print(1)",
+      status: "failed", // what the worker writes when it runs out of retries
+      overall: "internal_error",
+    });
+    await closeFailDb();
+    const failRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === failRoom.json.roomId);
+    check(
+      "a candidate whose only Submit failed to grade is listed as failed, not as never submitted",
+      failRow?.candidates?.[0]?.submits?.failed === 1 && failRow.candidates[0].submits.graded === 0 && failRow.candidates[0].score === 0,
+      `(${JSON.stringify(failRow?.candidates?.[0]?.submits)})`,
     );
     // The interviewer opening their own link is sent to the room as interviewer; the seat isn't touched.
     const own = await create(interviewer, [QUESTION_ID]);

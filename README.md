@@ -249,7 +249,7 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `DELETE` | `/questions/:id/draft` | owner | `{ revision }` → discard unpublished changes (`409` if stale) |
 | `GET` | `/questions/:id/preview?of=draft\|latest` | owner | Exactly the candidate's view (public tests only) |
 | `DELETE` | `/questions/:id` | owner | `{ revision }` → delete a never-ready question (`409` once ready or if stale) |
-| `GET` | `/rooms` | any user | Rooms the caller participates in (50 most recent). Rooms you interview include `candidates: [{ name, email, score, hasSubmit }]`; candidate rows never do |
+| `GET` | `/rooms` | any user | Rooms the caller participates in (50 most recent). Rooms you interview include `candidates: [{ name, email, score, submits: { graded, pending, failed } }]`; candidate rows never do |
 | `GET` | `/rooms/:id/review` | interviewer | Per candidate: test score + breakdown, reveal window per question, every run/submission with code (ADR 0011) |
 | `POST` | `/rooms` | any user | `{ questionIds, questionPoints? }` (1–5, ordered; your own or library questions; points 1–100 each, default equal). **Pins each question's latest ready version**; Q1 is revealed. Caller becomes interviewer |
 | `POST` | `/rooms/join` | any user | Join with invite code as the room's candidate; the same candidate can rejoin, anyone else gets `409` `{ conflict: "room_full" }` (one candidate per room); the interviewer's own link returns `{ role: "interviewer" }` |
