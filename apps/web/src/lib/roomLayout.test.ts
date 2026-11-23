@@ -5,6 +5,7 @@ import {
   fitLayout,
   isNarrow,
   loadLayout,
+  maxWidth,
   MIN_WIDTH,
   NARROW_BREAKPOINT,
   resizePanel,
@@ -61,6 +62,42 @@ describe("room layout", () => {
     const maxed = resizePanel(DEFAULT_LAYOUT, "results", 5000, 1400);
     expect(maxed.question).toBe(320);
     expect(editorWidth(maxed, 1400)).toBe(MIN_WIDTH.editor);
+  });
+
+  it("the 900px report: Home on the question divider doesn't grow the results panel", () => {
+    const shown = fitLayout(DEFAULT_LAYOUT, 900);
+    expect(shown).toEqual({ question: 264, results: 304 });
+    const next = resizePanel(DEFAULT_LAYOUT, "question", MIN_WIDTH.question, 900);
+    expect(fitLayout(next, 900)).toEqual({ question: 220, results: 304 });
+  });
+
+  it("resizing one panel never moves the other, even when saved preferences don't fit (900–1000px)", () => {
+    const preferences = [
+      { ...DEFAULT_LAYOUT },
+      { question: 600, results: 600 },
+      { question: 700, results: 260 },
+      { question: 220, results: 700 },
+      { question: 500, results: 380 },
+    ];
+    for (let width = 900; width <= 1000; width += 10) {
+      for (const saved of preferences) {
+        for (const panel of ["question", "results"] as const) {
+          const otherPanel = panel === "question" ? "results" : "question";
+          const before = fitLayout(saved, width);
+          const max = maxWidth(panel, saved, width);
+          for (const size of [0, MIN_WIDTH[panel], before[panel] - 16, before[panel] + 16, (MIN_WIDTH[panel] + max) / 2, max, 5000, DEFAULT_LAYOUT[panel]]) {
+            const next = resizePanel(saved, panel, size, width);
+            const shown = fitLayout(next, width);
+            const at = `width ${width}, saved ${JSON.stringify(saved)}, ${panel} → ${size}`;
+            expect(shown[otherPanel], at).toBe(before[otherPanel]); // the other panel didn't move
+            expect(shown, at).toEqual(next); // what's saved is exactly what's shown (no re-fit on next render)
+            expect(shown[panel], at).toBeGreaterThanOrEqual(MIN_WIDTH[panel]);
+            expect(shown[panel], at).toBeLessThanOrEqual(max);
+            expect(editorWidth(shown, width), at).toBeGreaterThanOrEqual(MIN_WIDTH.editor);
+          }
+        }
+      }
+    }
   });
 
   it("loads a saved layout and rejects malformed or out-of-range values", () => {

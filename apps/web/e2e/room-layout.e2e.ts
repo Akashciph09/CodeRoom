@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { appendLine, editorText, replaceCode, results, startInterview } from "./helpers";
+import { appendLine, editorText, expectUnchanged, replaceCode, results, startInterview } from "./helpers";
 
 /*
  * Resizable room panels (ADR 0008). Layout is per browser: each participant has their own context,
@@ -90,6 +90,60 @@ test("panels resize by mouse and keyboard, the editor follows, and the layout is
     await expect(reset).toBeDisabled();
     await page.reload();
     await expect(separator(page, "question")).toHaveAttribute("aria-valuenow", "320");
+  } finally {
+    await close();
+  }
+});
+
+/**
+ * Regression: at 900–1000px saved preferences can be larger than the room fits, so they're displayed
+ * squeezed. Resizing one panel must not move the other (it used to: the hook saved the new width next to
+ * the other panel's oversized preference, and the next render re-fitted both).
+ */
+test("at 950px with oversized saved sizes, resizing one panel leaves the other where it is", async ({ browser }) => {
+  const { interviewer, close } = await startInterview(browser);
+  const page = interviewer.page;
+  try {
+    await page.bringToFront();
+    await page.setViewportSize({ width: 950, height: 800 });
+    await page.evaluate(() => localStorage.setItem("coderoom:room-layout:v1", JSON.stringify({ question: 600, results: 600 })));
+    await page.reload();
+    await expect(separator(page, "question")).toBeVisible();
+    const q0 = await valueOf(page, "question");
+    const r0 = await valueOf(page, "results");
+    expect(q0 + r0).toBe(950 - 12 - 320); // squeezed to leave the editor its minimum
+
+    // Home on the question divider: question → minimum, results unchanged.
+    await separator(page, "question").focus();
+    await page.keyboard.press("Home");
+    await expect(separator(page, "question")).toHaveAttribute("aria-valuenow", "220");
+    await expectUnchanged(async () => String(await valueOf(page, "results")), String(r0), 500);
+
+    // Drag the results divider right (results shrinks): question unchanged.
+    await drag(page, "results", 40);
+    expect(await valueOf(page, "results")).toBe(r0 - 40);
+    await expectUnchanged(async () => String(await valueOf(page, "question")), "220", 500);
+
+    // Results to its maximum, then double-click the question divider (reset to default 320). There's no
+    // room for 320, so the question stays as wide as fits — and results doesn't shrink to make room.
+    await separator(page, "results").focus();
+    await page.keyboard.press("End");
+    const rMax = await valueOf(page, "results");
+    expect(rMax).toBe(950 - 12 - 320 - 220);
+    await separator(page, "question").dblclick();
+    await expectUnchanged(async () => `${await valueOf(page, "question")}/${await valueOf(page, "results")}`, `220/${rMax}`, 500);
+
+    // With room for it, double-click restores the default width; results still doesn't move.
+    await separator(page, "results").focus();
+    await page.keyboard.press("Home");
+    await separator(page, "question").dblclick();
+    await expect(separator(page, "question")).toHaveAttribute("aria-valuenow", "320");
+    await expectUnchanged(async () => String(await valueOf(page, "results")), "260", 500);
+
+    // What was saved is what was shown: same layout after a reload.
+    await page.reload();
+    await expect(separator(page, "question")).toHaveAttribute("aria-valuenow", "320");
+    await expect(separator(page, "results")).toHaveAttribute("aria-valuenow", "260");
   } finally {
     await close();
   }

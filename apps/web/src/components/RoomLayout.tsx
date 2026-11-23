@@ -50,11 +50,15 @@ export function useRoomLayout() {
     return () => observer.disconnect();
   }, [container]);
 
-  /** Resize one panel. Only that panel's preference changes; the other keeps its saved value. */
+  /**
+   * Resize one panel. Saves both panels as displayed (see `resizePanel`), so the other panel stays
+   * exactly where it is even when the saved preferences don't fit this window.
+   */
   const resize = useCallback(
     (panel: SidePanel, size: number) => {
       const next = resizePanel(savedRef.current, panel, size, width);
-      if (next[panel] !== savedRef.current[panel]) setSaved({ ...savedRef.current, [panel]: next[panel] });
+      const current = savedRef.current;
+      if (next.question !== current.question || next.results !== current.results) setSaved(next);
     },
     [width, setSaved],
   );
@@ -63,12 +67,13 @@ export function useRoomLayout() {
     setSaved({ ...DEFAULT_LAYOUT });
     saveLayout(DEFAULT_LAYOUT);
   }, [setSaved]);
+  /** Double-click: this panel back to its default width (as far as it fits); the other doesn't move. */
   const resetPanel = useCallback(
     (panel: SidePanel) => {
-      setSaved({ ...savedRef.current, [panel]: DEFAULT_LAYOUT[panel] });
+      setSaved(resizePanel(savedRef.current, panel, DEFAULT_LAYOUT[panel], width));
       saveLayout(savedRef.current);
     },
-    [setSaved],
+    [width, setSaved],
   );
 
   return {

@@ -4,7 +4,8 @@
  *
  * Sizes are pixels. The editor always takes what's left, and never less than `MIN_WIDTH.editor`.
  * A saved layout is a *preference*: when the window is too small it is shown clamped (`fitLayout`)
- * but not rewritten, so it comes back when the window grows again.
+ * but not rewritten, so it comes back when the window grows again. An explicit resize saves what is
+ * on screen (`resizePanel`), so the panel the user didn't touch never moves.
  */
 
 export type SidePanel = "question" | "results";
@@ -59,7 +60,15 @@ export function maxWidth(panel: SidePanel, layout: RoomLayout, width: number): n
   return Math.max(MIN_WIDTH[panel], sideBudget(width) - fitted[other(panel)]);
 }
 
-/** Set one side panel's width, clamped to its minimum and to what the room can fit. */
+/**
+ * The layout to save after the user sets one side panel's width: that panel clamped to its minimum and
+ * to what the room can fit, and the *other* panel pinned at the width it is displayed at now.
+ *
+ * Both panels are saved as displayed, never "the new width + the other's old preference": when the
+ * window is too small for the saved preferences, mixing a displayed width with an oversized preference
+ * would be re-fitted on the next render and visibly move the panel the user didn't touch. The result
+ * always fits at this width (`fitLayout(result, width)` returns it unchanged).
+ */
 export function resizePanel(layout: RoomLayout, panel: SidePanel, size: number, width: number): RoomLayout {
   const fitted = fitLayout(layout, width);
   return { ...fitted, [panel]: Math.round(clamp(size, MIN_WIDTH[panel], maxWidth(panel, layout, width))) };

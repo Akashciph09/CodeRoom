@@ -267,7 +267,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~35 s for all nine tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~40 s for all ten tests):
 
 | Step | Checked |
 |---|---|
@@ -284,6 +284,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Reload after the end | final code and history still shown |
 | Signed-out visit to a room | redirected to sign-in with the room kept in `next` |
 | Resize panels (mouse + keyboard) | minimums hold, Monaco follows its column, layout survives reload, Reset restores defaults, the other participant's layout is untouched |
+| Resize at 950 px with oversized saved sizes | Home, drag and double-click never move the other panel; reload shows the same layout |
 | Type while dragging a divider | every keystroke lands, still synced, editor never remounted |
 | Narrow screen | Question / Code / Results tabs, Results marks a new run, editor content and instance kept across modes |
 | **Authoring:** My questions → create → statement, constraints, starter code → add/hide/reorder/remove tests → "Mark ready" blocked without a public test → save, preview, mark ready v1 | preview shows public examples only and the starter code; status "Ready v1" |
