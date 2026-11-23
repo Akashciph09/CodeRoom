@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   customType,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -108,10 +109,7 @@ export const testCases = pgTable(
 
 export const rooms = pgTable("rooms", {
   id: uuid("id").primaryKey().defaultRandom(),
-  /** The exact published version this interview uses. Never changes after the room is created. */
-  questionVersionId: uuid("question_version_id")
-    .notNull()
-    .references(() => questionVersions.id, { onDelete: "restrict" }),
+  // The room's questions (each pinning an exact published version) are in `room_questions`.
   createdBy: uuid("created_by")
     .notNull()
     .references(() => authUsers.id, { onDelete: "cascade" }),
@@ -120,6 +118,34 @@ export const rooms = pgTable("rooms", {
   status: roomStatusEnum("status").notNull().default("open"),
   ...timestamps,
 }).enableRLS();
+
+/**
+ * The questions of a room, in order (ADR 0009). Each row pins one published version, like rooms used
+ * to: fixed at room creation, never changed. `revealed_at` is set when the interviewer reveals it
+ * (position 1 at creation); unrevealed questions are never shown to the candidate.
+ */
+export const roomQuestions = pgTable(
+  "room_questions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    /** 1-based order in the room. Also the key of the question's Yjs buffer (`code` / `code:<n>`). */
+    position: integer("position").notNull(),
+    questionVersionId: uuid("question_version_id")
+      .notNull()
+      .references(() => questionVersions.id, { onDelete: "restrict" }),
+    revealedAt: timestamp("revealed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("room_questions_position").on(t.roomId, t.position),
+    // Target of submissions' composite FK: a submission's room + version must match its room question.
+    uniqueIndex("room_questions_identity").on(t.id, t.roomId, t.questionVersionId),
+    check("room_questions_position_positive", sql`${t.position} >= 1`),
+  ],
+).enableRLS();
 
 export const roomParticipants = pgTable(
   "room_participants",
@@ -143,7 +169,9 @@ export const submissions = pgTable(
     roomId: uuid("room_id")
       .notNull()
       .references(() => rooms.id, { onDelete: "cascade" }),
-    /** Copied from the room at submit time; results are graded against this version's tests. */
+    /** Which of the room's questions this answers (ADR 0009). See the composite FK below. */
+    roomQuestionId: uuid("room_question_id").notNull(),
+    /** Copied from the room question at submit time; results are graded against this version's tests. */
     questionVersionId: uuid("question_version_id")
       .notNull()
       .references(() => questionVersions.id, { onDelete: "restrict" }),
@@ -165,6 +193,13 @@ export const submissions = pgTable(
   (t) => [
     // NULLs are distinct in a Postgres unique index, so rows without a key never collide.
     uniqueIndex("submissions_user_idempotency_key").on(t.userId, t.idempotencyKey),
+    // The submission's room and graded version must be exactly its room question's: a submission can't
+    // be recorded against another room's question or a version other than the pinned one.
+    foreignKey({
+      name: "submissions_room_question_fk",
+      columns: [t.roomQuestionId, t.roomId, t.questionVersionId],
+      foreignColumns: [roomQuestions.id, roomQuestions.roomId, roomQuestions.questionVersionId],
+    }).onDelete("cascade"),
     index("submissions_room_idx").on(t.roomId, t.createdAt),
     // Small partial index for the worker's outbox sweeper ("queued rows older than N seconds").
     index("submissions_queued_idx").on(t.createdAt).where(sql`${t.status} = 'queued'`),
@@ -217,6 +252,7 @@ export type Question = typeof questions.$inferSelect;
 export type TestCase = typeof testCases.$inferSelect;
 export type Room = typeof rooms.$inferSelect;
 export type RoomParticipant = typeof roomParticipants.$inferSelect;
+export type RoomQuestion = typeof roomQuestions.$inferSelect;
 export type Submission = typeof submissions.$inferSelect;
 export type TestResultRow = typeof testResults.$inferSelect;
 export type NewTestResult = typeof testResults.$inferInsert;

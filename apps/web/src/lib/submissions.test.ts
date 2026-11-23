@@ -4,6 +4,7 @@ import { mergeHistory, upsertEntry, type SubmissionEntry } from "./submissions";
 
 const view = (id: string, status: CandidateSubmissionView["status"]): CandidateSubmissionView => ({
   submissionId: id,
+  roomQuestionId: "rq-1",
   status,
   mode: "run",
   publicResults: [],

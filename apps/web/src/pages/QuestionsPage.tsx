@@ -38,7 +38,7 @@ export function QuestionsPage() {
 
   async function startInterview(questionId: string) {
     try {
-      const { roomId } = await api.createRoom(questionId);
+      const { roomId } = await api.createRoom([questionId]);
       navigate(`/rooms/${roomId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

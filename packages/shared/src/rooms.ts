@@ -2,8 +2,16 @@ import { z } from "zod";
 import { CandidateQuestionView } from "./questions.js";
 import { Role } from "./roles.js";
 
+/** Most questions one interview can hold (ADR 0009). */
+export const MAX_ROOM_QUESTIONS = 5;
+
+/** The room's questions, in order. Each is pinned to its latest ready version at creation. */
 export const CreateRoomRequest = z.object({
-  questionId: z.string().uuid(),
+  questionIds: z
+    .array(z.string().uuid())
+    .min(1, "Pick at least one question")
+    .max(MAX_ROOM_QUESTIONS, `At most ${MAX_ROOM_QUESTIONS} questions per room`)
+    .refine((ids) => new Set(ids).size === ids.length, "Each question can only be used once per room"),
 });
 export type CreateRoomRequest = z.infer<typeof CreateRoomRequest>;
 
@@ -42,13 +50,27 @@ export const RoomSummary = z.object({
 });
 export type RoomSummary = z.infer<typeof RoomSummary>;
 
+/** One of a room's questions: the pinned version, as a candidate sees it (public tests only). */
+export const RoomQuestionView = z.object({
+  /** `room_questions.id` — what a submission names. */
+  id: z.string().uuid(),
+  /** 1-based order; also the key of the question's code buffer in the shared doc. */
+  position: z.number().int().min(1),
+  revealed: z.boolean(),
+  question: CandidateQuestionView,
+});
+export type RoomQuestionView = z.infer<typeof RoomQuestionView>;
+
 export const RoomView = z.object({
   roomId: z.string().uuid(),
   status: z.enum(["open", "closed"]),
   role: Role,
   /** Only returned to the interviewer, so they can share it. */
   inviteCode: z.string().optional(),
-  /** The pinned version the room was created with — later edits to the question don't change it. */
-  question: CandidateQuestionView,
+  /**
+   * In order. The interviewer gets every question (with `revealed`); the candidate gets only the
+   * revealed ones — unrevealed questions are never sent to the candidate, not even their count.
+   */
+  questions: z.array(RoomQuestionView),
 });
 export type RoomView = z.infer<typeof RoomView>;

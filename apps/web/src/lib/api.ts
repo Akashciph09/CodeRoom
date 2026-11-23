@@ -66,7 +66,9 @@ async function request<T>(
 export const api = {
   questions: () => request<QuestionSummary[]>("GET", "/questions"),
   myRooms: () => request<RoomSummary[]>("GET", "/rooms"),
-  createRoom: (questionId: string) => request<CreateRoomResponse>("POST", "/rooms", { questionId }),
+  createRoom: (questionIds: string[]) => request<CreateRoomResponse>("POST", "/rooms", { questionIds }),
+  revealQuestion: (roomId: string, roomQuestionId: string) =>
+    request<{ roomQuestionId: string; revealed: true }>("POST", `/rooms/${roomId}/questions/${roomQuestionId}/reveal`),
   joinRoom: (inviteCode: string) => request<JoinRoomResponse>("POST", "/rooms/join", { inviteCode }),
   room: (roomId: string) => request<RoomView>("GET", `/rooms/${roomId}`),
   roomSubmissions: (roomId: string) => request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions`),

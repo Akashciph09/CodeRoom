@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Language, RoomView, ServerEvent, SubmissionMode } from "@coderoom/shared";
 import { CollaborativeEditor } from "../components/CollaborativeEditor";
 import { Presence, RemoteCursorStyles } from "../components/Presence";
+import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { ResultsPanel } from "../components/ResultsPanel";
 import { RoomColumns, useRoomLayout } from "../components/RoomLayout";
@@ -18,22 +19,15 @@ import {
   type ConnectionStatus,
   type RoomDoc,
 } from "../lib/realtime";
-
-/** Used when the question's author didn't provide starter code for a language. */
-const DEFAULT_STARTER: Record<Language, string> = {
-  python: "import sys\n\n\ndef solve(data: str) -> str:\n    # TODO\n    return \"\"\n\n\nprint(solve(sys.stdin.read()))\n",
-  javascript:
-    "const input = require('fs').readFileSync(0, 'utf8');\n\nfunction solve(data) {\n  // TODO\n  return '';\n}\n\nconsole.log(solve(input));\n",
-};
-
-const starterFor = (room: RoomView, language: Language) =>
-  room.question.starterCode[language] ?? DEFAULT_STARTER[language];
-
-/** Start in the first language the author wrote starter code for (Python if both or neither). */
-const initialLanguage = (room: RoomView): Language =>
-  room.question.starterCode.python !== undefined || room.question.starterCode.javascript === undefined
-    ? "python"
-    : "javascript";
+import {
+  initialLanguage,
+  latestRevealed,
+  mergeRoom,
+  metaKey,
+  nextToReveal,
+  revealedQuestions,
+  starterFor,
+} from "../lib/roomQuestions";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
@@ -41,22 +35,40 @@ export function RoomPage() {
   const [room, setRoom] = useState<RoomView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [roomDoc, setRoomDoc] = useState<RoomDoc | null>(null);
+  const [synced, setSynced] = useState(false);
   const [docStatus, setDocStatus] = useState<ConnectionStatus>("connecting");
   const [eventStatus, setEventStatus] = useState<ConnectionStatus>("connecting");
+  /** The question this participant is looking at (local — each side navigates on their own). */
+  const [activePosition, setActivePosition] = useState(1);
   const [language, setLanguage] = useState<Language>("python");
   const [entries, setEntries] = useState<SubmissionEntry[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [revealing, setRevealing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const layout = useRoomLayout();
 
-  // Room metadata (history is loaded whenever the events socket (re)connects — see below)
+  // Room metadata. Re-fetched on every events (re)connect and on `room:question_revealed` — see below.
   useEffect(() => {
     setRoom(null);
     setError(null);
-    api.room(roomId).then(setRoom, (err: unknown) => {
-      setError(err instanceof ApiError && err.status === 403 ? "You're not a participant in this room." : String(err));
-    });
+    api.room(roomId).then(
+      (r) => {
+        setRoom(r);
+        setActivePosition(latestRevealed(r)?.position ?? 1);
+      },
+      (err: unknown) => {
+        setError(err instanceof ApiError && err.status === 403 ? "You're not a participant in this room." : String(err));
+      },
+    );
+  }, [roomId]);
+
+  /** Room events are fire-and-forget, so the room is re-fetched (and merged forward-only) when they may have been missed. */
+  const refreshRoom = useCallback(() => {
+    api
+      .room(roomId)
+      .then((next) => setRoom((prev) => mergeRoom(prev, next)))
+      .catch(() => {});
   }, [roomId]);
 
   /**
@@ -70,51 +82,69 @@ export function RoomPage() {
       .catch(() => {});
   }, [roomId]);
 
-  // Shared editor (Yjs)
+  // Shared editor (Yjs) — one doc per room, one Y.Text per question inside it.
   useEffect(() => {
     if (!room || !session) return;
     const user = { name: displayName(session), color: colorFor(session.user.id), role: room.role };
     const rd = connectRoomDoc(roomId, session.access_token, user);
     setRoomDoc(rd);
+    setSynced(false);
 
     const onStatus = ({ status }: { status: ConnectionStatus }) => setDocStatus(status);
     rd.provider.on("status", onStatus);
-
-    const syncLanguage = () => setLanguage(getLanguage(rd.meta));
-    rd.meta.observe(syncLanguage);
-
-    // The interviewer seeds starter code once per room (a flag in the doc prevents re-seeding).
-    const onSync = (synced: boolean) => {
-      if (!synced) return;
-      syncLanguage();
-      if (room.role === "interviewer" && !rd.meta.get("initialized")) {
-        const lang = initialLanguage(room);
-        rd.doc.transact(() => {
-          rd.meta.set("initialized", true);
-          rd.meta.set("language", lang);
-          if (rd.text.length === 0) rd.text.insert(0, starterFor(room, lang));
-        });
-      }
-    };
+    const onSync = (isSynced: boolean) => setSynced(isSynced);
     rd.provider.on("sync", onSync);
 
     return () => {
       rd.provider.off("status", onStatus);
       rd.provider.off("sync", onSync);
-      rd.meta.unobserve(syncLanguage);
       rd.destroy();
       setRoomDoc(null);
+      setSynced(false);
     };
     // Reconnect only when the room or user changes, not on token refresh (handled inside connectRoomDoc).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room?.roomId, session?.user.id]);
 
-  // Live submission events
+  /**
+   * The interviewer seeds each question's starter code once, when it's revealed (a per-question flag in
+   * the doc prevents re-seeding). Unrevealed questions are never seeded, so nothing about them reaches
+   * the shared doc — and the candidate — early.
+   */
+  useEffect(() => {
+    if (!roomDoc || !synced || !room || room.role !== "interviewer" || room.status !== "open") return;
+    for (const rq of revealedQuestions(room)) {
+      if (roomDoc.meta.get(metaKey("initialized", rq.position))) continue;
+      const lang = initialLanguage(rq.question);
+      const text = roomDoc.textFor(rq.position);
+      roomDoc.doc.transact(() => {
+        roomDoc.meta.set(metaKey("initialized", rq.position), true);
+        roomDoc.meta.set(metaKey("language", rq.position), lang);
+        if (text.length === 0) text.insert(0, starterFor(rq.question, lang));
+      });
+    }
+  }, [roomDoc, synced, room]);
+
+  // The selected language of the question being viewed (synced through the doc).
+  useEffect(() => {
+    if (!roomDoc) return;
+    const sync = () => setLanguage(getLanguage(roomDoc.meta, activePosition));
+    sync();
+    roomDoc.meta.observe(sync);
+    return () => roomDoc.meta.unobserve(sync);
+  }, [roomDoc, activePosition]);
+
+  // Live room events
   useEffect(() => {
     if (!room) return;
     const onEvent = (event: ServerEvent) => {
       if (event.type === "room:closed") {
         setRoom((r) => (r ? { ...r, status: "closed" } : r));
+        // Also re-fetch: a reveal whose notification was lost may have landed just before the close, and
+        // gateways stop reconciling reveals for ended rooms — this is the last chance to pick it up.
+        refreshRoom();
+      } else if (event.type === "room:question_revealed") {
+        refreshRoom();
       } else if (event.type === "submission:queued") {
         setEntries((prev) => upsertEntry(prev, { submissionId: event.submissionId, pending: true }));
       } else if (event.type === "submission:result") {
@@ -122,38 +152,71 @@ export function RoomPage() {
         setEntries((prev) => upsertEntry(prev, { submissionId: view.submissionId, pending: false, view }));
       }
     };
-    return connectRoomEvents(room.roomId, { onEvent, onStatus: setEventStatus, onOpen: refreshHistory });
-    // Only (re)subscribe when the room itself changes, not when its status flips to closed.
+    const onOpen = () => {
+      refreshHistory();
+      refreshRoom();
+    };
+    return connectRoomEvents(room.roomId, { onEvent, onStatus: setEventStatus, onOpen });
+    // Only (re)subscribe when the room itself changes, not when its status or questions change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room?.roomId, refreshHistory]);
+  }, [room?.roomId, refreshHistory, refreshRoom]);
+
+  /**
+   * When a new question is revealed, the candidate is taken to it. Their earlier answers stay in their
+   * own buffers, and they can switch back. (The interviewer navigates on their own.)
+   */
+  const revealedCount = room ? revealedQuestions(room).length : 0;
+  const seenRevealed = useRef<number | null>(null);
+  useEffect(() => {
+    if (!room) return;
+    const previous = seenRevealed.current;
+    seenRevealed.current = revealedCount;
+    if (previous !== null && revealedCount > previous && room.role === "candidate") {
+      setActivePosition(latestRevealed(room)?.position ?? 1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealedCount]);
+
+  const active = room?.questions.find((q) => q.position === activePosition) ?? room?.questions[0];
+  const activeText = useMemo(
+    () => (roomDoc && active ? roomDoc.textFor(active.position) : null),
+    [roomDoc, active?.position],
+  );
 
   const changeLanguage = useCallback(
     (next: Language) => {
-      if (!roomDoc || !room) return;
-      const previous = getLanguage(roomDoc.meta);
+      if (!roomDoc || !active) return;
+      const text = roomDoc.textFor(active.position);
+      const previous = getLanguage(roomDoc.meta, active.position);
       roomDoc.doc.transact(() => {
-        roomDoc.meta.set("language", next);
+        roomDoc.meta.set(metaKey("language", active.position), next);
         // Swap the starter only if the code is still the untouched starter.
-        if (roomDoc.text.toString() === starterFor(room, previous)) {
-          roomDoc.text.delete(0, roomDoc.text.length);
-          roomDoc.text.insert(0, starterFor(room, next));
+        if (text.toString() === starterFor(active.question, previous)) {
+          text.delete(0, text.length);
+          text.insert(0, starterFor(active.question, next));
         }
       });
     },
-    [roomDoc, room],
+    [roomDoc, active],
   );
 
   /**
-   * The idempotency key belongs to one logical action (this exact code/mode/language), not one click.
-   * It's kept until the server gives a definitive answer, so clicking again after a lost response
+   * The idempotency key belongs to one logical action (this exact question/code/mode/language), not one
+   * click. It's kept until the server gives a definitive answer, so clicking again after a lost response
    * re-sends the same key and gets the original submission back instead of a second run.
    */
   const pendingAttempt = useRef<{ fingerprint: string; key: string } | null>(null);
 
   const submit = useCallback(
     async (mode: SubmissionMode) => {
-      if (!roomDoc) return;
-      const body = { roomId, language, mode, code: roomDoc.text.toString() };
+      if (!roomDoc || !active) return;
+      const body = {
+        roomId,
+        roomQuestionId: active.id,
+        language,
+        mode,
+        code: roomDoc.textFor(active.position).toString(),
+      };
       const fingerprint = JSON.stringify(body);
       if (pendingAttempt.current?.fingerprint !== fingerprint) {
         pendingAttempt.current = { fingerprint, key: crypto.randomUUID() };
@@ -171,8 +234,22 @@ export function RoomPage() {
         setSubmitting(false);
       }
     },
-    [roomDoc, roomId, language],
+    [roomDoc, roomId, language, active],
   );
+
+  async function reveal() {
+    if (!room || !active) return;
+    setRevealing(true);
+    setNotice(null);
+    try {
+      await api.revealQuestion(room.roomId, active.id);
+      refreshRoom();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRevealing(false);
+    }
+  }
 
   async function endSession() {
     if (!room || !confirm("End this interview? The editor becomes read-only and no more runs are allowed.")) return;
@@ -205,11 +282,13 @@ export function RoomPage() {
       </>
     );
   }
-  if (!room) return <div className="center muted">Loading room…</div>;
+  if (!room || !active) return <div className="center muted">Loading room…</div>;
 
   const isCandidate = room.role === "candidate";
   const live = docStatus === "connected" && eventStatus === "connected";
   const closed = room.status !== "open";
+  const canReveal = !closed && !isCandidate && nextToReveal(room)?.id === active.id;
+  const multi = room.questions.length > 1;
 
   return (
     <div className="room-page">
@@ -240,12 +319,41 @@ export function RoomPage() {
       <RoomColumns
         layout={layout}
         resultsKey={entries.map((e) => `${e.submissionId}:${e.pending ? "pending" : e.view.status}`).join(",")}
-        question={<QuestionPanel question={room.question} />}
-        results={<ResultsPanel entries={entries} />}
+        question={
+          <>
+            {multi && <QuestionNav questions={room.questions} activePosition={active.position} onSelect={setActivePosition} />}
+            {!active.revealed && (
+              <div className="reveal-bar" role="status">
+                <span>The candidate can't see this question yet.</span>
+                {canReveal ? (
+                  <button className="primary" onClick={reveal} disabled={revealing}>
+                    Reveal to candidate
+                  </button>
+                ) : (
+                  !closed && <span className="muted small">Reveal Q{nextToReveal(room)?.position} first.</span>
+                )}
+              </div>
+            )}
+            <QuestionPanel question={active.question} />
+          </>
+        }
+        results={
+          <ResultsPanel
+            entries={entries}
+            questions={multi ? room.questions : undefined}
+            activeQuestionId={active.id}
+          />
+        }
         editor={
           <section className="editor-pane">
             <div className="editor-toolbar">
-              <select value={language} onChange={(e) => changeLanguage(e.target.value as Language)} disabled={!roomDoc}>
+              {multi && <span className="badge" title={active.question.title}>Q{active.position}</span>}
+              <select
+                aria-label="Language"
+                value={language}
+                onChange={(e) => changeLanguage(e.target.value as Language)}
+                disabled={!roomDoc || !active.revealed || closed}
+              >
                 <option value="python">Python</option>
                 <option value="javascript">JavaScript</option>
               </select>
@@ -264,12 +372,14 @@ export function RoomPage() {
                 <span className="muted small">Only the candidate can run code. You see every test, including hidden ones.</span>
               )}
             </div>
-            {roomDoc ? (
+            {roomDoc && activeText ? (
               <CollaborativeEditor
-                text={roomDoc.text}
+                text={activeText}
                 awareness={roomDoc.provider.awareness}
                 language={language}
-                readOnly={closed}
+                // Unrevealed questions are read-only for the interviewer too: nothing is typed into a buffer
+                // the candidate can't see yet.
+                readOnly={closed || !active.revealed}
               />
             ) : (
               <div className="editor center muted">Connecting…</div>

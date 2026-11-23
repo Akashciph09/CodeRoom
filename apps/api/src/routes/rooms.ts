@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
-import { and, desc, eq, isNull, or, questions, questionVersions, roomParticipants, rooms, submissions } from "@coderoom/db";
+import { and, desc, eq, inArray, isNull, or, questions, questionVersions, roomParticipants, roomQuestions, rooms, submissions } from "@coderoom/db";
 import {
   CreateRoomRequest,
   JoinRoomRequest,
@@ -12,7 +12,8 @@ import {
   type RoomView,
 } from "@coderoom/shared";
 import { redis } from "../queue.js";
-import { candidateView, latestPublished } from "../services/questions.js";
+import { latestPublished } from "../services/questions.js";
+import { revealQuestion, roomQuestionsFor } from "../services/roomQuestions.js";
 import { resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
@@ -22,33 +23,44 @@ import { UuidParam } from "./params.js";
 export const roomsRouter: Router = Router();
 
 /**
- * Creator becomes the room's interviewer. The room pins the question's latest READY version: later
- * edits create new versions and never change what this interview runs against.
+ * Creator becomes the room's interviewer. Each question is pinned to its latest READY version: later
+ * edits create new versions and never change what this interview runs against (ADR 0007). The list is
+ * ordered and fixed; question 1 is revealed now, the rest when the interviewer reveals them (ADR 0009).
  * Allowed questions: the caller's own, or shared library questions (no owner).
  * TODO: restrict room creation to an org/interviewer allowlist.
  */
 roomsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const { questionId } = CreateRoomRequest.parse(req.body);
+    const { questionIds } = CreateRoomRequest.parse(req.body);
     const userId = req.user!.userId;
 
-    const [question] = await db
+    const allowed = await db
       .select({ id: questions.id })
       .from(questions)
-      .where(and(eq(questions.id, questionId), or(eq(questions.createdBy, userId), isNull(questions.createdBy))))
-      .limit(1);
-    if (!question) throw new NotFound("Question not found");
-    const version = await latestPublished(questionId);
-    if (!version) throw new BadRequest("Question isn't ready yet — mark it ready before using it in an interview");
+      .where(and(inArray(questions.id, questionIds), or(eq(questions.createdBy, userId), isNull(questions.createdBy))));
+    const allowedIds = new Set(allowed.map((q) => q.id));
+    if (questionIds.some((id) => !allowedIds.has(id))) throw new NotFound("Question not found");
+
+    const versions = await Promise.all(questionIds.map((id) => latestPublished(id)));
+    if (versions.some((v) => !v)) {
+      throw new BadRequest("A question isn't ready yet — mark it ready before using it in an interview");
+    }
 
     const inviteCode = randomBytes(12).toString("base64url");
     const room = await db.transaction(async (tx) => {
-      const [created] = await tx
-        .insert(rooms)
-        .values({ questionVersionId: version.id, createdBy: userId, inviteCode })
-        .returning({ id: rooms.id });
-      await tx.insert(roomParticipants).values({ roomId: created!.id, userId, role: "interviewer" });
+      const [created] = await tx.insert(rooms).values({ createdBy: userId, inviteCode }).returning({ id: rooms.id });
+      const roomId = created!.id;
+      const now = new Date();
+      await tx.insert(roomQuestions).values(
+        versions.map((v, i) => ({
+          roomId,
+          position: i + 1,
+          questionVersionId: v!.id,
+          revealedAt: i === 0 ? now : null,
+        })),
+      );
+      await tx.insert(roomParticipants).values({ roomId, userId, role: "interviewer" });
       return created!;
     });
 
@@ -96,7 +108,7 @@ roomsRouter.get(
     const role = await requireRoomRole(roomId, req.user!.userId);
 
     const [row] = await db
-      .select({ status: rooms.status, inviteCode: rooms.inviteCode, questionVersionId: rooms.questionVersionId })
+      .select({ status: rooms.status, inviteCode: rooms.inviteCode })
       .from(rooms)
       .where(eq(rooms.id, roomId))
       .limit(1);
@@ -107,10 +119,33 @@ roomsRouter.get(
       status: row.status,
       role,
       ...(role === "interviewer" ? { inviteCode: row.inviteCode } : {}),
-      // The pinned version, candidate view (public tests only, filtered in SQL).
-      question: await candidateView(row.questionVersionId),
+      // Pinned versions, candidate view (public tests only). Candidates get revealed questions only.
+      questions: await roomQuestionsFor(roomId, role),
     };
     res.json(view);
+  }),
+);
+
+/**
+ * Interviewer reveals the next question to the candidate (in order; idempotent; never after the room
+ * ended). The DB update is the commit point. The bus event is the fast path (best effort): every
+ * gateway also re-reads revealed questions from the DB (`roomStatusReconciler`), so a lost publish
+ * delays the candidate's update by at most one interval, even while their sockets stay connected.
+ */
+roomsRouter.post(
+  "/:id/questions/:roomQuestionId/reveal",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const roomQuestionId = UuidParam.parse(req.params.roomQuestionId);
+    const { changed, revealedCount } = await revealQuestion(roomId, roomQuestionId);
+    if (changed) {
+      const event: RoomBusEvent = { type: "room:question_revealed", roomId, revealedCount };
+      redis
+        .publish(roomEventsChannel(roomId), JSON.stringify(event))
+        .catch((err) => console.error(`reveal publish failed for ${roomId}; reconciler will deliver:`, err));
+    }
+    res.json({ roomQuestionId, revealed: true });
   }),
 );
 
@@ -153,6 +188,8 @@ roomsRouter.post(
   asyncHandler(async (req, res) => {
     const roomId = UuidParam.parse(req.params.id);
     await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    // Row-locking UPDATE: serialized with revealQuestion's `FOR UPDATE` and the submission insert's
+    // `FOR SHARE` on the same row, so no question is revealed and no submission accepted after this commits.
     await db.update(rooms).set({ status: "closed" }).where(eq(rooms.id, roomId));
     const event: RoomBusEvent = { type: "room:closed", roomId };
     redis
@@ -176,7 +213,9 @@ roomsRouter.get(
       })
       .from(roomParticipants)
       .innerJoin(rooms, eq(rooms.id, roomParticipants.roomId))
-      .innerJoin(questionVersions, eq(questionVersions.id, rooms.questionVersionId))
+      // Titled by the first question (always revealed, so safe to show candidates too).
+      .innerJoin(roomQuestions, and(eq(roomQuestions.roomId, rooms.id), eq(roomQuestions.position, 1)))
+      .innerJoin(questionVersions, eq(questionVersions.id, roomQuestions.questionVersionId))
       .where(eq(roomParticipants.userId, req.user!.userId))
       .orderBy(desc(rooms.createdAt))
       .limit(50);
