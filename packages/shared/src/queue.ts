@@ -24,7 +24,13 @@ export const roomEventsChannel = (roomId: string) => `room:${roomId}:events`;
 export const ROOM_EVENTS_PATTERN = "room:*:events";
 
 export const RoomBusEvent = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("submission:queued"), roomId: z.string(), submissionId: z.string() }),
+  z.object({
+    type: z.literal("submission:queued"),
+    roomId: z.string(),
+    submissionId: z.string(),
+    /** Which room question it answers, so clients file it under the right question before the result. */
+    roomQuestionId: z.string().optional(),
+  }),
   z.object({
     type: z.literal("submission:done"),
     roomId: z.string(),

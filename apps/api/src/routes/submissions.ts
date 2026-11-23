@@ -109,7 +109,12 @@ submissionsRouter.post(
     await tryEnqueue(submissionId);
 
     // Best effort: realtime clients learn about it; REST still works if this fails.
-    const event: RoomBusEvent = { type: "submission:queued", roomId: body.roomId, submissionId };
+    const event: RoomBusEvent = {
+      type: "submission:queued",
+      roomId: body.roomId,
+      submissionId,
+      roomQuestionId: body.roomQuestionId,
+    };
     redis.publish(roomEventsChannel(body.roomId), JSON.stringify(event)).catch(() => {});
 
     const response: CreateSubmissionResponse = { submissionId, status: "queued" };

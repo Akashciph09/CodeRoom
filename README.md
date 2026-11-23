@@ -19,7 +19,7 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 - **Live, role-aware results.** When the worker finishes, every connected participant gets the submission pushed over WebSocket — candidates the redacted view, interviewers the full one.
 - **Interviewers author their own questions — with versioning.** Statement, constraints, per-language starter code, public and hidden tests (add, edit, reorder, hide, remove), draft → preview → "mark ready". Each ready version is immutable (enforced by database triggers) and every room pins the version it started with, so editing a question never changes a past or running interview ([ADR 0007](docs/decisions/0007-immutable-question-versions.md)).
 - **Multi-question interviews.** Pick up to five questions in order; the candidate sees Q1, and the interviewer reveals the rest one at a time (strictly in order). Unrevealed questions never reach the candidate — not their content, not even how many there are. Each question has its own code buffer and is graded against its own pinned version, enforced by a composite foreign key ([ADR 0009](docs/decisions/0009-multi-question-rooms.md)).
-- **A real interview UI.** Invite links, a shared Monaco editor with named live cursors and presence, a synced language picker, Run/Submit for the candidate, and a results panel where the interviewer also sees hidden tests and the exact submitted code. Panels are resizable (drag or keyboard, remembered per browser, never synced to the other participant) and become tabs on narrow screens ([ADR 0008](docs/decisions/0008-room-layout-own-splitter.md)).
+- **A real interview UI.** Invite links, a shared Monaco editor with named live cursors and presence, a synced language picker, Run/Submit for the candidate, and a results panel where the interviewer also sees hidden tests and the exact submitted code. The question sits beside the code editor, which is stacked over a **Testcase / Test Result** panel (example cases one at a time; the selected question's runs). Both dividers resize by drag or keyboard, are remembered per browser (never synced to the other participant), and the panels become tabs on narrow screens ([ADR 0008](docs/decisions/0008-room-layout-own-splitter.md)).
 - **Every stack choice is documented** in [Architecture Decision Records](docs/decisions/README.md).
 
 ## Architecture
@@ -273,7 +273,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~55 s for all twelve tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~60 s for all thirteen tests):
 
 | Step | Checked |
 |---|---|
@@ -289,10 +289,11 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Interviewer ends the session | banner on both sides, Run/Submit disabled, typing changes nothing on either side |
 | Reload after the end | final code and history still shown |
 | Signed-out visit to a room | redirected to sign-in with the room kept in `next` |
-| Resize panels (mouse + keyboard) | minimums hold, Monaco follows its column, layout survives reload, Reset restores defaults, the other participant's layout is untouched |
-| Resize at 950 px with oversized saved sizes | Home, drag and double-click never move the other panel; reload shows the same layout |
+| Resize panels (mouse + keyboard) | question width and test-panel height: minimums hold, Monaco follows its pane, layout survives reload, Reset restores defaults, the other participant's layout is untouched |
+| Test panel | example cases one at a time (never hidden tests), switches to Test Result on a run, status bar shows the cursor |
+| Small window with oversized saved sizes | shown squeezed without being lost (they return in a bigger window); resizing one divider never moves the other |
 | Type while dragging a divider | every keystroke lands, still synced, editor never remounted |
-| Multi-question interview | candidate sees only Q1 (no hint more exist); reveals only in order; a reveal takes the candidate to the new question with its own starter; separate code per question; results tagged and filterable by question; a reveal missed while disconnected arrives on reconnect |
+| Multi-question interview | candidate sees only Q1 (no hint more exist); reveals only in order; a reveal takes the candidate to the new question with its own starter; separate code per question; results scoped to the question being viewed; a reveal missed while disconnected arrives on reconnect |
 | Narrow screen | Question / Code / Results tabs, Results marks a new run, editor content and instance kept across modes |
 | **Authoring:** My questions → create → statement, constraints, starter code → add/hide/reorder/remove tests → "Mark ready" blocked without a public test → save, preview, mark ready v1 | preview shows public examples only and the starter code; status "Ready v1" |
 | Start an interview with it; candidate joins | sees the authored statement/constraints and starter code; correct solution "Accepted, hidden tests 1/1" |

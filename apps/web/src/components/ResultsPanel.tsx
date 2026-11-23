@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { RoomQuestionView, Verdict } from "@coderoom/shared";
 import { isInterviewerView } from "../lib/api";
-import type { SubmissionEntry } from "../lib/submissions";
+import { questionOf, type SubmissionEntry } from "../lib/submissions";
 
 const VERDICT_LABEL: Record<Verdict, string> = {
   accepted: "Accepted",
@@ -19,42 +19,31 @@ function VerdictBadge({ verdict }: { verdict?: Verdict }) {
 }
 
 /**
- * Submission history, newest first. In a multi-question room each card is tagged with its question,
- * and the list can be narrowed to the question being viewed. Pending entries (not yet answered by the
- * server) don't know their question yet and are always shown.
+ * Submission history, newest first. In a multi-question room it shows only the runs of the question
+ * being viewed (`question`), so its test rows match that question's examples; switching questions
+ * switches the list. Single-question rooms show everything.
  */
 export function ResultsPanel({
   entries,
-  questions,
-  activeQuestionId,
+  question,
 }: {
   entries: SubmissionEntry[];
-  /** Only for multi-question rooms. */
-  questions?: RoomQuestionView[];
-  activeQuestionId?: string;
+  /** The question being viewed — only in multi-question rooms. */
+  question?: RoomQuestionView;
 }) {
-  const [onlyActive, setOnlyActive] = useState(false);
-  const positionOf = new Map(questions?.map((q) => [q.id, q.position]));
-  const shown =
-    questions && onlyActive ? entries.filter((e) => e.pending || e.view.roomQuestionId === activeQuestionId) : entries;
+  // A placeholder that never learned its question (shouldn't happen) stays visible rather than vanish.
+  const shown = question
+    ? entries.filter((e) => {
+        const q = questionOf(e);
+        return q === undefined || q === question.id;
+      })
+    : entries;
   return (
     <section className="panel results-panel">
-      <div className="section-head">
-        <h2>Results</h2>
-        {questions && (
-          <label className="inline small">
-            <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
-            This question only
-          </label>
-        )}
-      </div>
-      {shown.length === 0 && <p className="muted">No runs yet.</p>}
+      <h2>Results{question && <span className="muted"> · Q{question.position}</span>}</h2>
+      {shown.length === 0 && <p className="muted">{question ? `No runs for Q${question.position} yet.` : "No runs yet."}</p>}
       {shown.map((e) => (
-        <SubmissionCard
-          key={e.submissionId}
-          entry={e}
-          position={e.pending ? undefined : positionOf.get(e.view.roomQuestionId)}
-        />
+        <SubmissionCard key={e.submissionId} entry={e} />
       ))}
     </section>
   );
@@ -66,7 +55,7 @@ function numbered<T extends { testId: string; hidden?: boolean }>(results: T[]) 
   return results.map((r) => ({ r, label: r.hidden ? null : ++n }));
 }
 
-function SubmissionCard({ entry, position }: { entry: SubmissionEntry; position?: number }) {
+function SubmissionCard({ entry }: { entry: SubmissionEntry }) {
   const [showCode, setShowCode] = useState(false);
   if (entry.pending) {
     return (
@@ -85,7 +74,6 @@ function SubmissionCard({ entry, position }: { entry: SubmissionEntry; position?
     <div className="submission">
       <div className="submission-head">
         <VerdictBadge verdict={done ? (v.overall ?? "internal_error") : undefined} />
-        {position !== undefined && <span className="badge question-badge">Q{position}</span>}
         <span className="badge">{v.mode}</span>
         {isInterviewerView(v) && (
           <>

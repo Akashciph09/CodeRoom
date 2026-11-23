@@ -95,7 +95,12 @@ export class RoomEventHub {
 
     if (event.type === "submission:queued") {
       for (const s of subscribers) {
-        sendEvent(s.ws, { type: "submission:queued", roomId: event.roomId, submissionId: event.submissionId });
+        sendEvent(s.ws, {
+          type: "submission:queued",
+          roomId: event.roomId,
+          submissionId: event.submissionId,
+          ...(event.roomQuestionId ? { roomQuestionId: event.roomQuestionId } : {}),
+        });
       }
       return;
     }

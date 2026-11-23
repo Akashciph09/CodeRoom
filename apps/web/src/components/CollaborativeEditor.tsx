@@ -10,12 +10,16 @@ interface Props {
   awareness: Awareness;
   language: Language;
   readOnly?: boolean;
+  /** Called with the local cursor's 1-based line and column (for the status bar). */
+  onCursor?: (line: number, column: number) => void;
 }
 
 /** Monaco bound to a Y.Text. Remote cursors/selections come from awareness (styled in RemoteCursorStyles). */
-export function CollaborativeEditor({ text, awareness, language, readOnly = false }: Props) {
+export function CollaborativeEditor({ text, awareness, language, readOnly = false, onCursor }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const onCursorRef = useRef(onCursor);
+  onCursorRef.current = onCursor;
 
   useEffect(() => {
     const editor = monaco.editor.create(container.current!, {
@@ -30,7 +34,10 @@ export function CollaborativeEditor({ text, awareness, language, readOnly = fals
     });
     editorRef.current = editor;
     const binding = new MonacoBinding(text, editor.getModel()!, new Set([editor]), awareness);
+    onCursorRef.current?.(1, 1);
+    const cursorSub = editor.onDidChangeCursorPosition((e) => onCursorRef.current?.(e.position.lineNumber, e.position.column));
     return () => {
+      cursorSub.dispose();
       binding.destroy();
       editor.dispose();
       editorRef.current = null;

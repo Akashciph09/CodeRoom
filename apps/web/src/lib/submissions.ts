@@ -1,8 +1,12 @@
 import type { SubmissionView } from "./api";
 
 export type SubmissionEntry =
-  | { submissionId: string; pending: true }
+  /** Accepted, no result yet. `roomQuestionId` is known from our own submit or the queued event. */
+  | { submissionId: string; pending: true; roomQuestionId?: string }
   | { submissionId: string; pending: false; view: SubmissionView };
+
+/** The room question an entry answers (undefined only for a placeholder that never learned it). */
+export const questionOf = (e: SubmissionEntry) => (e.pending ? e.roomQuestionId : e.view.roomQuestionId);
 
 /**
  * How far along a submission is. Results only move forward: a slower source (a history request
@@ -31,7 +35,13 @@ export function upsertEntry(list: SubmissionEntry[], incoming: SubmissionEntry):
   const i = list.findIndex((e) => e.submissionId === incoming.submissionId);
   if (i === -1) return [incoming, ...list];
   const next = list.slice();
-  next[i] = newer(list[i], incoming);
+  const current = list[i]!;
+  const winner = newer(current, incoming);
+  // Two placeholders for the same submission: don't lose the question one of them knew.
+  next[i] =
+    winner.pending && current.pending && !winner.roomQuestionId && current.roomQuestionId
+      ? { ...winner, roomQuestionId: current.roomQuestionId }
+      : winner;
   return next;
 }
 
