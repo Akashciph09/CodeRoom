@@ -127,8 +127,10 @@ roomsRouter.get(
 );
 
 /**
- * Interviewer reveals the next question to the candidate (in order; idempotent). The bus event makes
- * every client re-fetch the room; clients also re-fetch on reconnect, so a lost event only delays it.
+ * Interviewer reveals the next question to the candidate (in order; idempotent; never after the room
+ * ended). The DB update is the commit point. The bus event is the fast path (best effort): every
+ * gateway also re-reads revealed questions from the DB (`roomStatusReconciler`), so a lost publish
+ * delays the candidate's update by at most one interval, even while their sockets stay connected.
  */
 roomsRouter.post(
   "/:id/questions/:roomQuestionId/reveal",
@@ -136,10 +138,12 @@ roomsRouter.post(
     const roomId = UuidParam.parse(req.params.id);
     await requireRoomRole(roomId, req.user!.userId, "interviewer");
     const roomQuestionId = UuidParam.parse(req.params.roomQuestionId);
-    const changed = await revealQuestion(roomId, roomQuestionId);
+    const { changed, revealedCount } = await revealQuestion(roomId, roomQuestionId);
     if (changed) {
-      const event: RoomBusEvent = { type: "room:question_revealed", roomId };
-      redis.publish(roomEventsChannel(roomId), JSON.stringify(event)).catch(() => {});
+      const event: RoomBusEvent = { type: "room:question_revealed", roomId, revealedCount };
+      redis
+        .publish(roomEventsChannel(roomId), JSON.stringify(event))
+        .catch((err) => console.error(`reveal publish failed for ${roomId}; reconciler will deliver:`, err));
     }
     res.json({ roomQuestionId, revealed: true });
   }),
@@ -184,6 +188,8 @@ roomsRouter.post(
   asyncHandler(async (req, res) => {
     const roomId = UuidParam.parse(req.params.id);
     await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    // Row-locking UPDATE: serialized with revealQuestion's `FOR UPDATE` and the submission insert's
+    // `FOR SHARE` on the same row, so no question is revealed and no submission accepted after this commits.
     await db.update(rooms).set({ status: "closed" }).where(eq(rooms.id, roomId));
     const event: RoomBusEvent = { type: "room:closed", roomId };
     redis

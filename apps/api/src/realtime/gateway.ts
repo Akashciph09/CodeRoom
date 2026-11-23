@@ -45,6 +45,8 @@ export function attachRealtimeGateway(server: Server) {
     intervalMs: config.ROOM_STATUS_RECONCILE_MS,
     candidates: () => [...docs.writableRoomIds(), ...events.openRoomIds()],
     onClosed: (roomId) => events.markClosed(roomId),
+    revealCandidates: () => events.openRoomIds(), // ended rooms can't reveal any more
+    onRevealed: (roomId, count) => events.markRevealed(roomId, count),
   });
 
   const wss = new WebSocketServer({

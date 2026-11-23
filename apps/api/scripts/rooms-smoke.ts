@@ -8,8 +8,8 @@
  *  - every submission is graded against its own question's pinned version, enforced by the database.
  */
 import { randomUUID } from "node:crypto";
-import { createDb, eq, roomQuestions, submissions } from "@coderoom/db";
-import { call, check, finish, QUESTION_ID, roomQuestionIds, signUp, sleep, userIdOf } from "./lib.js";
+import { createDb, eq, roomQuestions, rooms, submissions } from "@coderoom/db";
+import { call, check, finish, QUESTION_ID, readyQuestion, roomQuestionIds, signUp, sleep, userIdOf } from "./lib.js";
 
 const SUM = "a, b = map(int, input().split())\nprint(a + b)";
 const PRODUCT = "a, b = map(int, input().split())\nprint(a * b)";
@@ -25,23 +25,6 @@ async function waitFor(id: string, token: string) {
     await sleep(250);
   }
   throw new Error(`submission ${id} did not finish`);
-}
-
-/** Create and publish a question owned by `token` (one public + one hidden test). */
-async function readyQuestion(token: string, title: string, statement: string, tests: [string, string][]) {
-  const created = await call("POST", "/questions", token, { title });
-  const qid = created.json.id as string;
-  const saved = await call("PUT", `/questions/${qid}/draft`, token, {
-    baseRevision: created.json.revision,
-    title,
-    statement,
-    constraints: "",
-    starterCode: {},
-    tests: tests.map(([input, expectedOutput], i) => ({ input, expectedOutput, isHidden: i > 0 })),
-  });
-  const published = await call("POST", `/questions/${qid}/publish`, token, { revision: saved.json.revision });
-  if (published.status !== 200) throw new Error(`publish ${title} → ${published.status} ${JSON.stringify(published.json)}`);
-  return qid;
 }
 
 const reveal = (token: string, roomId: string, rqId: string) =>
@@ -173,6 +156,81 @@ async function main() {
   }
   await close();
   check("racing reveals of Q2 and Q3 never reveal Q3 alone (8 rounds)", orderedEveryTime);
+
+  // --- A reveal can't slip in after the session ends ------------------------------------------------
+  // Deterministic: hold the room row lock exactly like the close UPDATE does, fire a reveal while it's
+  // held, then commit the close. The reveal must wait for the lock and then see the room closed.
+  {
+    const raceRoom = await create(interviewer, [QUESTION_ID, product]);
+    const raceId = raceRoom.json.roomId as string;
+    const [, raceQ2] = (await roomQuestionIds(raceId, interviewer)) as [string, string];
+    const { db: lockDb, close: closeLockDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    let revealSettledWhileLocked = false;
+    let revealStatus = 0;
+    await lockDb.transaction(async (tx) => {
+      await tx.select({ id: rooms.id }).from(rooms).where(eq(rooms.id, raceId)).for("update");
+      const pending = reveal(interviewer, raceId, raceQ2).then((r) => (revealStatus = r.status));
+      await sleep(600);
+      revealSettledWhileLocked = revealStatus !== 0;
+      await tx.update(rooms).set({ status: "closed" }).where(eq(rooms.id, raceId));
+      // Commit happens when this callback returns; the reveal is still waiting.
+      void pending;
+    });
+    for (let i = 0; i < 40 && revealStatus === 0; i++) await sleep(50);
+    const [q2Row] = await lockDb.select({ revealedAt: roomQuestions.revealedAt }).from(roomQuestions).where(eq(roomQuestions.id, raceQ2));
+    await closeLockDb();
+    check(
+      "reveal racing the session's end waits for it, then is refused (400) and nothing is revealed",
+      !revealSettledWhileLocked && revealStatus === 400 && q2Row?.revealedAt === null,
+      `(settled while locked: ${revealSettledWhileLocked}, status ${revealStatus}, revealed: ${q2Row?.revealedAt !== null})`,
+    );
+  }
+
+  // Same for submissions: one fired while the room row is held by a closing transaction must wait for
+  // the close and be refused — no submission row, nothing queued for the sandbox.
+  {
+    const subRoom = await create(interviewer, [QUESTION_ID]);
+    const subRoomId = subRoom.json.roomId as string;
+    const lateCandidate = await signUp("mq-late-candidate");
+    await call("POST", "/rooms/join", lateCandidate, { inviteCode: subRoom.json.inviteCode });
+    const [subQ1] = (await roomQuestionIds(subRoomId, interviewer)) as [string];
+    const { db: lockDb, close: closeLockDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    let settledWhileLocked = false;
+    let submitStatus = 0;
+    await lockDb.transaction(async (tx) => {
+      await tx.select({ id: rooms.id }).from(rooms).where(eq(rooms.id, subRoomId)).for("update");
+      void call("POST", "/submissions", lateCandidate, {
+        roomId: subRoomId, roomQuestionId: subQ1, language: "python", mode: "run", code: SUM,
+      }).then((r) => (submitStatus = r.status));
+      await sleep(600);
+      settledWhileLocked = submitStatus !== 0;
+      await tx.update(rooms).set({ status: "closed" }).where(eq(rooms.id, subRoomId));
+    });
+    for (let i = 0; i < 40 && submitStatus === 0; i++) await sleep(50);
+    const rows = await lockDb.select({ id: submissions.id }).from(submissions).where(eq(submissions.roomId, subRoomId));
+    await closeLockDb();
+    check(
+      "submission racing the session's end waits for it, then is refused (400) and nothing is stored",
+      !settledWhileLocked && submitStatus === 400 && rows.length === 0,
+      `(settled while locked: ${settledWhileLocked}, status ${submitStatus}, rows ${rows.length})`,
+    );
+  }
+
+  // Many real close/reveal races: whatever wins, a refused reveal never leaves a revealed question,
+  // and a successful one always happened before the close.
+  let raceConsistent = true;
+  for (let i = 0; i < 8; i++) {
+    const r = await create(interviewer, [QUESTION_ID, product]);
+    const id = r.json.roomId as string;
+    const [, q2] = (await roomQuestionIds(id, interviewer)) as [string, string];
+    const [revealed] = await Promise.all([reveal(interviewer, id, q2), call("POST", `/rooms/${id}/close`, interviewer)]);
+    const after = (await call("GET", `/rooms/${id}`, interviewer)).json;
+    const isRevealed = after.questions[1].revealed as boolean;
+    if (after.status !== "closed" || (revealed.status === 200) !== isRevealed || ![200, 400].includes(revealed.status)) {
+      raceConsistent = false;
+    }
+  }
+  check("concurrent close + reveal (8 rounds): the reveal either fully happens first or is refused", raceConsistent);
 
   // --- After the session ends --------------------------------------------------------------------
   await call("POST", `/rooms/${roomId}/close`, interviewer);

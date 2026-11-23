@@ -12,6 +12,8 @@ interface RoomSubscribers {
   subs: Set<Subscriber>;
   /** `room:closed` already sent to this room's sockets on this instance. */
   closed: boolean;
+  /** Highest revealed-question count this instance has announced to the room (undefined = none yet). */
+  revealed?: number;
 }
 
 /**
@@ -45,6 +47,23 @@ export class RoomEventHub {
     sendEvent(ws, { type: "ready", roomId });
   }
 
+  /**
+   * The room has `count` revealed questions — learned from the bus (fast path) or the database
+   * (reconciler). Sockets get `room:question_revealed` (they re-fetch the room) only when the count
+   * goes up, so a reveal is announced once even though both paths report it.
+   *
+   * The first count seen for a room is always announced: it may include a reveal that happened after a
+   * client's on-connect fetch but before this instance started tracking the room. A spare re-fetch is
+   * harmless (the client merges forward-only); a missed reveal would leave the candidate stuck.
+   */
+  markRevealed(roomId: string, count: number) {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    if (room.revealed !== undefined && count <= room.revealed) return;
+    room.revealed = count;
+    for (const s of room.subs) sendEvent(s.ws, { type: "room:question_revealed", roomId });
+  }
+
   /** Rooms with listeners here that haven't been told the room ended (checked by the status reconciler). */
   openRoomIds(): string[] {
     return [...this.rooms.entries()].filter(([, r]) => !r.closed).map(([id]) => id);
@@ -72,10 +91,7 @@ export class RoomEventHub {
     if (!subscribers || subscribers.size === 0) return;
 
     // Id-only: no question content goes over the socket; each client re-fetches its own role's view.
-    if (event.type === "room:question_revealed") {
-      for (const s of subscribers) sendEvent(s.ws, { type: "room:question_revealed", roomId: event.roomId });
-      return;
-    }
+    if (event.type === "room:question_revealed") return this.markRevealed(event.roomId, event.revealedCount);
 
     if (event.type === "submission:queued") {
       for (const s of subscribers) {

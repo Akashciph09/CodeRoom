@@ -75,24 +75,29 @@ submissionsRouter.post(
     }
 
     await requireRoomRole(body.roomId, userId, "candidate");
-    // Revealed question of this room, open room (404 / 400 otherwise).
-    const target = await submittableQuestion(body.roomId, body.roomQuestionId);
 
-    const [inserted] = await db
-      .insert(submissions)
-      .values({
-        roomId: body.roomId,
-        roomQuestionId: body.roomQuestionId,
-        questionVersionId: target.versionId, // graded against that question's pinned version
-        userId,
-        language: body.language,
-        mode: body.mode,
-        code: body.code,
-        idempotencyKey,
-      })
-      // Two concurrent requests with the same key: exactly one row wins; the other replays it.
-      .onConflictDoNothing({ target: [submissions.userId, submissions.idempotencyKey] })
-      .returning({ id: submissions.id });
+    // Check and insert in one transaction, holding a share lock on the room row (see submittableQuestion):
+    // a submission can't be accepted into a room that ends between the check and the insert.
+    const inserted = await db.transaction(async (tx) => {
+      // Revealed question of this room, open room (404 / 400 otherwise).
+      const target = await submittableQuestion(tx, body.roomId, body.roomQuestionId);
+      const [row] = await tx
+        .insert(submissions)
+        .values({
+          roomId: body.roomId,
+          roomQuestionId: body.roomQuestionId,
+          questionVersionId: target.versionId, // graded against that question's pinned version
+          userId,
+          language: body.language,
+          mode: body.mode,
+          code: body.code,
+          idempotencyKey,
+        })
+        // Two concurrent requests with the same key: exactly one row wins; the other replays it.
+        .onConflictDoNothing({ target: [submissions.userId, submissions.idempotencyKey] })
+        .returning({ id: submissions.id });
+      return row;
+    });
 
     if (!inserted) {
       const existing = idempotencyKey ? await findByIdempotencyKey(userId, idempotencyKey) : null;

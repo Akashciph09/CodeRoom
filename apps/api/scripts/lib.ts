@@ -60,6 +60,23 @@ export const userIdOf = (token: string) =>
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Create and publish a question owned by `token` (one public + one hidden test). */
+export async function readyQuestion(token: string, title: string, statement: string, tests: [string, string][]) {
+  const created = await call("POST", "/questions", token, { title });
+  const qid = created.json.id as string;
+  const saved = await call("PUT", `/questions/${qid}/draft`, token, {
+    baseRevision: created.json.revision,
+    title,
+    statement,
+    constraints: "",
+    starterCode: {},
+    tests: tests.map(([input, expectedOutput], i) => ({ input, expectedOutput, isHidden: i > 0 })),
+  });
+  const published = await call("POST", `/questions/${qid}/publish`, token, { revision: saved.json.revision });
+  if (published.status !== 200) throw new Error(`publish ${title} → ${published.status} ${JSON.stringify(published.json)}`);
+  return qid;
+}
+
 /** The room question ids of a room, in order (as the interviewer sees them). */
 export async function roomQuestionIds(roomId: string, interviewerToken: string): Promise<string[]> {
   const room = await call("GET", `/rooms/${roomId}`, interviewerToken);

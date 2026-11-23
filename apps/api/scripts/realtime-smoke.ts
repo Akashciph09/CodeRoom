@@ -6,9 +6,9 @@
 import WebSocket from "ws";
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
-import { createDb, eq, rooms } from "@coderoom/db";
+import { createDb, eq, roomQuestions, rooms } from "@coderoom/db";
 import { REALTIME_PROTOCOL, type ServerEvent } from "@coderoom/shared";
-import { API, call, check, finish, setupRoom, sleep } from "./lib.js";
+import { API, call, check, finish, QUESTION_ID, readyQuestion, roomQuestionIds, setupRoom, sleep } from "./lib.js";
 import { runPersistenceRace } from "./persistenceRace.js";
 
 const API_B = process.env.SMOKE_API_URL_2 ?? API;
@@ -177,6 +177,50 @@ async function main() {
     "interviewer result: all tests with hidden flag",
     "results" in ivResult.result && ivResult.result.results.filter((r) => r.hidden).length === 2,
   );
+  // --- Reveals reach connected clients even if the publish is lost --------------------------------
+  {
+    const RECONCILE_MS = Number(process.env.ROOM_STATUS_RECONCILE_MS ?? 5000);
+    const q2 = await readyQuestion(interviewer, "Reveal smoke Q2", "second", [["1 2\n", "3"]]);
+    const q3 = await readyQuestion(interviewer, "Reveal smoke Q3", "third", [["1 2\n", "3"]]);
+    const created = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, q2, q3] });
+    const revealRoom = created.json.roomId as string;
+    await call("POST", "/rooms/join", candidate, { inviteCode: created.json.inviteCode });
+    const [, rq2, rq3] = (await roomQuestionIds(revealRoom, interviewer)) as [string, string, string];
+
+    // Candidate stays connected on the other instance for the whole section.
+    const watcher = eventSocket(API_B, revealRoom, candidate);
+    await watcher.ready;
+    const reveals = () => watcher.events.filter((e) => e.type === "room:question_revealed").length;
+    await sleep(RECONCILE_MS + 1500); // first reconcile announces the starting state once
+    const baseline = reveals();
+
+    // Normal reveal: fast path + reconciler both see it, the client is told exactly once.
+    await call("POST", `/rooms/${revealRoom}/questions/${rq2}/reveal`, interviewer);
+    await watcher.waitFor(() => reveals() > baseline, 2000);
+    await sleep(RECONCILE_MS + 1500);
+    check("a reveal is announced exactly once to a connected client (fast path + reconciler)", reveals() === baseline + 1, `(${reveals() - baseline})`);
+
+    // Lost publish: the reveal is stored, nothing is published (as if Redis publish failed).
+    const { db: revealDb, close: closeRevealDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    await revealDb.update(roomQuestions).set({ revealedAt: new Date() }).where(eq(roomQuestions.id, rq3));
+    await closeRevealDb();
+    const t0 = Date.now();
+    let delivered = true;
+    try {
+      await watcher.waitFor(() => reveals() > baseline + 1, RECONCILE_MS + 3000);
+    } catch {
+      delivered = false;
+    }
+    check(
+      "reveal with a lost publish still reaches the connected client (reconciler)",
+      delivered && watcher.ws.readyState === WebSocket.OPEN,
+      `(${((Date.now() - t0) / 1000).toFixed(1)}s, socket never reconnected)`,
+    );
+    const view = await call("GET", `/rooms/${revealRoom}`, candidate);
+    check("…and the re-fetched room shows the new question", view.json.questions.length === 3);
+    watcher.ws.close();
+  }
+
   // --- End session: already-open sockets (on both instances) must stop writing -----------------
   const textAtClose = iv.text.toString();
   check("candidate cannot end the session → 403", (await call("POST", `/rooms/${roomId}/close`, candidate)).status === 403);
