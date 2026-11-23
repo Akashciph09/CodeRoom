@@ -341,6 +341,12 @@ export function RoomPage() {
             Reset layout
           </button>
         )}
+        {room.role === "interviewer" && (
+          // Same tab: sign-in is per tab (lib/auth.tsx), so a new tab would open signed out.
+          <Link to={`/rooms/${room.roomId}/review`} className="button-link">
+            Review
+          </Link>
+        )}
         {room.role === "interviewer" && !closed && (
           <button className="danger" onClick={endSession}>
             End session

@@ -6,13 +6,20 @@ import { Role } from "./roles.js";
 export const MAX_ROOM_QUESTIONS = 5;
 
 /** The room's questions, in order. Each is pinned to its latest ready version at creation. */
-export const CreateRoomRequest = z.object({
-  questionIds: z
-    .array(z.string().uuid())
-    .min(1, "Pick at least one question")
-    .max(MAX_ROOM_QUESTIONS, `At most ${MAX_ROOM_QUESTIONS} questions per room`)
-    .refine((ids) => new Set(ids).size === ids.length, "Each question can only be used once per room"),
-});
+export const CreateRoomRequest = z
+  .object({
+    questionIds: z
+      .array(z.string().uuid())
+      .min(1, "Pick at least one question")
+      .max(MAX_ROOM_QUESTIONS, `At most ${MAX_ROOM_QUESTIONS} questions per room`)
+      .refine((ids) => new Set(ids).size === ids.length, "Each question can only be used once per room"),
+    /** Optional weight per question for the test score (ADR 0011), same order as `questionIds`. Default: equal. */
+    questionPoints: z.array(z.number().int().min(1).max(100)).optional(),
+  })
+  .refine((b) => !b.questionPoints || b.questionPoints.length === b.questionIds.length, {
+    message: "Give points for every question, or for none",
+    path: ["questionPoints"],
+  });
 export type CreateRoomRequest = z.infer<typeof CreateRoomRequest>;
 
 export const CreateRoomResponse = z.object({
