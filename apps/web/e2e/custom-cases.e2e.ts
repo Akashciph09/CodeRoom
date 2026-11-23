@@ -85,13 +85,14 @@ test("both participants add test cases, see each other's, and the candidate runs
   }
 });
 
-test("the interviewer sees how long the interview has run; it stops when the session ends", async ({ browser }) => {
+test("both participants see how long the interview has run; it stops when the session ends", async ({ browser }) => {
   const { interviewer, candidate, close } = await startInterview(browser);
   const iv = interviewer.page;
+  const cdTimer = candidate.page.getByRole("timer", { name: "Interview time" });
   try {
     const timer = iv.getByRole("timer", { name: "Interview time" });
     await expect(timer).toHaveText(/⏱ \d+:\d{2}/);
-    await expect(candidate.page.getByRole("timer")).toHaveCount(0); // interviewer only
+    await expect(cdTimer).toHaveText(/⏱ \d+:\d{2}/); // the candidate sees it too
 
     const first = await timer.textContent();
     await expect.poll(() => timer.textContent(), { timeout: 5000 }).not.toBe(first); // ticking
@@ -102,6 +103,10 @@ test("the interviewer sees how long the interview has run; it stops when the ses
     const stopped = (await timer.textContent())!;
     await expectUnchanged(async () => (await timer.textContent())!, stopped, 2500);
     await expect(testsPane(iv).getByRole("button", { name: "Add a custom test case" })).toHaveCount(0); // read-only
+
+    // The candidate's timer stops at the same moment, from the same server timestamps.
+    await expect(cdTimer).toHaveText(stopped);
+    await expectUnchanged(async () => (await cdTimer.textContent())!, stopped, 1500);
 
     await iv.reload(); // stays stopped at the recorded end time
     await expect(timer).toHaveText(stopped);

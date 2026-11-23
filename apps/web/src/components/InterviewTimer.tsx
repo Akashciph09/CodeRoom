@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { elapsedMs, formatElapsed } from "../lib/timer";
 
 /**
- * Time since the interview room was created (interviewer only, ADR 0010). Uses the server's timestamps
+ * Time since the interview room was created, shown to both participants (ADR 0010). Uses the server's timestamps
  * and corrects for this machine's clock offset; stops at the session's end.
  */
 export function InterviewTimer({

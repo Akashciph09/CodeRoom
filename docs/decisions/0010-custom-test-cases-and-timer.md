@@ -12,13 +12,13 @@ Before submitting, a candidate wants to try edge cases beyond the given examples
 - **Run-only.** `POST /submissions` accepts `customCases` only with `mode: "run"`; Submit stays the official grading on the question's own tests. The API validates them like any input (≤ 10 cases, ≤ 10 KB input/expected each) and stores them with the submission (`submissions.custom_cases`), so a run is reproducible and the case list can't change under the worker.
 - **Separate results, never mixed with test results.** The worker runs custom cases after the question's tests, in the same sandbox, and writes `custom_case_results` in the same transaction as `test_results` (delete-then-insert, so retries stay idempotent). With an expected output a case is judged like a test; without one it only shows what the code printed (runtime errors and timeouts still count). A run's `overall` verdict is still computed from the question's tests only, so custom cases never change a verdict.
 - **Visible to both roles.** Custom cases were written by participants, so their inputs and outputs are not secret: both the candidate and interviewer views include them. Hidden-test rules are untouched.
-- **Timer:** the interviewer's top bar shows time since the room was created; it stops at `rooms.closed_at` (set when the session ends). The room view carries `createdAt`, `closedAt` and the server's `now`, and the client corrects for its own clock offset, so a wrong local clock doesn't skew it. Candidates don't see it.
+- **Timer:** the top bar shows both participants the time since the room was created; it stops at `rooms.closed_at` (set when the session ends). The room view carries `createdAt`, `closedAt` and the server's `now`, and the client corrects for its own clock offset, so a wrong local clock doesn't skew it, and both participants see the same value. (The first version showed it to the interviewer only; it was opened to candidates so both sides share the same sense of time.)
 
 ## Alternatives considered
 - **Store custom cases in Postgres behind their own API + events** — more code for the same result; the Yjs doc already gives sharing, persistence, cross-instance fan-out and read-only enforcement.
 - **Let custom cases affect the verdict / allow them on Submit** — a candidate could "pass" with their own tests; grading must come only from the pinned question version.
 - **Add custom cases to `test_results`** — that table references `test_cases` and carries the hidden-output constraint; mixing participant-written cases into it would blur exactly the line the schema protects.
-- **Show the timer to the candidate** — adds pressure without helping the interviewer; easy to enable later.
+- **Interviewer-only timer** (the first version) — replaced: a clock both sides see gives them the same sense of time and avoids "how long has it been?" interruptions.
 
 ## Consequences
 - Verified by `pnpm smoke` (`custom-cases` section) and `pnpm e2e` (`custom-cases.e2e.ts`).
