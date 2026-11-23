@@ -341,6 +341,11 @@ export function RoomPage() {
             Reset layout
           </button>
         )}
+        {room.role === "interviewer" && (
+          <Link to={`/rooms/${room.roomId}/review`} className="button-link" target="_blank" rel="noopener">
+            Review
+          </Link>
+        )}
         {room.role === "interviewer" && !closed && (
           <button className="danger" onClick={endSession}>
             End session

@@ -284,6 +284,62 @@ async function main() {
     check("ending the session sets closedAt once (closing again keeps it)", !!closed1 && closed1 === closed2);
   }
 
+  // --- Review + test score (ADR 0011) --------------------------------------------------------------
+  {
+    check("points must match the questions → 400", (await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, product], questionPoints: [50] })).status === 400);
+    check("points outside 1–100 → 400", (await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID], questionPoints: [0] })).status === 400);
+
+    const rv = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, product, difference], questionPoints: [20, 30, 50] });
+    const rvId = rv.json.roomId as string;
+    const alice = await signUp("rv-alice");
+    const bob = await signUp("rv-bob");
+    for (const t of [alice, bob]) await call("POST", "/rooms/join", t, { inviteCode: rv.json.inviteCode });
+    const [rq1, rq2, rq3] = (await roomQuestionIds(rvId, interviewer)) as [string, string, string];
+    await reveal(interviewer, rvId, rq2); // Q3 (50 points) is never revealed
+
+    const submitAs = async (token: string, rqId: string, code: string, mode = "submit") => {
+      const r = await call("POST", "/submissions", token, { roomId: rvId, roomQuestionId: rqId, language: "python", mode, code });
+      return waitFor(r.json.submissionId, token);
+    };
+    // Alice: Q1 wrong (0/4) → right (4/4) → broken again (0/4); a Run on Q2; Q2 submitted wrong (0/2).
+    await submitAs(alice, rq1, DIFFERENCE);
+    await submitAs(alice, rq1, SUM);
+    await submitAs(alice, rq1, PRODUCT);
+    await submitAs(alice, rq2, PRODUCT, "run");
+    await submitAs(alice, rq2, SUM);
+    // Bob: only Q2, correct (2/2).
+    await submitAs(bob, rq2, PRODUCT);
+
+    check("a candidate can't open the review → 403", (await call("GET", `/rooms/${rvId}/review`, alice)).status === 403);
+    check("an outsider can't open the review → 403", (await call("GET", `/rooms/${rvId}/review`, outsider)).status === 403);
+    const review = await call("GET", `/rooms/${rvId}/review`, interviewer);
+    check("the interviewer gets the review", review.status === 200);
+    const byName = (prefix: string) => review.json.candidates.find((c: any) => c.name.startsWith(prefix));
+    const a = byName("rv-alice");
+    const b = byName("rv-bob");
+    const q = (c: any, id: string) => c.questions.find((x: any) => x.roomQuestionId === id);
+    check(
+      "test score uses the best Submit (4/4), not the last (0/4); Run isn't counted",
+      q(a, rq1).best?.passed === 4 && q(a, rq1).best?.total === 4 && q(a, rq2).best?.passed === 0,
+      `(Q1 ${q(a, rq1).best?.passed}/${q(a, rq1).best?.total}, Q2 ${q(a, rq2).best?.passed}/${q(a, rq2).best?.total})`,
+    );
+    check(
+      "hidden tests count: Q1's best Submit is judged on all 4 tests (2 hidden)",
+      a.submissions.find((s: any) => s.submissionId === q(a, rq1).best?.submissionId)?.hiddenTotal === 2,
+    );
+    check(
+      "weighted and normalized over revealed questions only: Alice 40, Bob 60 (Q3 not counted)",
+      a.score === 40 && b.score === 60 && q(a, rq3).counted === false,
+      `(Alice ${a.score}, Bob ${b.score})`,
+    );
+    check("each candidate has their own timeline", a.submissions.length === 5 && b.submissions.length === 1);
+    const rq3View = review.json.questions.find((x: any) => x.id === rq3);
+    check(
+      "time per question for revealed questions only",
+      review.json.questions.find((x: any) => x.id === rq1).timeSpentMs >= 0 && rq3View.timeSpentMs === undefined && rq3View.points === 50,
+    );
+  }
+
   // --- After the session ends --------------------------------------------------------------------
   await call("POST", `/rooms/${roomId}/close`, interviewer);
   check("revealing in an ended room → 400", (await reveal(interviewer, roomId, rq3)).status === 400);

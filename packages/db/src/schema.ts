@@ -138,6 +138,8 @@ export const roomQuestions = pgTable(
     questionVersionId: uuid("question_version_id")
       .notNull()
       .references(() => questionVersions.id, { onDelete: "restrict" }),
+    /** Weight in the test score (ADR 0011). Relative: the score is normalized over revealed questions. */
+    points: integer("points").notNull().default(1),
     revealedAt: timestamp("revealed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -146,6 +148,7 @@ export const roomQuestions = pgTable(
     // Target of submissions' composite FK: a submission's room + version must match its room question.
     uniqueIndex("room_questions_identity").on(t.id, t.roomId, t.questionVersionId),
     check("room_questions_position_positive", sql`${t.position} >= 1`),
+    check("room_questions_points_range", sql`${t.points} BETWEEN 1 AND 100`),
   ],
 ).enableRLS();
 

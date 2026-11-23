@@ -1,0 +1,2 @@
+ALTER TABLE "room_questions" ADD COLUMN "points" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE "room_questions" ADD CONSTRAINT "room_questions_points_range" CHECK ("room_questions"."points" BETWEEN 1 AND 100);

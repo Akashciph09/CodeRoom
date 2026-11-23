@@ -6,6 +6,7 @@ import { HomePage } from "./pages/HomePage";
 import { JoinPage } from "./pages/JoinPage";
 import { QuestionEditorPage } from "./pages/QuestionEditorPage";
 import { QuestionsPage } from "./pages/QuestionsPage";
+import { ReviewPage } from "./pages/ReviewPage";
 
 // Monaco + Yjs are most of the bundle; only load them when a room is opened.
 const RoomPage = lazy(() => import("./pages/RoomPage").then((m) => ({ default: m.RoomPage })));
@@ -41,6 +42,7 @@ export function App() {
               </RequireAuth>
             }
           />
+          <Route path="/rooms/:roomId/review" element={<RequireAuth><ReviewPage /></RequireAuth>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

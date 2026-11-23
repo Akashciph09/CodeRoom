@@ -10,6 +10,9 @@ export function HomePage() {
   const [rooms, setRooms] = useState<RoomSummary[] | null>(null);
   /** The interview's questions, in order. */
   const [selected, setSelected] = useState<string[]>([]);
+  /** Optional weights for the test score (ADR 0011); off = equal weights. */
+  const [weighted, setWeighted] = useState(false);
+  const [points, setPoints] = useState<Record<string, number>>({});
   const [toAdd, setToAdd] = useState("");
   const [invite, setInvite] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +34,7 @@ export function HomePage() {
     e.preventDefault();
     setBusy(true);
     try {
-      const { roomId } = await api.createRoom(selected);
+      const { roomId } = await api.createRoom(selected, weighted ? selected.map((id) => pointsOf(id)) : undefined);
       navigate(`/rooms/${roomId}`);
     } catch (err) {
       fail(err);
@@ -43,6 +46,15 @@ export function HomePage() {
   const available = questions.filter((q) => !selected.includes(q.id));
   const addId = available.some((q) => q.id === toAdd) ? toAdd : (available[0]?.id ?? "");
   const label = (q: QuestionSummary) => `${q.title} · v${q.version}${q.owned ? " (yours)" : " (library)"}`;
+
+  /** Equal split of 100 by default (e.g. 33/33/34), until the interviewer edits a value. */
+  const equalShare = (id: string) => {
+    const i = selected.indexOf(id);
+    const base = Math.floor(100 / Math.max(selected.length, 1));
+    return i === selected.length - 1 ? 100 - base * (selected.length - 1) : base;
+  };
+  const pointsOf = (id: string) => points[id] ?? equalShare(id);
+  const pointsTotal = selected.reduce((sum, id) => sum + pointsOf(id), 0);
 
   function move(index: number, by: -1 | 1) {
     setSelected((list) => {
@@ -82,6 +94,19 @@ export function HomePage() {
                     <li key={id}>
                       <span className="badge question-badge">Q{i + 1}</span>
                       <span className="picked-title">{q ? label(q) : id}</span>
+                      {weighted && (
+                        <input
+                          type="number"
+                          className="points-input"
+                          aria-label={`Q${i + 1} points`}
+                          min={1}
+                          max={100}
+                          value={pointsOf(id)}
+                          onChange={(e) =>
+                            setPoints((p) => ({ ...p, [id]: Math.min(100, Math.max(1, Math.round(Number(e.target.value) || 1))) }))
+                          }
+                        />
+                      )}
                       <button type="button" className="ghost small-btn" aria-label={`Move Q${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}>
                         ↑
                       </button>
@@ -121,6 +146,13 @@ export function HomePage() {
                   </button>
                 </div>
               )}
+              <label className="inline small">
+                <input type="checkbox" checked={weighted} onChange={(e) => setWeighted(e.target.checked)} />
+                Set points per question for the test score
+                {weighted
+                  ? ` (total ${pointsTotal}; scores are scaled to 100)`
+                  : " (otherwise every question counts equally)"}
+              </label>
             </div>
             <button className="primary" disabled={busy || selected.length === 0}>
               Create room
@@ -152,6 +184,11 @@ export function HomePage() {
                   <span className={`badge ${r.role}`}>{r.role}</span>
                   <span className={`badge ${r.status}`}>{r.status}</span>
                   <span className="muted">{new Date(r.createdAt).toLocaleString()}</span>
+                  {r.role === "interviewer" && (
+                    <Link to={`/rooms/${r.roomId}/review`} className="small">
+                      Review
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>

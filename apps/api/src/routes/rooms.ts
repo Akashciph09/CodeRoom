@@ -14,6 +14,7 @@ import {
 import { redis } from "../queue.js";
 import { latestPublished } from "../services/questions.js";
 import { revealQuestion, roomQuestionsFor } from "../services/roomQuestions.js";
+import { roomReview } from "../services/review.js";
 import { customResultsFor, resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
@@ -32,7 +33,7 @@ export const roomsRouter: Router = Router();
 roomsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const { questionIds } = CreateRoomRequest.parse(req.body);
+    const { questionIds, questionPoints } = CreateRoomRequest.parse(req.body);
     const userId = req.user!.userId;
 
     const allowed = await db
@@ -57,6 +58,7 @@ roomsRouter.post(
           roomId,
           position: i + 1,
           questionVersionId: v!.id,
+          points: questionPoints?.[i] ?? 1, // equal weights unless the interviewer set them
           revealedAt: i === 0 ? now : null,
         })),
       );
@@ -126,6 +128,19 @@ roomsRouter.get(
       serverTime: new Date().toISOString(),
     };
     res.json(view);
+  }),
+);
+
+/**
+ * Post-interview review (ADR 0011): per candidate, the test score with its breakdown, time per
+ * question and every run/submission with its code. Interviewer only (403 for candidates and outsiders).
+ */
+roomsRouter.get(
+  "/:id/review",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    res.json(await roomReview(roomId));
   }),
 );
 
