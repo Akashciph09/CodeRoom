@@ -15,6 +15,7 @@ export function HomePage() {
   const [points, setPoints] = useState<Record<string, number>>({});
   const [toAdd, setToAdd] = useState("");
   const [invite, setInvite] = useState("");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -63,6 +64,15 @@ export function HomePage() {
       return next;
     });
   }
+
+  // Search by question, or (on rooms you interview) by candidate name or email.
+  const needle = search.trim().toLowerCase();
+  const shownRooms = (rooms ?? []).filter(
+    (r) =>
+      !needle ||
+      r.questionTitle.toLowerCase().includes(needle) ||
+      (r.candidates ?? []).some((c) => c.name.toLowerCase().includes(needle) || c.email.toLowerCase().includes(needle)),
+  );
 
   function joinRoom(e: FormEvent) {
     e.preventDefault();
@@ -171,19 +181,53 @@ export function HomePage() {
         </div>
 
         <section className="card">
-          <h2>Your rooms</h2>
+          <div className="section-head">
+            <h2>Your rooms</h2>
+            {rooms && rooms.length > 0 && (
+              <input
+                type="search"
+                className="room-search"
+                aria-label="Search rooms"
+                placeholder="Search by candidate, email or question"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            )}
+          </div>
           {rooms === null ? (
             <p className="muted">Loading…</p>
           ) : rooms.length === 0 ? (
             <p className="muted">No rooms yet.</p>
+          ) : shownRooms.length === 0 ? (
+            <p className="muted">No rooms match “{search.trim()}”.</p>
           ) : (
-            <ul className="room-list">
-              {rooms.map((r) => (
+            <ul className="room-list" aria-label="Your rooms">
+              {shownRooms.map((r) => (
                 <li key={r.roomId}>
-                  <Link to={`/rooms/${r.roomId}`}>{r.questionTitle}</Link>
+                  <div className="room-main">
+                    <Link to={`/rooms/${r.roomId}`}>{r.questionTitle}</Link>
+                    {r.candidates && (
+                      <div className="room-candidates small">
+                        {r.candidates.length === 0 ? (
+                          <span className="muted">No candidate joined</span>
+                        ) : (
+                          r.candidates.map((c) => (
+                            <span key={c.email} className="room-candidate">
+                              {c.name} <span className="muted">· {c.email}</span>
+                            </span>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <span className={`badge ${r.role}`}>{r.role}</span>
                   <span className={`badge ${r.status}`}>{r.status}</span>
-                  <span className="muted">{new Date(r.createdAt).toLocaleString()}</span>
+                  <span className="muted small">{new Date(r.createdAt).toLocaleString()}</span>
+                  {r.candidates && r.candidates.length > 0 && (
+                    <span className="room-score small" aria-label="Test score">
+                      {r.candidates.map((c) => (c.hasSubmit ? `Score ${c.score}/100` : "No Submit yet")).join(" · ")}
+                    </span>
+                  )}
                   {r.role === "interviewer" && (
                     <Link to={`/rooms/${r.roomId}/review`} className="small">
                       Review

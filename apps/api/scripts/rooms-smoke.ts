@@ -338,6 +338,34 @@ async function main() {
       `(Alice ${a.score}, Bob ${b.score})`,
     );
     check("the review shows the room's one candidate and their whole timeline", review.json.candidates.length === 1 && a.submissions.length === 5 && b.submissions.length === 1);
+    // --- Room list (ADR 0013): interviewer rows carry candidate name, email and the same score ---------
+    const ivList = (await call("GET", "/rooms", interviewer)).json as any[];
+    const aliceRow = ivList.find((r) => r.roomId === rvId);
+    check(
+      "interviewer's room list shows the candidate's name, email and the review's score",
+      aliceRow?.candidates?.length === 1 &&
+        aliceRow.candidates[0].name.startsWith("rv-alice") &&
+        /^rv-alice-.*@example\.test$/.test(aliceRow.candidates[0].email) &&
+        aliceRow.candidates[0].score === a.score &&
+        aliceRow.candidates[0].hasSubmit === true,
+      `(${JSON.stringify(aliceRow?.candidates)} vs review ${a.score})`,
+    );
+    const bobRow = ivList.find((r) => r.roomId === rvBob.json.roomId);
+    check("…and agrees with the review for every room (Bob 60)", bobRow?.candidates?.[0]?.score === b.score && b.score === 60);
+    const empty = await create(interviewer, [QUESTION_ID]);
+    const emptyRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === empty.json.roomId);
+    check("a room nobody joined lists no candidates", Array.isArray(emptyRow?.candidates) && emptyRow.candidates.length === 0);
+    const aliceList = await call("GET", "/rooms", alice);
+    const aliceJson = JSON.stringify(aliceList.json);
+    check(
+      "a candidate's own room list carries no candidate details (no names, emails or scores)",
+      aliceList.status === 200 &&
+        (aliceList.json as any[]).some((r) => r.roomId === rvId) &&
+        (aliceList.json as any[]).every((r) => r.candidates === undefined) &&
+        !aliceJson.includes("@example.test") &&
+        !aliceJson.includes("score"),
+    );
+
     const rq3View = review.json.questions.find((x: any) => x.id === rq3);
     check(
       "reveal windows for revealed questions only",
@@ -362,6 +390,11 @@ async function main() {
       (await call("GET", `/rooms/${soloId}`, second)).status === 403 &&
         (await call("POST", "/submissions", second, { roomId: soloId, roomQuestionId: soloQ, language: "python", mode: "run", code: "print(1)" })).status === 403 &&
         (await call("GET", `/rooms/${soloId}/review`, second)).status === 403,
+    );
+    const soloRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === soloId);
+    check(
+      "a candidate who hasn't submitted is listed with 'no Submit yet' (score 0, hasSubmit false)",
+      soloRow?.candidates?.length === 1 && soloRow.candidates[0].hasSubmit === false && soloRow.candidates[0].score === 0,
     );
     // The interviewer opening their own link is sent to the room as interviewer; the seat isn't touched.
     const own = await create(interviewer, [QUESTION_ID]);

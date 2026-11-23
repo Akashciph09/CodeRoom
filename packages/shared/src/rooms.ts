@@ -48,12 +48,25 @@ export const QuestionSummary = z.object({
 });
 export type QuestionSummary = z.infer<typeof QuestionSummary>;
 
+/** A room's candidate as listed for its interviewer (never sent to candidates). */
+export const RoomCandidateSummary = z.object({
+  name: z.string(),
+  email: z.string(),
+  /** Test score out of 100 (ADR 0011) — same rules as the review page. */
+  score: z.number(),
+  /** False until a Submit has been graded: the score is 0 because nothing was submitted, not because it failed. */
+  hasSubmit: z.boolean(),
+});
+export type RoomCandidateSummary = z.infer<typeof RoomCandidateSummary>;
+
 export const RoomSummary = z.object({
   roomId: z.string().uuid(),
   role: Role,
   status: z.enum(["open", "closed"]),
   questionTitle: z.string(),
   createdAt: z.string(),
+  /** Interviewer rows only (ADR 0013). Absent on rooms where the caller is the candidate. */
+  candidates: z.array(RoomCandidateSummary).optional(),
 });
 export type RoomSummary = z.infer<typeof RoomSummary>;
 

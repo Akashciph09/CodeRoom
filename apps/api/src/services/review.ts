@@ -11,10 +11,83 @@ import {
   submissions,
   testResults,
 } from "@coderoom/db";
-import type { RoomReview } from "@coderoom/shared";
+import type { RoomCandidateSummary, RoomReview } from "@coderoom/shared";
 import { db } from "../db.js";
 import { NotFound } from "../errors.js";
 import { revealWindows, scoreCandidate } from "./scoring.js";
+
+/** Candidates of these rooms with display name and email (Supabase keeps the name in user metadata). */
+async function candidatesOf(roomIds: string[]) {
+  if (roomIds.length === 0) return [];
+  return db
+    .select({
+      roomId: roomParticipants.roomId,
+      userId: roomParticipants.userId,
+      name: sql<string>`coalesce(nullif(trim(u.raw_user_meta_data->>'name'), ''), split_part(u.email, '@', 1), 'Candidate')`,
+      email: sql<string>`coalesce(u.email, '')`,
+    })
+    .from(roomParticipants)
+    .innerJoin(sql`auth.users u`, sql`u.id = ${roomParticipants.userId}`)
+    .where(and(inArray(roomParticipants.roomId, roomIds), eq(roomParticipants.role, "candidate")))
+    .orderBy(asc(roomParticipants.joinedAt));
+}
+
+/** Per-submission test counts (hidden included — interviewer-only callers). */
+async function passCounts(submissionIds: string[]) {
+  if (submissionIds.length === 0) return new Map<string, { passed: number; total: number; hiddenPassed: number; hiddenTotal: number }>();
+  const rows = await db
+    .select({
+      submissionId: testResults.submissionId,
+      passed: sql<number>`count(*) filter (where ${testResults.verdict} = 'accepted')::int`,
+      total: sql<number>`count(*)::int`,
+      hiddenPassed: sql<number>`count(*) filter (where ${testResults.isHidden} and ${testResults.verdict} = 'accepted')::int`,
+      hiddenTotal: sql<number>`count(*) filter (where ${testResults.isHidden})::int`,
+    })
+    .from(testResults)
+    .where(inArray(testResults.submissionId, submissionIds))
+    .groupBy(testResults.submissionId);
+  return new Map(rows.map((r) => [r.submissionId, r]));
+}
+
+/**
+ * For the interviewer's room list: each room's candidates with name, email and test score — computed by
+ * the same `scoreCandidate` as the review page, so the two always agree. Batched for all rooms at once.
+ * Interviewer rooms only: the caller must pass only rooms where the user is the interviewer.
+ */
+export async function candidateSummaries(roomIds: string[]): Promise<Map<string, RoomCandidateSummary[]>> {
+  const out = new Map<string, RoomCandidateSummary[]>(roomIds.map((id) => [id, []]));
+  if (roomIds.length === 0) return out;
+  const [qs, people, subs] = await Promise.all([
+    db
+      .select({ roomId: roomQuestions.roomId, id: roomQuestions.id, points: roomQuestions.points, revealedAt: roomQuestions.revealedAt })
+      .from(roomQuestions)
+      .where(inArray(roomQuestions.roomId, roomIds)),
+    candidatesOf(roomIds),
+    // Only completed Submits can score (scoreCandidate ignores the rest anyway).
+    db
+      .select({
+        id: submissions.id,
+        roomId: submissions.roomId,
+        userId: submissions.userId,
+        roomQuestionId: submissions.roomQuestionId,
+        mode: submissions.mode,
+        status: submissions.status,
+        createdAt: submissions.createdAt,
+      })
+      .from(submissions)
+      .where(and(inArray(submissions.roomId, roomIds), eq(submissions.mode, "submit"), eq(submissions.status, "completed"))),
+  ]);
+  const counts = await passCounts(subs.map((s) => s.id));
+  for (const person of people) {
+    const mine = subs.filter((s) => s.roomId === person.roomId && s.userId === person.userId);
+    const { score } = scoreCandidate(
+      qs.filter((q) => q.roomId === person.roomId).map((q) => ({ id: q.id, points: q.points, revealed: q.revealedAt !== null })),
+      mine.map((s) => ({ ...s, passed: counts.get(s.id)?.passed ?? 0, total: counts.get(s.id)?.total ?? 0 })),
+    );
+    out.get(person.roomId)!.push({ name: person.name, email: person.email, score, hasSubmit: mine.length > 0 });
+  }
+  return out;
+}
 
 /**
  * Everything the interviewer needs to evaluate a room afterwards (ADR 0011), built from stored data:
@@ -45,16 +118,7 @@ export async function roomReview(roomId: string): Promise<RoomReview> {
     .orderBy(asc(roomQuestions.position));
   const windows = revealWindows(qs, room.closedAt ?? now);
 
-  // Candidates with their display name (Supabase keeps it in user metadata; fall back to the email's name).
-  const candidates = await db
-    .select({
-      userId: roomParticipants.userId,
-      name: sql<string>`coalesce(nullif(trim(u.raw_user_meta_data->>'name'), ''), split_part(u.email, '@', 1), 'Candidate')`,
-    })
-    .from(roomParticipants)
-    .innerJoin(sql`auth.users u`, sql`u.id = ${roomParticipants.userId}`)
-    .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.role, "candidate")))
-    .orderBy(asc(roomParticipants.joinedAt));
+  const candidates = await candidatesOf([roomId]);
 
   const subs = await db
     .select()
@@ -62,26 +126,7 @@ export async function roomReview(roomId: string): Promise<RoomReview> {
     .where(eq(submissions.roomId, roomId))
     .orderBy(asc(submissions.createdAt));
 
-  // Per-submission test counts (hidden included — the interviewer sees everything).
-  const counts = subs.length
-    ? await db
-        .select({
-          submissionId: testResults.submissionId,
-          passed: sql<number>`count(*) filter (where ${testResults.verdict} = 'accepted')::int`,
-          total: sql<number>`count(*)::int`,
-          hiddenPassed: sql<number>`count(*) filter (where ${testResults.isHidden} and ${testResults.verdict} = 'accepted')::int`,
-          hiddenTotal: sql<number>`count(*) filter (where ${testResults.isHidden})::int`,
-        })
-        .from(testResults)
-        .where(
-          inArray(
-            testResults.submissionId,
-            subs.map((s) => s.id),
-          ),
-        )
-        .groupBy(testResults.submissionId)
-    : [];
-  const countOf = new Map(counts.map((c) => [c.submissionId, c]));
+  const countOf = await passCounts(subs.map((s) => s.id));
 
   return {
     roomId,

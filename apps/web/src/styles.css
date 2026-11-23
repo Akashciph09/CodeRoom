@@ -107,7 +107,10 @@ label input, label select { color: var(--text); font-size: 14px; }
 .home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
 .room-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
 .room-list li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
-.room-list li a { flex: 1; }
+.room-list li .room-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.room-candidates { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--text); }
+.room-score { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.room-search { width: min(320px, 100%); }
 .picked { display: flex; flex-direction: column; gap: 8px; }
 .picked-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .picked-list li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
