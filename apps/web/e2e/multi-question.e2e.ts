@@ -103,6 +103,11 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expect(questionPanel(iv).getByRole("heading", { name: "Subtract two numbers" })).toBeVisible();
       await expect(iv.getByRole("status").filter({ hasText: "can't see this question yet" })).toContainText("Reveal Q2 first.");
       await expect(iv.getByRole("button", { name: "Reveal to candidate" })).toHaveCount(0);
+      // No custom cases on a question the candidate can't see: the shared doc would leak them early.
+      const ivTests = iv.getByRole("region", { name: "Tests" });
+      await ivTests.getByRole("tab", { name: "Testcase" }).click();
+      await expect(ivTests.getByRole("button", { name: "Case 1" })).toBeVisible();
+      await expect(ivTests.getByRole("button", { name: "Add a custom test case" })).toHaveCount(0);
     });
 
     await test.step("revealing Q2 takes the candidate to it, with its own starter code", async () => {

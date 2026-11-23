@@ -116,6 +116,8 @@ export const rooms = pgTable("rooms", {
   /** Shared with the candidate out-of-band; joining with it grants the candidate role. */
   inviteCode: text("invite_code").notNull().unique(),
   status: roomStatusEnum("status").notNull().default("open"),
+  /** When the interviewer ended the session (the interview timer stops here). */
+  closedAt: timestamp("closed_at", { withTimezone: true }),
   ...timestamps,
 }).enableRLS();
 
@@ -188,6 +190,11 @@ export const submissions = pgTable(
      * submission are created atomically; the unique constraint makes a retried request find the original.
      */
     idempotencyKey: text("idempotency_key"),
+    /**
+     * Participant-written cases sent with a Run (ADR 0010), stored so the run is reproducible. Never
+     * used for grading: `overall` comes from the question's tests only.
+     */
+    customCases: jsonb("custom_cases").$type<{ input: string; expectedOutput?: string }[]>(),
     ...timestamps,
   },
   (t) => [
@@ -230,6 +237,23 @@ export const testResults = pgTable(
   ],
 ).enableRLS();
 
+/** Results of a run's custom cases (ADR 0010). Kept apart from `test_results`, which only holds question tests. */
+export const customCaseResults = pgTable(
+  "custom_case_results",
+  {
+    submissionId: uuid("submission_id")
+      .notNull()
+      .references(() => submissions.id, { onDelete: "cascade" }),
+    /** Index into `submissions.custom_cases`. */
+    position: integer("position").notNull(),
+    verdict: verdictEnum("verdict").notNull(),
+    timeMs: integer("time_ms").notNull(),
+    stdout: text("stdout"),
+    stderr: text("stderr"),
+  },
+  (t) => [primaryKey({ columns: [t.submissionId, t.position] })],
+).enableRLS();
+
 const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
   dataType: () => "bytea",
   toDriver: (value) => Buffer.from(value),
@@ -256,3 +280,4 @@ export type RoomQuestion = typeof roomQuestions.$inferSelect;
 export type Submission = typeof submissions.$inferSelect;
 export type TestResultRow = typeof testResults.$inferSelect;
 export type NewTestResult = typeof testResults.$inferInsert;
+export type CustomCaseResultRow = typeof customCaseResults.$inferSelect;

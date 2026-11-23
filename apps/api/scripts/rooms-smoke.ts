@@ -232,6 +232,58 @@ async function main() {
   }
   check("concurrent close + reveal (8 rounds): the reveal either fully happens first or is refused", raceConsistent);
 
+  // --- Custom test cases (ADR 0010): run-only, separate results, visible to both, never graded -------
+  {
+    const ccRoom = await create(interviewer, [QUESTION_ID]);
+    const ccId = ccRoom.json.roomId as string;
+    const ccCandidate = await signUp("mq-cc-candidate");
+    await call("POST", "/rooms/join", ccCandidate, { inviteCode: ccRoom.json.inviteCode });
+    const [ccQ] = (await roomQuestionIds(ccId, interviewer)) as [string];
+    const runWith = (customCases: unknown, mode = "run", code = SUM, key?: string) =>
+      call("POST", "/submissions", ccCandidate, { roomId: ccId, roomQuestionId: ccQ, language: "python", mode, code, customCases }, undefined, key ? { "idempotency-key": key } : {});
+
+    const cases = [
+      { input: "2 3\n", expectedOutput: "5" }, // matches
+      { input: "-5 5\n" }, // no expected: just shows output
+      { input: "1 1\n", expectedOutput: "3" }, // deliberately wrong expectation
+    ];
+    const ran = await runWith(cases);
+    const done = await waitFor(ran.json.submissionId, ccCandidate);
+    check(
+      "custom cases run with Run: checked ones are judged, unchecked ones just show output",
+      done.customResults?.map((c: any) => `${c.verdict}:${(c.stdout ?? "").trim()}`).join() === "accepted:5,accepted:0,wrong_answer:2",
+      `(${JSON.stringify(done.customResults?.map((c: any) => c.verdict))})`,
+    );
+    check("…and never change the verdict (graded on the question's tests only)", done.overall === "accepted");
+    const ivView = await call("GET", `/submissions/${ran.json.submissionId}`, interviewer);
+    check(
+      "the interviewer sees the same custom cases and outputs",
+      ivView.json.customResults?.length === 3 && ivView.json.customResults[1].input === "-5 5\n",
+    );
+    const history = await call("GET", `/rooms/${ccId}/submissions`, ccCandidate);
+    check("history includes custom results", history.json[0]?.customResults?.length === 3);
+
+    check("custom cases with Submit → 400", (await runWith([{ input: "1 2\n" }], "submit")).status === 400);
+    check("more than 10 custom cases → 400", (await runWith(Array.from({ length: 11 }, () => ({ input: "1 1\n" })))).status === 400);
+    check("a custom case over 10 KB → 400", (await runWith([{ input: "1".repeat(10_001) }])).status === 400);
+    const ccKey = randomUUID();
+    await runWith([{ input: "1 2\n" }], "run", SUM, ccKey);
+    check("same idempotency key with different custom cases → 422", (await runWith([{ input: "9 9\n" }], "run", SUM, ccKey)).status === 422);
+
+    // --- Interview timer fields ---------------------------------------------------------------------
+    const open = (await call("GET", `/rooms/${ccId}`, interviewer)).json;
+    check(
+      "room view carries createdAt and the server's time, no closedAt while open",
+      Date.parse(open.createdAt) <= Date.parse(open.serverTime) && open.closedAt === undefined,
+    );
+    await call("POST", `/rooms/${ccId}/close`, interviewer);
+    const closed1 = (await call("GET", `/rooms/${ccId}`, interviewer)).json.closedAt;
+    await sleep(1100);
+    await call("POST", `/rooms/${ccId}/close`, interviewer);
+    const closed2 = (await call("GET", `/rooms/${ccId}`, interviewer)).json.closedAt;
+    check("ending the session sets closedAt once (closing again keeps it)", !!closed1 && closed1 === closed2);
+  }
+
   // --- After the session ends --------------------------------------------------------------------
   await call("POST", `/rooms/${roomId}/close`, interviewer);
   check("revealing in an ended room → 400", (await reveal(interviewer, roomId, rq3)).status === 400);

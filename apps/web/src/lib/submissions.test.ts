@@ -5,6 +5,7 @@ import { mergeHistory, questionOf, upsertEntry, type SubmissionEntry } from "./s
 const view = (id: string, status: CandidateSubmissionView["status"]): CandidateSubmissionView => ({
   submissionId: id,
   roomQuestionId: "rq-1",
+  customResults: [],
   status,
   mode: "run",
   publicResults: [],

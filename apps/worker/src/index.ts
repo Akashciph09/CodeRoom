@@ -1,11 +1,11 @@
 import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
-import { asc, createDb, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
+import { asc, createDb, customCaseResults, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
 import { EXECUTION_QUEUE, ExecutionJob, roomEventsChannel, type RoomBusEvent } from "@coderoom/shared";
 import { config } from "./config.js";
 import { startOutboxSweeper } from "./outbox.js";
 import { runInSandbox } from "./sandbox/runner.js";
-import { judge, overallVerdict } from "./sandbox/verdict.js";
+import { judge, judgeCustom, overallVerdict } from "./sandbox/verdict.js";
 
 const { db, close: closeDb } = createDb(config.DATABASE_URL, { max: config.WORKER_CONCURRENCY + 2 });
 const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -43,16 +43,19 @@ async function processJob(job: Job) {
 
   await db.update(submissions).set({ status: "running" }).where(eq(submissions.id, submissionId));
 
-  const results: NewTestResult[] = [];
-  for (const test of selected) {
-    const out = await runInSandbox({
+  const run = (stdin: string) =>
+    runInSandbox({
       language: submission.language,
       code: submission.code,
-      stdin: test.input,
+      stdin,
       timeoutMs: config.SANDBOX_TIMEOUT_MS,
       memoryMb: config.SANDBOX_MEMORY_MB,
       cpus: config.SANDBOX_CPUS,
     });
+
+  const results: NewTestResult[] = [];
+  for (const test of selected) {
+    const out = await run(test.input);
     results.push({
       submissionId,
       testCaseId: test.id,
@@ -65,12 +68,30 @@ async function processJob(job: Job) {
     });
   }
 
+  // Participant-written cases (Run only, ADR 0010): same sandbox, separate results, never in `overall`.
+  const customCases = submission.mode === "run" ? (submission.customCases ?? []) : [];
+  const customResults: (typeof customCaseResults.$inferInsert)[] = [];
+  for (const [position, c] of customCases.entries()) {
+    const out = await run(c.input);
+    customResults.push({
+      submissionId,
+      position,
+      verdict: judgeCustom(out, c.expectedOutput),
+      timeMs: out.timeMs,
+      stdout: out.stdout,
+      stderr: out.stderr,
+    });
+  }
+
   // One transaction: results + final status land together. Delete first so a BullMQ retry is idempotent.
   await db.transaction(async (tx) => {
     await tx.delete(testResults).where(eq(testResults.submissionId, submissionId));
+    await tx.delete(customCaseResults).where(eq(customCaseResults.submissionId, submissionId));
     await tx.insert(testResults).values(results);
+    if (customResults.length > 0) await tx.insert(customCaseResults).values(customResults);
     await tx
       .update(submissions)
+      // Graded on the question's tests only — custom cases never change the verdict.
       .set({ status: "completed", overall: overallVerdict(results.map((r) => r.verdict)) })
       .where(eq(submissions.id, submissionId));
   });

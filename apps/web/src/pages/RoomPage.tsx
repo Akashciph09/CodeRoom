@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Language, RoomView, ServerEvent, SubmissionMode } from "@coderoom/shared";
 import { CollaborativeEditor } from "../components/CollaborativeEditor";
+import { InterviewTimer } from "../components/InterviewTimer";
 import { Presence, RemoteCursorStyles } from "../components/Presence";
 import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
@@ -26,7 +27,9 @@ import {
   metaKey,
   nextToReveal,
   revealedQuestions,
+  parseSharedCases,
   starterFor,
+  type SharedCase,
 } from "../lib/roomQuestions";
 
 export function RoomPage() {
@@ -47,6 +50,8 @@ export function RoomPage() {
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
+  /** Shared custom cases of the question being viewed (ADR 0010). */
+  const [customCases, setCustomCases] = useState<SharedCase[]>([]);
   const layout = useRoomLayout();
 
   // Room metadata. Re-fetched on every events (re)connect and on `room:question_revealed` — see below.
@@ -135,6 +140,16 @@ export function RoomPage() {
     return () => roomDoc.meta.unobserve(sync);
   }, [roomDoc, activePosition]);
 
+  // The viewed question's shared custom cases (both participants add/remove them; synced through the doc).
+  useEffect(() => {
+    if (!roomDoc) return;
+    const cases = roomDoc.casesFor(activePosition);
+    const sync = () => setCustomCases(parseSharedCases(cases.toArray()));
+    sync();
+    cases.observe(sync);
+    return () => cases.unobserve(sync);
+  }, [roomDoc, activePosition]);
+
   // Live room events
   useEffect(() => {
     if (!room) return;
@@ -213,12 +228,22 @@ export function RoomPage() {
   const submit = useCallback(
     async (mode: SubmissionMode) => {
       if (!roomDoc || !active) return;
+      // Run also tries the shared custom cases; Submit is graded on the question's tests only (ADR 0010).
+      const cases = mode === "run" ? parseSharedCases(roomDoc.casesFor(active.position).toArray()) : [];
       const body = {
         roomId,
         roomQuestionId: active.id,
         language,
         mode,
         code: roomDoc.textFor(active.position).toString(),
+        ...(cases.length > 0
+          ? {
+              customCases: cases.map((c) => ({
+                input: c.input,
+                ...(c.expectedOutput !== undefined ? { expectedOutput: c.expectedOutput } : {}),
+              })),
+            }
+          : {}),
       };
       const fingerprint = JSON.stringify(body);
       if (pendingAttempt.current?.fingerprint !== fingerprint) {
@@ -298,6 +323,9 @@ export function RoomPage() {
       {roomDoc && <RemoteCursorStyles awareness={roomDoc.provider.awareness} />}
       <TopBar>
         <span className={`badge ${room.role}`}>{room.role}</span>
+        {room.role === "interviewer" && (
+          <InterviewTimer createdAt={room.createdAt} closedAt={room.closedAt} serverTime={room.serverTime} ended={closed} />
+        )}
         <span className={`status-dot ${live ? "on" : "off"}`} title={`editor: ${docStatus}, events: ${eventStatus}`} />
         <span className="muted small">{live ? "live" : "reconnecting…"}</span>
         {roomDoc && <Presence awareness={roomDoc.provider.awareness} />}
@@ -401,7 +429,27 @@ export function RoomPage() {
           </section>
         }
         tests={
-          <TestPanel question={active.question} roomQuestion={multi ? active : undefined} entries={entries} ended={closed} />
+          <TestPanel
+            question={active.question}
+            roomQuestion={multi ? active : undefined}
+            entries={entries}
+            ended={closed}
+            customCases={customCases}
+            // Never for unrevealed questions: anything in the shared doc is readable by the candidate's client.
+            canEditCases={!!roomDoc && !closed && active.revealed}
+            onAddCase={(c) => {
+              const id = crypto.randomUUID();
+              const addedBy = { name: session ? displayName(session) : "Someone", role: room.role };
+              roomDoc?.casesFor(active.position).push([{ id, ...c, addedBy }]);
+              return id;
+            }}
+            onRemoveCase={(id) => {
+              const cases = roomDoc?.casesFor(active.position);
+              if (!cases) return;
+              const index = cases.toArray().findIndex((c) => (c as { id?: unknown })?.id === id);
+              if (index >= 0) cases.delete(index, 1);
+            }}
+          />
         }
       />
     </div>

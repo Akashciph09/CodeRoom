@@ -155,6 +155,11 @@ label input, label select { color: var(--text); font-size: 14px; }
 .case-tab { background: transparent; border-color: transparent; color: var(--muted); padding: 6px 14px; }
 .case-tab.active { background: var(--panel-2); border-color: var(--border); color: var(--text); font-weight: 600; }
 .case-io { display: flex; flex-direction: column; gap: 6px; }
+.case-icon { color: var(--accent); }
+.case-add { font-size: 16px; padding: 4px 12px; color: var(--muted); }
+.case-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+textarea.case-box { resize: vertical; }
+.custom-head { margin: 8px 0 2px; }
 .case-label { color: var(--muted); font-size: 12px; margin-top: 4px; }
 .case-box { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
 .results-panel h2 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 0; }
@@ -202,6 +207,9 @@ body.resizing-row { cursor: row-resize; user-select: none; }
   display: inline-flex; align-items: center; justify-content: center;
   color: #fff; font-size: 12px; font-weight: 600; border: 2px solid var(--panel);
 }
+.topbar button { white-space: nowrap; }
+.timer { white-space: nowrap; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 13px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel-2); }
+.timer.stopped { color: var(--muted); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-dot.on { background: var(--ok); }
 .status-dot.off { background: var(--warn); }

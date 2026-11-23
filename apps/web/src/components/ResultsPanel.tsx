@@ -103,6 +103,45 @@ function SubmissionCard({ entry }: { entry: SubmissionEntry }) {
         </tbody>
       </table>
 
+      {v.customResults.length > 0 && (
+        <>
+          <div className="custom-head muted small">
+            Custom cases · not graded
+            {(() => {
+              const checked = v.customResults.filter((c) => c.expectedOutput !== undefined);
+              return checked.length > 0
+                ? ` · ${checked.filter((c) => c.verdict === "accepted").length}/${checked.length} matched`
+                : "";
+            })()}
+          </div>
+          <table className="tests custom-results">
+            <tbody>
+              {v.customResults.map((c) => (
+                <tr key={c.position}>
+                  <td>Custom {c.position + 1}</td>
+                  <td>
+                    {c.expectedOutput === undefined && c.verdict === "accepted" ? (
+                      <span className="verdict">Ran</span>
+                    ) : (
+                      <VerdictBadge verdict={c.verdict} />
+                    )}
+                  </td>
+                  <td className="muted">{c.timeMs} ms</td>
+                  <td className="output">
+                    <pre aria-label={`Custom ${c.position + 1} output`}>
+                      {c.stderr?.trim() ? c.stderr.trim().slice(-400) : (c.stdout ?? "").trim().slice(0, 400)}
+                    </pre>
+                    {c.expectedOutput !== undefined && c.verdict === "wrong_answer" && (
+                      <pre className="muted">expected: {c.expectedOutput.trim().slice(0, 200)}</pre>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
       {isInterviewerView(v) && (
         <>
           <button className="link" onClick={() => setShowCode((s) => !s)}>

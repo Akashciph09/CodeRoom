@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunOutput } from "./runner.js";
-import { judge, overallVerdict } from "./verdict.js";
+import { judge, judgeCustom, overallVerdict } from "./verdict.js";
 
 const run = (over: Partial<RunOutput>): RunOutput => ({
   stdout: "",
@@ -36,5 +36,18 @@ describe("overallVerdict", () => {
   });
   it("accepted when all pass", () => {
     expect(overallVerdict(["accepted", "accepted"])).toBe("accepted");
+  });
+});
+
+describe("judgeCustom", () => {
+  it("compares like a test when an expected output is given", () => {
+    expect(judgeCustom(run({ stdout: "6\n" }), "6")).toBe("accepted");
+    expect(judgeCustom(run({ stdout: "5" }), "6")).toBe("wrong_answer");
+  });
+  it("without an expected output only reports whether the code ran cleanly", () => {
+    expect(judgeCustom(run({ stdout: "anything" }), undefined)).toBe("accepted");
+    expect(judgeCustom(run({ exitCode: 1 }), undefined)).toBe("runtime_error");
+    expect(judgeCustom(run({ timedOut: true }), undefined)).toBe("time_limit_exceeded");
+    expect(judgeCustom(run({ oomKilled: true }), undefined)).toBe("memory_limit_exceeded");
   });
 });

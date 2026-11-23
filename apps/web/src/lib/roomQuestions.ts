@@ -9,6 +9,34 @@ import type { CandidateQuestionView, Language, RoomQuestionView, RoomView } from
 /** Name of the Y.Text holding question `position`'s code. */
 export const codeKey = (position: number) => (position === 1 ? "code" : `code:${position}`);
 
+/** Name of the Y.Array holding question `position`'s shared custom test cases (ADR 0010). */
+export const casesKey = (position: number) => `cases:${position}`;
+
+/** A custom test case as stored in the shared doc. */
+export interface SharedCase {
+  id: string;
+  input: string;
+  expectedOutput?: string;
+  addedBy: { name: string; role: "interviewer" | "candidate" };
+}
+
+/**
+ * Doc contents are written by the other participant's client, so read them defensively: anything that
+ * isn't a well-formed case is skipped (and everything is rendered as text, never HTML).
+ */
+export function parseSharedCases(items: unknown[]): SharedCase[] {
+  return items.flatMap((raw) => {
+    if (typeof raw !== "object" || raw === null) return [];
+    const c = raw as Record<string, unknown>;
+    const by = c.addedBy as Record<string, unknown> | undefined;
+    if (typeof c.id !== "string" || typeof c.input !== "string") return [];
+    if (c.expectedOutput !== undefined && typeof c.expectedOutput !== "string") return [];
+    const role = by?.role === "interviewer" ? "interviewer" : "candidate";
+    const name = typeof by?.name === "string" ? by.name.slice(0, 80) : "Someone";
+    return [{ id: c.id, input: c.input, ...(c.expectedOutput !== undefined ? { expectedOutput: c.expectedOutput } : {}), addedBy: { name, role } }];
+  });
+}
+
 /** Key of a per-question setting in the doc's "meta" map. */
 export const metaKey = (name: "language" | "initialized", position: number) =>
   position === 1 ? name : `${name}:${position}`;
