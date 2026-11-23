@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { RoomQuestionView, RoomView } from "@coderoom/shared";
-import { codeKey, initialLanguage, latestRevealed, mergeRoom, metaKey, nextToReveal, parseSharedCases } from "./roomQuestions";
+import {
+  addCaseRefusal,
+  casesToRun,
+  codeKey,
+  initialLanguage,
+  latestRevealed,
+  mergeRoom,
+  metaKey,
+  nextToReveal,
+  parseSharedCases,
+} from "./roomQuestions";
 
 const question = (title: string, starterCode: RoomQuestionView["question"]["starterCode"] = {}) => ({
   id: "00000000-0000-4000-8000-0000000000ff",
@@ -82,5 +92,18 @@ describe("room questions", () => {
       { id: "a", input: "1 2", addedBy: { name: "Iris", role: "interviewer" } },
       { id: "b", input: "3", expectedOutput: "3", addedBy: { name: "Someone", role: "candidate" } },
     ]);
+  });
+
+  it("runs the first N custom cases in shared order when concurrent adds overflow the limit", () => {
+    const merged = Array.from({ length: 11 }, (_, i) => `case-${i}`);
+    expect(casesToRun(merged, 10)).toEqual(merged.slice(0, 10));
+    expect(casesToRun(["a"], 10)).toEqual(["a"]);
+  });
+
+  it("re-checks at the moment of adding: the limit and whether editing is still allowed", () => {
+    expect(addCaseRefusal({ count: 9, max: 10, editable: true })).toBeNull();
+    expect(addCaseRefusal({ count: 10, max: 10, editable: true })).toMatch(/already has 10/);
+    expect(addCaseRefusal({ count: 11, max: 10, editable: true })).toMatch(/already has 10/);
+    expect(addCaseRefusal({ count: 0, max: 10, editable: false })).toMatch(/can't be changed/);
   });
 });

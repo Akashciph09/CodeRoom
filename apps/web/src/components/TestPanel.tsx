@@ -44,8 +44,8 @@ export function TestPanel({
   customCases: SharedCase[];
   /** Adding/removing is off once the room ended, and for questions the candidate can't see yet. */
   canEditCases: boolean;
-  /** Returns the new case's id. */
-  onAddCase: (c: { input: string; expectedOutput?: string }) => string;
+  /** Adds the case unless that's no longer allowed (checked at that moment): its id, or why it was refused. */
+  onAddCase: (c: { input: string; expectedOutput?: string }) => { id: string } | { refused: string };
   onRemoveCase: (id: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>(ended ? "result" : "cases");
@@ -65,6 +65,12 @@ export function TestPanel({
     setSelectedKey(null);
     setAdding(false);
   }, [question.versionId]);
+  // Editing just stopped (e.g. the session ended): close an open form, it can't add anything any more.
+  useEffect(() => {
+    if (!canEditCases) setAdding(false);
+  }, [canEditCases]);
+  const showForm = adding && canEditCases;
+  const overflow = Math.max(0, customCases.length - MAX_CUSTOM_CASES);
 
   /*
    * A run starting for this question (ours, or the candidate's for the interviewer) → show its result.
@@ -111,12 +117,15 @@ export function TestPanel({
         <div className="pane-body cases">
           <div className="case-tabs" role="group" aria-label="Cases">
             {items.map((item, i) => {
-              const selected = !adding && current?.key === item.key;
-              const label = item.kind === "example" ? `Case ${i + 1}` : `Custom ${i - exampleCount + 1}`;
+              const selected = !showForm && current?.key === item.key;
+              const customIndex = i - exampleCount;
+              const label = item.kind === "example" ? `Case ${i + 1}` : `Custom ${customIndex + 1}`;
+              const notRun = item.kind === "custom" && customIndex >= MAX_CUSTOM_CASES;
               return (
                 <button
                   key={item.key}
-                  className={`case-tab ${item.kind === "custom" ? "custom" : ""} ${selected ? "active" : ""}`}
+                  className={`case-tab ${item.kind === "custom" ? "custom" : ""} ${notRun ? "not-run" : ""} ${selected ? "active" : ""}`}
+                  title={notRun ? "Over the limit — not run until cases are removed" : undefined}
                   aria-pressed={selected}
                   onClick={() => {
                     setSelectedKey(item.key);
@@ -134,7 +143,7 @@ export function TestPanel({
             })}
             {canEditCases && (
               <button
-                className={`case-tab case-add ${adding ? "active" : ""}`}
+                className={`case-tab case-add ${showForm ? "active" : ""}`}
                 aria-label="Add a custom test case"
                 title={full ? `At most ${MAX_CUSTOM_CASES} custom cases` : "Add a test case for both of you to run"}
                 disabled={full}
@@ -145,13 +154,21 @@ export function TestPanel({
             )}
           </div>
 
-          {adding ? (
+          {overflow > 0 && (
+            <p className="warning small" role="status">
+              Only the first {MAX_CUSTOM_CASES} custom cases run (cases were added at the same time). Remove {overflow} to
+              include the rest.
+            </p>
+          )}
+          {showForm ? (
             <AddCaseForm
               onCancel={() => setAdding(false)}
               onAdd={(c) => {
-                const id = onAddCase(c);
+                const result = onAddCase(c);
+                if ("refused" in result) return result.refused; // shown in the form; nothing was written
                 setAdding(false);
-                setSelectedKey(`custom:${id}`);
+                setSelectedKey(`custom:${result.id}`);
+                return null;
               }}
             />
           ) : current ? (
@@ -202,17 +219,19 @@ function AddCaseForm({
   onAdd,
   onCancel,
 }: {
-  onAdd: (c: { input: string; expectedOutput?: string }) => void;
+  /** Returns why the case wasn't added, or null when it was. */
+  onAdd: (c: { input: string; expectedOutput?: string }) => string | null;
   onCancel: () => void;
 }) {
   const [input, setInput] = useState("");
   const [expected, setExpected] = useState("");
+  const [refused, setRefused] = useState<string | null>(null);
   const tooBig = utf8Length(input) > MAX_CUSTOM_CASE_BYTES || utf8Length(expected) > MAX_CUSTOM_CASE_BYTES;
 
   function submit(e: FormEvent) {
     e.preventDefault();
     if (tooBig) return;
-    onAdd({ input, ...(expected.trim() ? { expectedOutput: expected } : {}) });
+    setRefused(onAdd({ input, ...(expected.trim() ? { expectedOutput: expected } : {}) }));
   }
 
   return (
@@ -243,6 +262,11 @@ function AddCaseForm({
         placeholder="Leave empty to just see what the code prints"
       />
       {tooBig && <p className="error small">Each field is limited to {MAX_CUSTOM_CASE_BYTES / 1000} KB.</p>}
+      {refused && (
+        <p className="error small" role="alert">
+          {refused}
+        </p>
+      )}
       <div className="actions">
         <button type="submit" className="primary" disabled={tooBig}>
           Add case

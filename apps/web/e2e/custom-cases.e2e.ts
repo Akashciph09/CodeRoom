@@ -109,3 +109,77 @@ test("the interviewer sees how long the interview has run; it stops when the ses
     await close();
   }
 });
+
+/**
+ * Regression (PR #6 review): concurrent additions can push the shared list past the 10-case limit
+ * (the + check is per client). Run must keep working: it sends the first 10 in the shared list's
+ * order (identical on every client) and the extras are clearly marked as not run.
+ */
+test("competing additions past the limit don't break Run", async ({ browser }) => {
+  const { interviewer, candidate, close } = await startInterview(browser);
+  const iv = interviewer.page;
+  const cd = candidate.page;
+  try {
+    for (let i = 1; i <= 9; i++) await addCase(iv, `${i} ${i}`, String(2 * i));
+    await expect(caseButton(cd, "Custom 9")).toBeVisible();
+
+    // Both open "+" at 9 cases; the candidate is briefly disconnected, so neither sees the other's add.
+    await testsPane(cd).getByRole("button", { name: "Add a custom test case" }).click();
+    await testsPane(iv).getByRole("button", { name: "Add a custom test case" }).click();
+    await candidate.realtime.drop();
+    await iv.getByLabel("New case input").fill("100 100");
+    await iv.getByRole("button", { name: "Add case" }).click();
+    await cd.bringToFront();
+    await cd.getByLabel("New case input").fill("200 200");
+    await cd.getByRole("button", { name: "Add case" }).click();
+    candidate.realtime.restore();
+
+    // Both now hold 11 cases, in the same order, with the 11th marked as not run.
+    const eleventh: string[] = [];
+    for (const page of [iv, cd]) {
+      await expect(caseButton(page, "Custom 11")).toBeVisible({ timeout: 20_000 });
+      await expect(testsPane(page)).toContainText("Only the first 10 custom cases run");
+      await caseButton(page, "Custom 11").click();
+      eleventh.push((await testsPane(page).getByLabel("Case input").textContent())!);
+    }
+    expect(eleventh[0]).toBe(eleventh[1]); // same merged order on both sides
+
+    await replaceCode(cd, SUM);
+    await cd.getByRole("button", { name: "Run", exact: true }).click();
+    const card = results(cd).first();
+    await expect(card).toContainText("Accepted");
+    await expect(card.locator("table.custom-results tr")).toHaveCount(10); // exactly the first 10 ran
+    await expect(card).toContainText("9/9 matched"); // the 9 with expected outputs; the 10th just "Ran"
+    await expect(card.getByLabel("Custom 11 output")).toHaveCount(0);
+
+    // At the limit, adding is refused with an explanation rather than silently overflowing again.
+    await testsPane(cd).getByRole("tab", { name: "Testcase" }).click();
+    await expect(testsPane(cd).getByRole("button", { name: "Add a custom test case" })).toBeDisabled();
+  } finally {
+    await close();
+  }
+});
+
+/** Regression (PR #6 review): a form left open when the session ends must not add a case. */
+test("an add-case form open when the session ends can't add a case", async ({ browser }) => {
+  const { interviewer, candidate, close } = await startInterview(browser);
+  const iv = interviewer.page;
+  const cd = candidate.page;
+  try {
+    await cd.bringToFront();
+    await testsPane(cd).getByRole("button", { name: "Add a custom test case" }).click();
+    await cd.getByLabel("New case input").fill("1 2");
+
+    await iv.bringToFront();
+    iv.once("dialog", (d) => d.accept());
+    await iv.getByRole("button", { name: "End session" }).click();
+
+    await expect(cd.getByText("This interview has ended.")).toBeVisible();
+    await expect(cd.getByRole("button", { name: "Add case" })).toHaveCount(0); // form closed
+    await expect(cd.getByLabel("New case input")).toHaveCount(0);
+    await expect(caseButton(cd, "Custom 1")).toHaveCount(0);
+    await expect(caseButton(cd, "Case 1")).toBeVisible(); // the case list is on screen, so the absence counts
+  } finally {
+    await close();
+  }
+});

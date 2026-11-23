@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { Language, RoomView, ServerEvent, SubmissionMode } from "@coderoom/shared";
+import { MAX_CUSTOM_CASES, type Language, type RoomView, type ServerEvent, type SubmissionMode } from "@coderoom/shared";
 import { CollaborativeEditor } from "../components/CollaborativeEditor";
 import { InterviewTimer } from "../components/InterviewTimer";
 import { Presence, RemoteCursorStyles } from "../components/Presence";
@@ -27,6 +27,8 @@ import {
   metaKey,
   nextToReveal,
   revealedQuestions,
+  addCaseRefusal,
+  casesToRun,
   parseSharedCases,
   starterFor,
   type SharedCase,
@@ -229,7 +231,8 @@ export function RoomPage() {
     async (mode: SubmissionMode) => {
       if (!roomDoc || !active) return;
       // Run also tries the shared custom cases; Submit is graded on the question's tests only (ADR 0010).
-      const cases = mode === "run" ? parseSharedCases(roomDoc.casesFor(active.position).toArray()) : [];
+      const cases =
+        mode === "run" ? casesToRun(parseSharedCases(roomDoc.casesFor(active.position).toArray()), MAX_CUSTOM_CASES) : [];
       const body = {
         roomId,
         roomQuestionId: active.id,
@@ -438,12 +441,22 @@ export function RoomPage() {
             // Never for unrevealed questions: anything in the shared doc is readable by the candidate's client.
             canEditCases={!!roomDoc && !closed && active.revealed}
             onAddCase={(c) => {
+              // Re-check now, not when the form opened: the other participant may have added cases or
+              // ended the session since.
+              const cases = roomDoc?.casesFor(active.position);
+              const refused = addCaseRefusal({
+                count: cases?.length ?? 0,
+                max: MAX_CUSTOM_CASES,
+                editable: !!cases && room.status === "open" && active.revealed,
+              });
+              if (refused || !cases) return { refused: refused ?? "Not connected yet." };
               const id = crypto.randomUUID();
               const addedBy = { name: session ? displayName(session) : "Someone", role: room.role };
-              roomDoc?.casesFor(active.position).push([{ id, ...c, addedBy }]);
-              return id;
+              cases.push([{ id, ...c, addedBy }]);
+              return { id };
             }}
             onRemoveCase={(id) => {
+              if (room.status !== "open") return;
               const cases = roomDoc?.casesFor(active.position);
               if (!cases) return;
               const index = cases.toArray().findIndex((c) => (c as { id?: unknown })?.id === id);

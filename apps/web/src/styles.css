@@ -156,6 +156,8 @@ label input, label select { color: var(--text); font-size: 14px; }
 .case-tab.active { background: var(--panel-2); border-color: var(--border); color: var(--text); font-weight: 600; }
 .case-io { display: flex; flex-direction: column; gap: 6px; }
 .case-icon { color: var(--accent); }
+.case-tab.not-run { opacity: 0.55; text-decoration: line-through; }
+.warning { color: var(--warn); margin: 0; }
 .case-add { font-size: 16px; padding: 4px 12px; color: var(--muted); }
 .case-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 textarea.case-box { resize: vertical; }

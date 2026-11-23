@@ -37,6 +37,21 @@ export function parseSharedCases(items: unknown[]): SharedCase[] {
   });
 }
 
+/**
+ * The custom cases a Run sends: the first `max` in the shared list's order. Two participants can add
+ * at the same moment and push the list past the limit (each client checked its own count). Yjs gives
+ * every client the same merged order, so "the first N" is the same set everywhere and Run keeps
+ * working; the rest are shown as not run until someone removes cases.
+ */
+export const casesToRun = <T>(cases: T[], max: number): T[] => cases.slice(0, max);
+
+/** Why adding a custom case is refused right now (checked at the moment of adding, not when the form opened). */
+export function addCaseRefusal({ count, max, editable }: { count: number; max: number; editable: boolean }): string | null {
+  if (!editable) return "Custom cases can't be changed any more.";
+  if (count >= max) return `This question already has ${max} custom cases — remove one first.`;
+  return null;
+}
+
 /** Key of a per-question setting in the doc's "meta" map. */
 export const metaKey = (name: "language" | "initialized", position: number) =>
   position === 1 ? name : `${name}:${position}`;
