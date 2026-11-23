@@ -5,6 +5,7 @@ import { CollaborativeEditor } from "../components/CollaborativeEditor";
 import { Presence, RemoteCursorStyles } from "../components/Presence";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { ResultsPanel } from "../components/ResultsPanel";
+import { RoomColumns, useRoomLayout } from "../components/RoomLayout";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError, isRetryable, submitWithRetry } from "../lib/api";
 import { mergeHistory, upsertEntry, type SubmissionEntry } from "../lib/submissions";
@@ -47,6 +48,7 @@ export function RoomPage() {
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const layout = useRoomLayout();
 
   // Room metadata (history is loaded whenever the events socket (re)connects — see below)
   useEffect(() => {
@@ -222,6 +224,11 @@ export function RoomPage() {
             {copied ? "Copied!" : "Copy invite link"}
           </button>
         )}
+        {!layout.narrow && (
+          <button className="ghost" onClick={layout.reset} disabled={layout.isDefault} title="Restore the default panel sizes">
+            Reset layout
+          </button>
+        )}
         {room.role === "interviewer" && !closed && (
           <button className="danger" onClick={endSession}>
             End session
@@ -230,44 +237,46 @@ export function RoomPage() {
       </TopBar>
       {closed && <div className="banner">This interview has ended. The code is read-only.</div>}
 
-      <div className="room-layout">
-        <QuestionPanel question={room.question} />
-
-        <section className="editor-pane">
-          <div className="editor-toolbar">
-            <select value={language} onChange={(e) => changeLanguage(e.target.value as Language)} disabled={!roomDoc}>
-              <option value="python">Python</option>
-              <option value="javascript">JavaScript</option>
-            </select>
-            {notice && <span className="error small">{notice}</span>}
-            <div className="spacer" />
-            {isCandidate ? (
-              <>
-                <button onClick={() => submit("run")} disabled={submitting || !roomDoc || closed}>
-                  Run
-                </button>
-                <button className="primary" onClick={() => submit("submit")} disabled={submitting || !roomDoc || closed}>
-                  Submit
-                </button>
-              </>
+      <RoomColumns
+        layout={layout}
+        resultsKey={entries.map((e) => `${e.submissionId}:${e.pending ? "pending" : e.view.status}`).join(",")}
+        question={<QuestionPanel question={room.question} />}
+        results={<ResultsPanel entries={entries} />}
+        editor={
+          <section className="editor-pane">
+            <div className="editor-toolbar">
+              <select value={language} onChange={(e) => changeLanguage(e.target.value as Language)} disabled={!roomDoc}>
+                <option value="python">Python</option>
+                <option value="javascript">JavaScript</option>
+              </select>
+              {notice && <span className="error small">{notice}</span>}
+              <div className="spacer" />
+              {isCandidate ? (
+                <>
+                  <button onClick={() => submit("run")} disabled={submitting || !roomDoc || closed}>
+                    Run
+                  </button>
+                  <button className="primary" onClick={() => submit("submit")} disabled={submitting || !roomDoc || closed}>
+                    Submit
+                  </button>
+                </>
+              ) : (
+                <span className="muted small">Only the candidate can run code. You see every test, including hidden ones.</span>
+              )}
+            </div>
+            {roomDoc ? (
+              <CollaborativeEditor
+                text={roomDoc.text}
+                awareness={roomDoc.provider.awareness}
+                language={language}
+                readOnly={closed}
+              />
             ) : (
-              <span className="muted small">Only the candidate can run code. You see every test, including hidden ones.</span>
+              <div className="editor center muted">Connecting…</div>
             )}
-          </div>
-          {roomDoc ? (
-            <CollaborativeEditor
-              text={roomDoc.text}
-              awareness={roomDoc.provider.awareness}
-              language={language}
-              readOnly={closed}
-            />
-          ) : (
-            <div className="editor center muted">Connecting…</div>
-          )}
-        </section>
-
-        <ResultsPanel entries={entries} />
-      </div>
+          </section>
+        }
+      />
     </div>
   );
 }

@@ -18,7 +18,7 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 - **Collaborative editing that scales out.** Yjs (CRDT) over our own WebSocket gateway; interviewer and candidate can be connected to *different* API instances and stay in sync via Redis pub/sub. Concurrent edits converge; the document survives everyone leaving.
 - **Live, role-aware results.** When the worker finishes, every connected participant gets the submission pushed over WebSocket — candidates the redacted view, interviewers the full one.
 - **Interviewers author their own questions — with versioning.** Statement, constraints, per-language starter code, public and hidden tests (add, edit, reorder, hide, remove), draft → preview → "mark ready". Each ready version is immutable (enforced by database triggers) and every room pins the version it started with, so editing a question never changes a past or running interview ([ADR 0007](docs/decisions/0007-immutable-question-versions.md)).
-- **A real interview UI.** Invite links, a shared Monaco editor with named live cursors and presence, a synced language picker, Run/Submit for the candidate, and a results panel where the interviewer also sees hidden tests and the exact submitted code.
+- **A real interview UI.** Invite links, a shared Monaco editor with named live cursors and presence, a synced language picker, Run/Submit for the candidate, and a results panel where the interviewer also sees hidden tests and the exact submitted code. Panels are resizable (drag or keyboard, remembered per browser, never synced to the other participant) and become tabs on narrow screens ([ADR 0008](docs/decisions/0008-room-layout-own-splitter.md)).
 - **Every stack choice is documented** in [Architecture Decision Records](docs/decisions/README.md).
 
 ## Architecture
@@ -267,7 +267,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~30 s for all six tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~40 s for all ten tests):
 
 | Step | Checked |
 |---|---|
@@ -283,6 +283,10 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Interviewer ends the session | banner on both sides, Run/Submit disabled, typing changes nothing on either side |
 | Reload after the end | final code and history still shown |
 | Signed-out visit to a room | redirected to sign-in with the room kept in `next` |
+| Resize panels (mouse + keyboard) | minimums hold, Monaco follows its column, layout survives reload, Reset restores defaults, the other participant's layout is untouched |
+| Resize at 950 px with oversized saved sizes | Home, drag and double-click never move the other panel; reload shows the same layout |
+| Type while dragging a divider | every keystroke lands, still synced, editor never remounted |
+| Narrow screen | Question / Code / Results tabs, Results marks a new run, editor content and instance kept across modes |
 | **Authoring:** My questions → create → statement, constraints, starter code → add/hide/reorder/remove tests → "Mark ready" blocked without a public test → save, preview, mark ready v1 | preview shows public examples only and the starter code; status "Ready v1" |
 | Start an interview with it; candidate joins | sees the authored statement/constraints and starter code; correct solution "Accepted, hidden tests 1/1" |
 | Author changes an expected output and marks v2 ready | the running interview still shows v1's example and grades on v1 |
