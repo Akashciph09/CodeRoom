@@ -7,7 +7,7 @@ import {
   or,
   questions,
   questionVersions,
-  rooms,
+  roomQuestions,
   sql,
   testCases,
   type Db,
@@ -130,9 +130,9 @@ export async function questionDetail(questionId: string, conn: Db | Tx = db): Pr
       .where(and(eq(questionVersions.questionId, questionId), eq(questionVersions.status, "published")))
       .orderBy(desc(questionVersions.version)),
     conn
-      .select({ n: sql<number>`count(*)::int` })
-      .from(rooms)
-      .innerJoin(questionVersions, eq(questionVersions.id, rooms.questionVersionId))
+      .select({ n: sql<number>`count(DISTINCT ${roomQuestions.roomId})::int` })
+      .from(roomQuestions)
+      .innerJoin(questionVersions, eq(questionVersions.id, roomQuestions.questionVersionId))
       .where(eq(questionVersions.questionId, questionId)),
   ]);
   return {

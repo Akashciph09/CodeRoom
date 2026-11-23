@@ -20,6 +20,7 @@ export function toCandidateView(s: Submission, results: ResultRow[]): CandidateS
   const hidden = results.filter((r) => r.isHidden);
   return {
     submissionId: s.id,
+    roomQuestionId: s.roomQuestionId,
     status: s.status,
     mode: s.mode,
     ...(s.overall ? { overall: s.overall } : {}),
@@ -36,6 +37,7 @@ export function toCandidateView(s: Submission, results: ResultRow[]): CandidateS
 export function toInterviewerView(s: Submission, results: ResultRow[]): InterviewerSubmissionView {
   return {
     submissionId: s.id,
+    roomQuestionId: s.roomQuestionId,
     userId: s.userId,
     status: s.status,
     mode: s.mode,

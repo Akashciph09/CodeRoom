@@ -217,7 +217,7 @@ export function QuestionEditorPage() {
 
   const startInterview = () =>
     run(async () => {
-      const { roomId } = await api.createRoom(questionId);
+      const { roomId } = await api.createRoom([questionId]);
       navigate(`/rooms/${roomId}`);
     });
 

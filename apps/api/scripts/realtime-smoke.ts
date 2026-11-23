@@ -90,7 +90,7 @@ const percentile = (xs: number[], p: number) => {
 async function main() {
   const crossInstance = API_B !== API;
   console.log(`interviewer → ${API}, candidate → ${API_B}${crossInstance ? " (cross-instance)" : ""}\n`);
-  const { interviewer, candidate, outsider, roomId } = await setupRoom();
+  const { interviewer, candidate, outsider, roomId, roomQuestionId } = await setupRoom();
   const yjsA = `${wsUrl(API)}/yjs/${roomId}`;
 
   // --- Upgrade authorization -------------------------------------------------------------------
@@ -157,6 +157,7 @@ async function main() {
   await Promise.all([ivEvents.ready, cdEvents.ready]);
   const submit = await call("POST", "/submissions", candidate, {
     roomId,
+    roomQuestionId,
     language: "python",
     mode: "submit",
     code: "a,b=map(int,input().split());print(a+b)",
@@ -189,6 +190,7 @@ async function main() {
   check("edits on an open socket after close are dropped", !iv.text.toString().includes("AFTER-CLOSE"));
   const lateSubmit = await call("POST", "/submissions", candidate, {
     roomId,
+    roomQuestionId,
     language: "python",
     mode: "run",
     code: "print(1)",

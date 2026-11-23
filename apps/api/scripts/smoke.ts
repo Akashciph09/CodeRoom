@@ -4,7 +4,7 @@
  *   pnpm smoke
  */
 import { randomUUID } from "node:crypto";
-import { and, createDb, eq, rooms, submissions } from "@coderoom/db";
+import { and, createDb, eq, roomQuestions, submissions } from "@coderoom/db";
 import { call, check, finish, PUBLISHABLE_KEY, QUESTION_ID, setupRoom, signUp, SUPABASE_URL, userIdOf } from "./lib.js";
 
 async function waitFor(id: string, token: string, attempts = 80) {
@@ -22,7 +22,7 @@ async function main() {
   const outsider = await signUp("outsider");
 
   // Rooms
-  const created = await call("POST", "/rooms", interviewer, { questionId: QUESTION_ID });
+  const created = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID] });
   check("interviewer creates room", created.status === 201);
   const { roomId, inviteCode } = created.json;
 
@@ -32,16 +32,17 @@ async function main() {
   const room = await call("GET", `/rooms/${roomId}`, candidate);
   check(
     "room view shows only public tests",
-    room.status === 200 && room.json.question.publicTests.length === 2,
-    `(${room.json?.question?.publicTests?.length} public)`,
+    room.status === 200 && room.json.questions[0].question.publicTests.length === 2,
+    `(${room.json?.questions?.[0]?.question?.publicTests?.length} public)`,
   );
+  const roomQuestionId = room.json.questions[0].id as string;
 
   // Authorization
   check("no token → 401", (await call("POST", "/submissions", undefined, {})).status === 401);
   check("bad token → 401", (await call("GET", `/rooms/${roomId}`, "not-a-jwt")).status === 401);
   check("outsider reads room → 403", (await call("GET", `/rooms/${roomId}`, outsider)).status === 403);
   const ivSubmit = await call("POST", "/submissions", interviewer, {
-    roomId, language: "python", mode: "run", code: "print(1)",
+    roomId, roomQuestionId, language: "python", mode: "run", code: "print(1)",
   });
   check("interviewer submitting → 403", ivSubmit.status === 403);
   check(
@@ -65,7 +66,7 @@ async function main() {
   let firstSubmitId = "";
   for (const [name, language, mode, code, expected] of cases) {
     const t0 = Date.now();
-    const res = await call("POST", "/submissions", candidate, { roomId, language, mode, code });
+    const res = await call("POST", "/submissions", candidate, { roomId, roomQuestionId, language, mode, code });
     if (res.status !== 202) {
       check(name, false, `POST → ${res.status} ${JSON.stringify(res.json)}`);
       continue;
@@ -102,7 +103,7 @@ async function main() {
   // --- Idempotency (stored with the submission in Postgres) ------------------------------------
   // Fresh room + candidate: the first candidate has used its 10/min submit budget by now.
   const idem = await setupRoom();
-  const body = { roomId: idem.roomId, language: "python", mode: "run", code: "print(3)" };
+  const body = { roomId: idem.roomId, roomQuestionId: idem.roomQuestionId, language: "python", mode: "run", code: "print(3)" };
   const withKey = (k: string) => ({ "idempotency-key": k });
   const key = randomUUID();
   const first = await call("POST", "/submissions", idem.candidate, body, undefined, withKey(key));
@@ -152,11 +153,15 @@ async function main() {
 
   // --- Outbox: a queued row with no job (enqueue "failed") is recovered by the worker ----------
   const { db, close } = createDb(process.env.DATABASE_URL!, { max: 1 });
-  const [pinned] = await db.select({ v: rooms.questionVersionId }).from(rooms).where(eq(rooms.id, roomId));
+  const [pinned] = await db
+    .select({ id: roomQuestions.id, v: roomQuestions.questionVersionId })
+    .from(roomQuestions)
+    .where(eq(roomQuestions.id, roomQuestionId));
   const [orphan] = await db
     .insert(submissions)
     .values({
       roomId,
+      roomQuestionId: pinned!.id,
       questionVersionId: pinned!.v,
       userId: userIdOf(candidate),
       language: "python",

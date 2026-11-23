@@ -71,6 +71,12 @@ export class RoomEventHub {
     const subscribers = this.rooms.get(event.roomId)?.subs;
     if (!subscribers || subscribers.size === 0) return;
 
+    // Id-only: no question content goes over the socket; each client re-fetches its own role's view.
+    if (event.type === "room:question_revealed") {
+      for (const s of subscribers) sendEvent(s.ws, { type: "room:question_revealed", roomId: event.roomId });
+      return;
+    }
+
     if (event.type === "submission:queued") {
       for (const s of subscribers) {
         sendEvent(s.ws, { type: "submission:queued", roomId: event.roomId, submissionId: event.submissionId });

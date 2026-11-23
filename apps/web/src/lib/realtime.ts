@@ -2,6 +2,7 @@ import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
 import { REALTIME_PROTOCOL, type Language, type ServerEvent } from "@coderoom/shared";
 import { auth, getAccessToken } from "./auth";
+import { codeKey, metaKey } from "./roomQuestions";
 import { WS_URL } from "./config";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -18,8 +19,8 @@ export const colorFor = (seed: string) =>
 
 /**
  * Shared editor state for a room:
- *  - `text`  the code ("code" Y.Text — the name the gateway and tests use)
- *  - `meta`  room-wide settings such as the selected language
+ *  - `textFor(position)`  each question's code (Y.Text "code" for question 1, "code:<n>" after — ADR 0009)
+ *  - `meta`               settings such as each question's selected language
  * The token goes in the WebSocket subprotocol list, never the URL. When Supabase refreshes the
  * token we swap it in, so the provider's automatic reconnect (e.g. after a 4401 close) uses the new one.
  */
@@ -38,7 +39,7 @@ export function connectRoomDoc(roomId: string, token: string, user: RoomUser) {
   return {
     doc,
     provider,
-    text: doc.getText("code"),
+    textFor: (position: number) => doc.getText(codeKey(position)),
     meta: doc.getMap<unknown>("meta"),
     destroy() {
       data.subscription.unsubscribe();
@@ -50,8 +51,8 @@ export function connectRoomDoc(roomId: string, token: string, user: RoomUser) {
 
 export type RoomDoc = ReturnType<typeof connectRoomDoc>;
 
-export const getLanguage = (meta: Y.Map<unknown>): Language =>
-  meta.get("language") === "javascript" ? "javascript" : "python";
+export const getLanguage = (meta: Y.Map<unknown>, position: number): Language =>
+  meta.get(metaKey("language", position)) === "javascript" ? "javascript" : "python";
 
 /**
  * Server → client room events, with reconnect (fresh token each attempt).

@@ -18,6 +18,7 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 - **Collaborative editing that scales out.** Yjs (CRDT) over our own WebSocket gateway; interviewer and candidate can be connected to *different* API instances and stay in sync via Redis pub/sub. Concurrent edits converge; the document survives everyone leaving.
 - **Live, role-aware results.** When the worker finishes, every connected participant gets the submission pushed over WebSocket — candidates the redacted view, interviewers the full one.
 - **Interviewers author their own questions — with versioning.** Statement, constraints, per-language starter code, public and hidden tests (add, edit, reorder, hide, remove), draft → preview → "mark ready". Each ready version is immutable (enforced by database triggers) and every room pins the version it started with, so editing a question never changes a past or running interview ([ADR 0007](docs/decisions/0007-immutable-question-versions.md)).
+- **Multi-question interviews.** Pick up to five questions in order; the candidate sees Q1, and the interviewer reveals the rest one at a time (strictly in order). Unrevealed questions never reach the candidate — not their content, not even how many there are. Each question has its own code buffer and is graded against its own pinned version, enforced by a composite foreign key ([ADR 0009](docs/decisions/0009-multi-question-rooms.md)).
 - **A real interview UI.** Invite links, a shared Monaco editor with named live cursors and presence, a synced language picker, Run/Submit for the candidate, and a results panel where the interviewer also sees hidden tests and the exact submitted code. Panels are resizable (drag or keyboard, remembered per browser, never synced to the other participant) and become tabs on narrow screens ([ADR 0008](docs/decisions/0008-room-layout-own-splitter.md)).
 - **Every stack choice is documented** in [Architecture Decision Records](docs/decisions/README.md).
 
@@ -181,7 +182,7 @@ SMOKE_API_URL_2=http://localhost:4001 pnpm smoke:realtime
 | `pnpm dev` | Build shared libs, then run web, API and worker in watch mode |
 | `pnpm test` | Unit tests (Vitest) |
 | `pnpm typecheck` / `pnpm build` | Type-check / build all packages |
-| `pnpm smoke` | End-to-end checks against the running stack (API + sandbox, then question authoring/versioning) |
+| `pnpm smoke` | End-to-end checks against the running stack (API + sandbox, question authoring/versioning, multi-question rooms) |
 | `pnpm smoke:realtime` | Realtime checks: upgrade auth, sync latency, convergence, live results, persistence |
 | `pnpm e2e` | Playwright browser tests of the interviewer/candidate flow (local stack only) |
 | `pnpm db:start` / `db:stop` | Start / stop local Supabase |
@@ -209,12 +210,13 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `GET` | `/questions/:id/preview?of=draft\|latest` | owner | Exactly the candidate's view (public tests only) |
 | `DELETE` | `/questions/:id` | owner | `{ revision }` → delete a never-ready question (`409` once ready or if stale) |
 | `GET` | `/rooms` | any user | Rooms the caller participates in |
-| `POST` | `/rooms` | any user | Create a room with your own or a library question; it **pins the latest ready version**. Caller becomes interviewer |
+| `POST` | `/rooms` | any user | `{ questionIds }` (1–5, ordered; your own or library questions). **Pins each question's latest ready version**; Q1 is revealed. Caller becomes interviewer |
 | `POST` | `/rooms/join` | any user | Join with invite code as candidate |
-| `GET` | `/rooms/:id` | participant | Question, public tests, caller's role (invite code for the interviewer) |
+| `GET` | `/rooms/:id` | participant | Questions (pinned versions, public tests only), caller's role, invite code for the interviewer. Candidates get only revealed questions |
+| `POST` | `/rooms/:id/questions/:roomQuestionId/reveal` | interviewer | Reveal the next question to the candidate (in order; repeating is a no-op; `409` if out of order) |
 | `GET` | `/rooms/:id/submissions` | participant | History, newest first, in the caller's role view (candidates see only their own) |
 | `POST` | `/rooms/:id/close` | interviewer | End the session: room becomes read-only everywhere, including already-open sockets |
-| `POST` | `/submissions` | candidate | `{ roomId, language, mode: "run" \| "submit", code }` → `202 { submissionId }`. Optional `Idempotency-Key` header; 10/min per user (`429` + `Retry-After`) |
+| `POST` | `/submissions` | candidate | `{ roomId, roomQuestionId, language, mode: "run" \| "submit", code }` (a revealed question; `404` otherwise) → `202 { submissionId }`. Optional `Idempotency-Key` header; 10/min per user (`429` + `Retry-After`) |
 | `GET` | `/submissions/:id` | participant | Candidate view or interviewer view, by role |
 
 ### WebSocket
@@ -231,7 +233,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 ## Testing
 
 - **Unit tests** — every sandbox `docker run` flag, verdict mapping, the candidate/interviewer serializers (hidden test ids never appear in the candidate view), the document manager against a fake database (failed saves are retried, saves never overlap, unload waits for an in-flight save, edits are retained and recovered — even by a new process — when the DB is down, read-only rooms drop writes), and the browser's history merge (a result is never rolled back by an older snapshot).
-- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack, then `questions-smoke.ts` checks 40 more for authoring, ownership, versioning and two-tab conflicts (including a draft being replaced while an old tab is open) (an interview on v1 keeps showing and grading v1 after v2 is ready; the DB rejects edits to a published version). Latest local run of the first part:
+- **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack, then `questions-smoke.ts` checks 40 more for authoring, ownership, versioning and two-tab conflicts (including a draft being replaced while an old tab is open) (an interview on v1 keeps showing and grading v1 after v2 is ready; the DB rejects edits to a published version), and `rooms-smoke.ts` checks multi-question rooms: candidates never receive unrevealed questions or submit to them, reveals happen only in order (also under racing requests), each question is graded on its own version, and the DB rejects a submission pinned to the wrong version. Latest local run of the first part:
 
 | Case | Result |
 |---|---|
@@ -267,7 +269,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~40 s for all ten tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~50 s for all eleven tests):
 
 | Step | Checked |
 |---|---|
@@ -286,6 +288,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 | Resize panels (mouse + keyboard) | minimums hold, Monaco follows its column, layout survives reload, Reset restores defaults, the other participant's layout is untouched |
 | Resize at 950 px with oversized saved sizes | Home, drag and double-click never move the other panel; reload shows the same layout |
 | Type while dragging a divider | every keystroke lands, still synced, editor never remounted |
+| Multi-question interview | candidate sees only Q1 (no hint more exist); reveals only in order; a reveal takes the candidate to the new question with its own starter; separate code per question; results tagged and filterable by question; a reveal missed while disconnected arrives on reconnect |
 | Narrow screen | Question / Code / Results tabs, Results marks a new run, editor content and instance kept across modes |
 | **Authoring:** My questions → create → statement, constraints, starter code → add/hide/reorder/remove tests → "Mark ready" blocked without a public test → save, preview, mark ready v1 | preview shows public examples only and the starter code; status "Ready v1" |
 | Start an interview with it; candidate joins | sees the authored statement/constraints and starter code; correct solution "Accepted, hidden tests 1/1" |
@@ -323,6 +326,7 @@ docs/decisions/ Architecture Decision Records
 - [x] Browser end-to-end tests (Playwright) for the two-role flow
 - [ ] Run unit, smoke and browser tests in CI against a containerized stack
 - [x] Question authoring: statement, constraints, starter code, public/hidden tests, preview, immutable versions pinned by rooms
+- [x] Multi-question rooms: ordered questions revealed by the interviewer, a code buffer per question, per-question grading
 - [ ] Evaluation rubric and interviewer hints (revealed by the interviewer, recorded as evidence)
 - [ ] Submission history and editor replay (Supabase Storage)
 - [ ] Structured evaluation rubric

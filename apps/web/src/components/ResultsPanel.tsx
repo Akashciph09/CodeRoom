@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Verdict } from "@coderoom/shared";
+import type { RoomQuestionView, Verdict } from "@coderoom/shared";
 import { isInterviewerView } from "../lib/api";
 import type { SubmissionEntry } from "../lib/submissions";
 
@@ -18,13 +18,43 @@ function VerdictBadge({ verdict }: { verdict?: Verdict }) {
   return <span className={`verdict ${verdict === "accepted" ? "ok" : "bad"}`}>{VERDICT_LABEL[verdict]}</span>;
 }
 
-export function ResultsPanel({ entries }: { entries: SubmissionEntry[] }) {
+/**
+ * Submission history, newest first. In a multi-question room each card is tagged with its question,
+ * and the list can be narrowed to the question being viewed. Pending entries (not yet answered by the
+ * server) don't know their question yet and are always shown.
+ */
+export function ResultsPanel({
+  entries,
+  questions,
+  activeQuestionId,
+}: {
+  entries: SubmissionEntry[];
+  /** Only for multi-question rooms. */
+  questions?: RoomQuestionView[];
+  activeQuestionId?: string;
+}) {
+  const [onlyActive, setOnlyActive] = useState(false);
+  const positionOf = new Map(questions?.map((q) => [q.id, q.position]));
+  const shown =
+    questions && onlyActive ? entries.filter((e) => e.pending || e.view.roomQuestionId === activeQuestionId) : entries;
   return (
     <section className="panel results-panel">
-      <h2>Results</h2>
-      {entries.length === 0 && <p className="muted">No runs yet.</p>}
-      {entries.map((e) => (
-        <SubmissionCard key={e.submissionId} entry={e} />
+      <div className="section-head">
+        <h2>Results</h2>
+        {questions && (
+          <label className="inline small">
+            <input type="checkbox" checked={onlyActive} onChange={(e) => setOnlyActive(e.target.checked)} />
+            This question only
+          </label>
+        )}
+      </div>
+      {shown.length === 0 && <p className="muted">No runs yet.</p>}
+      {shown.map((e) => (
+        <SubmissionCard
+          key={e.submissionId}
+          entry={e}
+          position={e.pending ? undefined : positionOf.get(e.view.roomQuestionId)}
+        />
       ))}
     </section>
   );
@@ -36,7 +66,7 @@ function numbered<T extends { testId: string; hidden?: boolean }>(results: T[]) 
   return results.map((r) => ({ r, label: r.hidden ? null : ++n }));
 }
 
-function SubmissionCard({ entry }: { entry: SubmissionEntry }) {
+function SubmissionCard({ entry, position }: { entry: SubmissionEntry; position?: number }) {
   const [showCode, setShowCode] = useState(false);
   if (entry.pending) {
     return (
@@ -55,6 +85,7 @@ function SubmissionCard({ entry }: { entry: SubmissionEntry }) {
     <div className="submission">
       <div className="submission-head">
         <VerdictBadge verdict={done ? (v.overall ?? "internal_error") : undefined} />
+        {position !== undefined && <span className="badge question-badge">Q{position}</span>}
         <span className="badge">{v.mode}</span>
         {isInterviewerView(v) && (
           <>

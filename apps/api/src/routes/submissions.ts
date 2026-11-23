@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import { and, eq, rooms, submissions, type Submission } from "@coderoom/db";
+import { and, eq, submissions, type Submission } from "@coderoom/db";
 import {
   CreateSubmissionRequest,
   roomEventsChannel,
@@ -9,8 +9,9 @@ import {
 import { requireRoomRole } from "../auth.js";
 import { config } from "../config.js";
 import { db } from "../db.js";
-import { asyncHandler, BadRequest, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
+import { asyncHandler, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
 import { enqueueExecution, redis } from "../queue.js";
+import { submittableQuestion } from "../services/roomQuestions.js";
 import { enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
 import { loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
 import { UuidParam } from "./params.js";
@@ -39,6 +40,7 @@ async function tryEnqueue(submissionId: string) {
 async function replay(res: Response, existing: Submission, body: CreateSubmissionRequest) {
   const same =
     existing.roomId === body.roomId &&
+    existing.roomQuestionId === body.roomQuestionId &&
     existing.language === body.language &&
     existing.mode === body.mode &&
     existing.code === body.code;
@@ -73,19 +75,15 @@ submissionsRouter.post(
     }
 
     await requireRoomRole(body.roomId, userId, "candidate");
-    const [room] = await db
-      .select({ questionVersionId: rooms.questionVersionId, status: rooms.status })
-      .from(rooms)
-      .where(eq(rooms.id, body.roomId))
-      .limit(1);
-    if (!room) throw new NotFound();
-    if (room.status !== "open") throw new BadRequest("Room is closed");
+    // Revealed question of this room, open room (404 / 400 otherwise).
+    const target = await submittableQuestion(body.roomId, body.roomQuestionId);
 
     const [inserted] = await db
       .insert(submissions)
       .values({
         roomId: body.roomId,
-        questionVersionId: room.questionVersionId, // graded against the room's pinned version
+        roomQuestionId: body.roomQuestionId,
+        questionVersionId: target.versionId, // graded against that question's pinned version
         userId,
         language: body.language,
         mode: body.mode,

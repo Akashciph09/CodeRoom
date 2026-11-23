@@ -32,5 +32,6 @@ export const RoomBusEvent = z.discriminatedUnion("type", [
     status: z.enum(["completed", "failed"]),
   }),
   z.object({ type: z.literal("room:closed"), roomId: z.string() }),
+  z.object({ type: z.literal("room:question_revealed"), roomId: z.string() }),
 ]);
 export type RoomBusEvent = z.infer<typeof RoomBusEvent>;

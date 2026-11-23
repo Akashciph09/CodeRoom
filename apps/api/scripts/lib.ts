@@ -60,14 +60,32 @@ export const userIdOf = (token: string) =>
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Interviewer creates a room, candidate joins it. */
-export async function setupRoom() {
+/** The room question ids of a room, in order (as the interviewer sees them). */
+export async function roomQuestionIds(roomId: string, interviewerToken: string): Promise<string[]> {
+  const room = await call("GET", `/rooms/${roomId}`, interviewerToken);
+  if (room.status !== 200) throw new Error(`get room → ${room.status}`);
+  return room.json.questions.map((q: { id: string }) => q.id);
+}
+
+/** Interviewer creates a room (one library question unless given), candidate joins it. */
+export async function setupRoom(questionIds: string[] = [QUESTION_ID]) {
   const interviewer = await signUp("interviewer");
   const candidate = await signUp("candidate");
   const outsider = await signUp("outsider");
-  const created = await call("POST", "/rooms", interviewer, { questionId: QUESTION_ID });
+  const created = await call("POST", "/rooms", interviewer, { questionIds });
   if (created.status !== 201) throw new Error(`create room → ${created.status}`);
   const joined = await call("POST", "/rooms/join", candidate, { inviteCode: created.json.inviteCode });
   if (joined.status !== 200) throw new Error(`join room → ${joined.status}`);
-  return { interviewer, candidate, outsider, roomId: created.json.roomId as string, inviteCode: created.json.inviteCode as string };
+  const roomId = created.json.roomId as string;
+  const rqIds = await roomQuestionIds(roomId, interviewer);
+  return {
+    interviewer,
+    candidate,
+    outsider,
+    roomId,
+    inviteCode: created.json.inviteCode as string,
+    /** The first question (revealed at creation) — what single-question tests submit to. */
+    roomQuestionId: rqIds[0]!,
+    roomQuestionIds: rqIds,
+  };
 }

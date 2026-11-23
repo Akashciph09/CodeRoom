@@ -5,6 +5,7 @@ import { toCandidateView, toInterviewerView } from "./views.js";
 const submission: Submission = {
   id: "sub-1",
   roomId: "room-1",
+  roomQuestionId: "rq-1",
   questionVersionId: "qv-1",
   userId: "user-1",
   language: "python",

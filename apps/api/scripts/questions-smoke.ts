@@ -97,7 +97,7 @@ async function main() {
     blocked.status === 400 && blocked.json.problems?.includes("no_public_tests"),
     `(${blocked.json?.problems})`,
   );
-  check("can't open a room with a draft-only question → 400", (await call("POST", "/rooms", owner, { questionId: qid })).status === 400);
+  check("can't open a room with a draft-only question → 400", (await call("POST", "/rooms", owner, { questionIds: [qid] })).status === 400);
 
   // --- v1 ------------------------------------------------------------------------------------------------
   const v1Draft = {
@@ -129,20 +129,20 @@ async function main() {
     usableByOwner.json.some((q: any) => q.id === qid && q.version === 1 && q.owned) &&
       !usableByOther.json.some((q: any) => q.id === qid),
   );
-  check("others can't open a room with it → 404", (await call("POST", "/rooms", other, { questionId: qid })).status === 404);
+  check("others can't open a room with it → 404", (await call("POST", "/rooms", other, { questionIds: [qid] })).status === 404);
 
   // --- Room 1 pins v1 -----------------------------------------------------------------------------------
-  const r1 = await call("POST", "/rooms", owner, { questionId: qid });
+  const r1 = await call("POST", "/rooms", owner, { questionIds: [qid] });
   await call("POST", "/rooms/join", candidate, { inviteCode: r1.json.inviteCode });
   const room1 = await call("GET", `/rooms/${r1.json.roomId}`, candidate);
   check(
     "room shows v1 statement, constraints, starter code",
-    room1.json.question?.version === 1 &&
-      room1.json.question.statement === v1Draft.statement &&
-      room1.json.question.constraints === v1Draft.constraints &&
-      room1.json.question.starterCode.python === v1Draft.starterCode.python,
+    room1.json.questions[0].question?.version === 1 &&
+      room1.json.questions[0].question.statement === v1Draft.statement &&
+      room1.json.questions[0].question.constraints === v1Draft.constraints &&
+      room1.json.questions[0].question.starterCode.python === v1Draft.starterCode.python,
   );
-  const s1 = await call("POST", "/submissions", candidate, { roomId: r1.json.roomId, language: "python", mode: "submit", code: SUM });
+  const s1 = await call("POST", "/submissions", candidate, { roomId: r1.json.roomId, roomQuestionId: room1.json.questions[0].id, language: "python", mode: "submit", code: SUM });
   const s1done = await waitFor(s1.json.submissionId, candidate);
   check("submission in room 1 → accepted on v1 tests", s1done.overall === "accepted" && s1done.hiddenTotal === 1);
 
@@ -163,23 +163,23 @@ async function main() {
     mine1.json.some((q: any) => q.id === qid && q.status === "ready" && q.latestVersion === 1 && q.hasUnpublishedChanges),
   );
   const room1Mid = await call("GET", `/rooms/${r1.json.roomId}`, candidate);
-  check("unpublished edits don't reach an existing room", room1Mid.json.question.statement === v1Draft.statement);
+  check("unpublished edits don't reach an existing room", room1Mid.json.questions[0].question.statement === v1Draft.statement);
   const p2 = await tab.publish();
   check("mark ready again → version 2", p2.json.latest?.version === 2 && p2.json.versions.length === 2);
 
   // --- Room 1 still runs v1; room 2 runs v2 -----------------------------------------------------------
   const room1After = await call("GET", `/rooms/${r1.json.roomId}`, candidate);
-  check("existing room still shows v1 after v2 is ready", room1After.json.question.version === 1 && room1After.json.question.statement === v1Draft.statement);
+  check("existing room still shows v1 after v2 is ready", room1After.json.questions[0].question.version === 1 && room1After.json.questions[0].question.statement === v1Draft.statement);
   const s1again = await call("GET", `/submissions/${s1.json.submissionId}`, candidate);
   check("existing result unchanged", s1again.json.overall === "accepted" && s1again.json.publicResults[0].testId === s1done.publicResults[0].testId);
-  const s2 = await call("POST", "/submissions", candidate, { roomId: r1.json.roomId, language: "python", mode: "submit", code: SUM });
+  const s2 = await call("POST", "/submissions", candidate, { roomId: r1.json.roomId, roomQuestionId: room1.json.questions[0].id, language: "python", mode: "submit", code: SUM });
   check("new submission in room 1 is still graded on v1 tests", (await waitFor(s2.json.submissionId, candidate)).overall === "accepted");
 
-  const r2 = await call("POST", "/rooms", owner, { questionId: qid });
+  const r2 = await call("POST", "/rooms", owner, { questionIds: [qid] });
   await call("POST", "/rooms/join", candidate, { inviteCode: r2.json.inviteCode });
   const room2 = await call("GET", `/rooms/${r2.json.roomId}`, candidate);
-  check("a new room uses v2", room2.json.question.version === 2 && room2.json.question.statement === v2Draft.statement);
-  const s3 = await call("POST", "/submissions", candidate, { roomId: r2.json.roomId, language: "python", mode: "submit", code: SUM });
+  check("a new room uses v2", room2.json.questions[0].question.version === 2 && room2.json.questions[0].question.statement === v2Draft.statement);
+  const s3 = await call("POST", "/submissions", candidate, { roomId: r2.json.roomId, roomQuestionId: room2.json.questions[0].id, language: "python", mode: "submit", code: SUM });
   check("…and grades on v2 tests (sum code now wrong)", (await waitFor(s3.json.submissionId, candidate)).overall === "wrong_answer");
 
   // --- Discard / delete -------------------------------------------------------------------------------

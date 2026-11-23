@@ -22,7 +22,8 @@
     "smoke": "pnpm --filter @coderoom/api smoke",
     "smoke:realtime": "pnpm --filter @coderoom/api smoke:realtime",
     "e2e": "pnpm --filter @coderoom/web e2e",
-    "smoke:questions": "pnpm --filter @coderoom/api smoke:questions"
+    "smoke:questions": "pnpm --filter @coderoom/api smoke:questions",
+    "smoke:rooms": "pnpm --filter @coderoom/api smoke:rooms"
   },
   "devDependencies": {
     "supabase": "^3.2.0",
