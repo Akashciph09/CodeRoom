@@ -8,6 +8,40 @@ Interviewer and candidate share a room. The candidate writes code; every run goe
 
 ---
 
+## Screenshots
+
+**Interviewer view during a live interview:** the question, the shared editor with the candidate's named cursor, and every test result, hidden ones included. Run/Submit belong to the candidate; the interviewer reveals the next question (Q2 🔒) when ready.
+
+![Interviewer view: question, shared editor and results including hidden tests](docs/screenshots/room-interviewer.png)
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Candidate view</b>: an edge case the interviewer added appears as <i>Custom 1</i> for both sides; Run tries it, Submit never grades it.<br><br>
+      <img src="docs/screenshots/room-candidate.png" alt="Candidate view with a shared custom test case">
+    </td>
+    <td width="50%" valign="top">
+      <b>Post-interview review</b>: a test score out of 100 (evidence, not a decision), the per-question breakdown, and a timeline with the diff that fixed the bug.<br><br>
+      <img src="docs/screenshots/review.png" alt="Review page with test score, timeline and diff">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <b>Question authoring</b>: statement, constraints, starter code, public and hidden tests; published versions are immutable.<br><br>
+      <img src="docs/screenshots/question-editor.png" alt="Question editor with public and hidden tests">
+    </td>
+    <td width="50%" valign="top">
+      <b>Starting an interview</b>: ordered questions with optional points for the score. <b>On a phone</b> the room becomes tabs.<br><br>
+      <img src="docs/screenshots/home.png" alt="Starting an interview with two weighted questions"><br><br>
+      <img src="docs/screenshots/mobile.png" alt="Room on a phone-sized screen" width="45%">
+    </td>
+  </tr>
+</table>
+
+<sub>Generated from a real interview driven through the UI: <code>pnpm screenshots</code> (local stack running) re-creates every image in <code>docs/screenshots/</code>.</sub>
+
+---
+
 ## Highlights
 
 - **Untrusted code never touches the API server.** The API validates, stores and enqueues; separate workers execute.
@@ -190,6 +224,7 @@ SMOKE_API_URL_2=http://localhost:4001 pnpm smoke:realtime
 | `pnpm smoke` | End-to-end checks against the running stack (API + sandbox, question authoring/versioning, multi-question rooms) |
 | `pnpm smoke:realtime` | Realtime checks: upgrade auth, sync latency, convergence, live results, persistence |
 | `pnpm e2e` | Playwright browser tests of the interviewer/candidate flow (local stack only) |
+| `pnpm screenshots` | Re-creates the README screenshots from a real interview driven through the UI (local stack only) |
 | `pnpm db:start` / `db:stop` | Start / stop local Supabase |
 | `pnpm db:reset` | Wipe local DB, reapply migrations and seed |
 | `pnpm db:generate` | Generate a SQL migration from `packages/db/src/schema.ts` |

@@ -22,6 +22,7 @@
     "smoke": "pnpm --filter @coderoom/api smoke",
     "smoke:realtime": "pnpm --filter @coderoom/api smoke:realtime",
     "e2e": "pnpm --filter @coderoom/web e2e",
+    "screenshots": "pnpm --filter @coderoom/web screenshots",
     "smoke:questions": "pnpm --filter @coderoom/api smoke:questions",
     "smoke:rooms": "pnpm --filter @coderoom/api smoke:rooms"
   },
