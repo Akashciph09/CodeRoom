@@ -13,6 +13,11 @@ export interface RealtimeSwitch {
   /** Close every open realtime socket and refuse reconnects until `restore()`. */
   drop(): Promise<void>;
   restore(): void;
+  /**
+   * Silently drop server events of this type on the (still connected) events socket — as if the
+   * publish was lost and the reconciler hadn't delivered it either.
+   */
+  dropEvents(type: string): void;
 }
 
 /**
@@ -28,12 +33,27 @@ export async function openAs(browser: Browser, name: string): Promise<Participan
 
   let online = true;
   const open = new Set<WebSocketRoute>();
+  const droppedEvents = new Set<string>();
+  const eventType = (message: string | Buffer) => {
+    if (typeof message !== "string" || !message.startsWith("{")) return null; // Yjs frames are binary
+    try {
+      return (JSON.parse(message) as { type?: string }).type ?? null;
+    } catch {
+      return null;
+    }
+  };
   await context.routeWebSocket(/\/(yjs\/|rooms\/[^/]+\/events)/, (ws) => {
     if (!online) {
       void ws.close({ code: 4000, reason: "e2e: realtime dropped" });
       return;
     }
-    ws.connectToServer();
+    const server = ws.connectToServer();
+    // Forward server → client ourselves so selected events can be dropped (client → server is untouched).
+    server.onMessage((message) => {
+      const type = eventType(message);
+      if (type && droppedEvents.has(type)) return;
+      ws.send(message);
+    });
     open.add(ws);
     ws.onClose(() => open.delete(ws));
   });
@@ -45,6 +65,9 @@ export async function openAs(browser: Browser, name: string): Promise<Participan
     },
     restore() {
       online = true;
+    },
+    dropEvents(type) {
+      droppedEvents.add(type);
     },
   };
 

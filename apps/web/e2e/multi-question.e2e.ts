@@ -165,3 +165,58 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
     await candidate.close();
   }
 });
+
+/**
+ * Regression: the reveal notification is lost (publish failed, and the reconciler never got to it
+ * because the room ended right away — gateways stop reconciling reveals for ended rooms). The
+ * candidate stays connected the whole time and must still end up with the final question list,
+ * without reloading: `room:closed` makes the client re-fetch the room.
+ */
+test("a reveal whose notification is lost right before the session ends still reaches the candidate", async ({ browser }) => {
+  const interviewer = await openAs(browser, "Iris Interviewer");
+  const candidate = await openAs(browser, "Casey Candidate");
+  const iv = interviewer.page;
+  const cd = candidate.page;
+  try {
+    await iv.goto("/");
+    await signUp(iv, interviewer.name);
+    await authorQuestion(iv, "Multiply two numbers", "# multiply\n", "2 3", "6");
+    await iv.goto("/");
+    const picked = iv.getByLabel("Interview questions").getByRole("listitem");
+    await expect(picked).toHaveCount(1);
+    await iv.getByRole("button", { name: "Add question" }).click(); // the other of {Sum, Multiply}
+    await expect(picked).toHaveCount(2);
+    const secondTitle = (await picked.nth(1).textContent())!.includes("Multiply") ? "Multiply two numbers" : "Sum two numbers";
+    await iv.getByRole("button", { name: "Create room" }).click();
+    await expect(iv).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+
+    await iv.getByRole("button", { name: "Copy invite link" }).click();
+    const invite = await iv.evaluate(() => navigator.clipboard.readText());
+    await cd.goto(invite);
+    await signUp(cd, candidate.name);
+    await expect(questionPanel(cd)).toBeVisible();
+    await expect(nav(cd)).toHaveCount(0);
+    await cd.evaluate(() => ((window as unknown as { e2eNoReload: boolean }).e2eNoReload = true));
+
+    // Every reveal notification to the candidate is lost; their sockets stay connected.
+    candidate.realtime.dropEvents("room:question_revealed");
+    await iv.bringToFront();
+    await navButton(iv, 2).click();
+    await iv.getByRole("button", { name: "Reveal to candidate" }).click();
+    await expect(navButton(iv, 2)).toHaveAccessibleName(`Q2: ${secondTitle}`);
+    await expectUnchanged(async () => String(await nav(cd).count()), "0", 1000); // candidate didn't hear about it
+
+    // …and the interviewer ends the session immediately.
+    iv.once("dialog", (dialog) => dialog.accept());
+    await iv.getByRole("button", { name: "End session" }).click();
+
+    await expect(cd.getByText("This interview has ended.")).toBeVisible();
+    await expect(nav(cd).getByRole("button")).toHaveCount(2);
+    await expect(questionPanel(cd).getByRole("heading", { name: secondTitle })).toBeVisible();
+    expect(await cd.evaluate(() => (window as unknown as { e2eNoReload?: boolean }).e2eNoReload)).toBe(true); // no reload happened
+    await expect(cd.getByRole("button", { name: "Run" })).toBeDisabled();
+  } finally {
+    await interviewer.close();
+    await candidate.close();
+  }
+});

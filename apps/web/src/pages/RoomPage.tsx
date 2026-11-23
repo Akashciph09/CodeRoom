@@ -140,6 +140,9 @@ export function RoomPage() {
     const onEvent = (event: ServerEvent) => {
       if (event.type === "room:closed") {
         setRoom((r) => (r ? { ...r, status: "closed" } : r));
+        // Also re-fetch: a reveal whose notification was lost may have landed just before the close, and
+        // gateways stop reconciling reveals for ended rooms — this is the last chance to pick it up.
+        refreshRoom();
       } else if (event.type === "room:question_revealed") {
         refreshRoom();
       } else if (event.type === "submission:queued") {

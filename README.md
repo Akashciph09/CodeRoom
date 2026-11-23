@@ -123,7 +123,7 @@ flowchart LR
 | Two instances save the same room (one missed an update, or both make the very first save) | Every save runs under a per-room Postgres advisory lock and merges with the stored snapshot instead of overwriting it, so a save can't remove content another instance saved |
 | Last user leaves while a save is in flight | Unload awaits that save; if it fails, the doc is saved again before it's destroyed |
 | `room:closed` publish fails, or a gateway misses it | Each gateway reconciles room status from Postgres every 5 s and enforces it on open sockets |
-| `room:question_revealed` publish fails, or a gateway misses it | The same reconciler re-reads how many questions are revealed; connected clients are told within ~5 s without reconnecting. Each reveal is announced once (gateways forward only an increased count) |
+| `room:question_revealed` publish fails, or a gateway misses it | The same reconciler re-reads how many questions are revealed; connected clients are told within ~5 s without reconnecting. Each reveal is announced once (gateways forward only an increased count). If the room ends before that, clients re-fetch the room on `room:closed` and still get the final question list |
 | Candidate submits at the moment the session ends | The open-room check and the insert run in one transaction holding a share lock on the room row (concurrent submissions don't block each other; closing does) — a submission is accepted before the close or refused after it, never stored in an ended room |
 | Interviewer reveals a question while ending the session | Reveal locks the room row (`FOR UPDATE`) and checks the status in the same transaction; closing updates that row, so the two serialize — no question is ever revealed in an ended room |
 | Browser loses its events socket while a result is published | On every reconnect the client re-fetches history and **merges** it — a submission never moves backwards, so a slow response can't undo a newer result |
@@ -273,7 +273,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~50 s for all eleven tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~55 s for all twelve tests):
 
 | Step | Checked |
 |---|---|
