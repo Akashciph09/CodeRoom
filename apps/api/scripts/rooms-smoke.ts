@@ -8,7 +8,7 @@
  *  - every submission is graded against its own question's pinned version, enforced by the database.
  */
 import { randomUUID } from "node:crypto";
-import { createDb, eq, roomQuestions, rooms, submissions } from "@coderoom/db";
+import { and, createDb, eq, roomParticipants, roomQuestions, rooms, submissions } from "@coderoom/db";
 import { call, check, finish, QUESTION_ID, readyQuestion, roomQuestionIds, signUp, sleep, userIdOf } from "./lib.js";
 
 const SUM = "a, b = map(int, input().split())\nprint(a + b)";
@@ -292,13 +292,18 @@ async function main() {
     const rv = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, product, difference], questionPoints: [20, 30, 50] });
     const rvId = rv.json.roomId as string;
     const alice = await signUp("rv-alice");
-    const bob = await signUp("rv-bob");
-    for (const t of [alice, bob]) await call("POST", "/rooms/join", t, { inviteCode: rv.json.inviteCode });
+    await call("POST", "/rooms/join", alice, { inviteCode: rv.json.inviteCode });
     const [rq1, rq2, rq3] = (await roomQuestionIds(rvId, interviewer)) as [string, string, string];
     await reveal(interviewer, rvId, rq2); // Q3 (50 points) is never revealed
+    // Bob interviews in his own room with the same questions and points (one candidate per room, ADR 0012).
+    const rvBob = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, product, difference], questionPoints: [20, 30, 50] });
+    const bob = await signUp("rv-bob");
+    await call("POST", "/rooms/join", bob, { inviteCode: rvBob.json.inviteCode });
+    const [, bobQ2] = (await roomQuestionIds(rvBob.json.roomId, interviewer)) as [string, string, string];
+    await reveal(interviewer, rvBob.json.roomId, bobQ2);
 
-    const submitAs = async (token: string, rqId: string, code: string, mode = "submit") => {
-      const r = await call("POST", "/submissions", token, { roomId: rvId, roomQuestionId: rqId, language: "python", mode, code });
+    const submitAs = async (token: string, rqId: string, code: string, mode = "submit", room = rvId) => {
+      const r = await call("POST", "/submissions", token, { roomId: room, roomQuestionId: rqId, language: "python", mode, code });
       return waitFor(r.json.submissionId, token);
     };
     // Alice: Q1 wrong (0/4) → right (4/4) → broken again (0/4); a Run on Q2; Q2 submitted wrong (0/2).
@@ -308,7 +313,7 @@ async function main() {
     await submitAs(alice, rq2, PRODUCT, "run");
     await submitAs(alice, rq2, SUM);
     // Bob: only Q2, correct (2/2).
-    await submitAs(bob, rq2, PRODUCT);
+    await submitAs(bob, bobQ2, PRODUCT, "submit", rvBob.json.roomId);
 
     check("a candidate can't open the review → 403", (await call("GET", `/rooms/${rvId}/review`, alice)).status === 403);
     check("an outsider can't open the review → 403", (await call("GET", `/rooms/${rvId}/review`, outsider)).status === 403);
@@ -316,7 +321,7 @@ async function main() {
     check("the interviewer gets the review", review.status === 200);
     const byName = (prefix: string) => review.json.candidates.find((c: any) => c.name.startsWith(prefix));
     const a = byName("rv-alice");
-    const b = byName("rv-bob");
+    const b = (await call("GET", `/rooms/${rvBob.json.roomId}/review`, interviewer)).json.candidates[0];
     const q = (c: any, id: string) => c.questions.find((x: any) => x.roomQuestionId === id);
     check(
       "test score uses the best Submit (4/4), not the last (0/4); Run isn't counted",
@@ -332,12 +337,57 @@ async function main() {
       a.score === 40 && b.score === 60 && q(a, rq3).counted === false,
       `(Alice ${a.score}, Bob ${b.score})`,
     );
-    check("each candidate has their own timeline", a.submissions.length === 5 && b.submissions.length === 1);
+    check("the review shows the room's one candidate and their whole timeline", review.json.candidates.length === 1 && a.submissions.length === 5 && b.submissions.length === 1);
     const rq3View = review.json.questions.find((x: any) => x.id === rq3);
     check(
       "reveal windows for revealed questions only",
       review.json.questions.find((x: any) => x.id === rq1).revealWindowMs >= 0 && rq3View.revealWindowMs === undefined && rq3View.points === 50,
     );
+  }
+
+  // --- One interviewer, one candidate per room (ADR 0012) --------------------------------------------
+  {
+    const solo = await create(interviewer, [QUESTION_ID]);
+    const soloId = solo.json.roomId as string;
+    const first = await signUp("solo-first");
+    const second = await signUp("solo-second");
+    const join = (token: string, code = solo.json.inviteCode) => call("POST", "/rooms/join", token, { inviteCode: code });
+    check("the first person with the link becomes the candidate", (await join(first)).status === 200);
+    check("the candidate can rejoin (another device, a reload) → 200", (await join(first)).status === 200);
+    const refused = await join(second);
+    check("anyone else with the link → 409 room_full", refused.status === 409 && refused.json?.conflict === "room_full", `(${refused.status} ${JSON.stringify(refused.json)})`);
+    const [soloQ] = (await roomQuestionIds(soloId, interviewer)) as [string];
+    check(
+      "…and gets no access: room 403, submit 403, review 403",
+      (await call("GET", `/rooms/${soloId}`, second)).status === 403 &&
+        (await call("POST", "/submissions", second, { roomId: soloId, roomQuestionId: soloQ, language: "python", mode: "run", code: "print(1)" })).status === 403 &&
+        (await call("GET", `/rooms/${soloId}/review`, second)).status === 403,
+    );
+    // The interviewer opening their own link is sent to the room as interviewer; the seat isn't touched.
+    const own = await create(interviewer, [QUESTION_ID]);
+    const ownJoin = await join(interviewer, own.json.inviteCode);
+    const seat = await join(first, own.json.inviteCode);
+    check(
+      "the interviewer's own link → 200 as interviewer, and the candidate seat stays free",
+      ownJoin.status === 200 && ownJoin.json.role === "interviewer" && ownJoin.json.roomId === own.json.roomId && seat.status === 200,
+      `(${ownJoin.status} ${ownJoin.json?.role}; then candidate ${seat.status})`,
+    );
+
+    // Two people opening the link at the same instant: the database lets exactly one in, every time.
+    const { db: raceDb, close: closeRaceDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    let exactlyOne = true;
+    for (let i = 0; i < 10; i++) {
+      const r = await create(interviewer, [QUESTION_ID]);
+      const [x, y] = await Promise.all([signUp("race-x"), signUp("race-y")]);
+      const statuses = (await Promise.all([join(x, r.json.inviteCode), join(y, r.json.inviteCode)])).map((res) => res.status).sort();
+      const seats = await raceDb
+        .select({ userId: roomParticipants.userId })
+        .from(roomParticipants)
+        .where(and(eq(roomParticipants.roomId, r.json.roomId), eq(roomParticipants.role, "candidate")));
+      if (statuses.join() !== "200,409" || seats.length !== 1) exactlyOne = false;
+    }
+    await closeRaceDb();
+    check("simultaneous joins (10 rounds): exactly one candidate, the other gets 409", exactlyOne);
   }
 
   // --- After the session ends --------------------------------------------------------------------

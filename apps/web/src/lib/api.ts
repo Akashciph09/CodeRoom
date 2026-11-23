@@ -94,6 +94,10 @@ export const api = {
     request<CandidateQuestionView>("GET", `/questions/${id}/preview?of=${of}`),
 };
 
+/** The room already has its candidate (409 `room_full`, ADR 0012). */
+export const isRoomFull = (err: unknown) =>
+  err instanceof ApiError && err.status === 409 && (err.body as { conflict?: unknown } | null)?.conflict === "room_full";
+
 /** No response, or a server-side failure: the request may or may not have been applied. */
 export const isRetryable = (err: unknown) => !(err instanceof ApiError) || err.status >= 500;
 
