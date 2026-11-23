@@ -400,7 +400,9 @@ export function RoomPage() {
             </div>
           </section>
         }
-        tests={<TestPanel question={active.question} roomQuestion={multi ? active : undefined} entries={entries} />}
+        tests={
+          <TestPanel question={active.question} roomQuestion={multi ? active : undefined} entries={entries} ended={closed} />
+        }
       />
     </div>
   );

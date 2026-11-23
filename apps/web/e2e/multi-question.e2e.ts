@@ -144,6 +144,20 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expect(resultsHeading(iv)).toHaveText("Results · Q2");
     });
 
+    await test.step("switching between questions with history keeps the Testcase tab", async () => {
+      // Regression (PR #5 review): the other question's existing runs must not count as a new run.
+      const panel = cd.getByRole("region", { name: "Tests" });
+      const testcaseTab = panel.getByRole("tab", { name: "Testcase" });
+      await testcaseTab.click();
+      await expect(testcaseTab).toHaveAttribute("aria-selected", "true");
+      await navButton(cd, 2).click(); // Q2 has a run
+      await expect(questionPanel(cd).getByRole("heading", { name: "Multiply two numbers" })).toBeVisible();
+      await expectUnchanged(async () => String(await testcaseTab.getAttribute("aria-selected")), "true", 800);
+      await expect(panel.getByLabel("Case input")).toHaveText("2 3"); // Q2's case, not Q1's
+      await navButton(cd, 1).click(); // and back: Q1 has a run too
+      await expectUnchanged(async () => String(await testcaseTab.getAttribute("aria-selected")), "true", 800);
+    });
+
     await test.step("a reveal missed while disconnected arrives on reconnect", async () => {
       await candidate.realtime.drop();
       await navButton(iv, 3).click();
@@ -165,6 +179,10 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
     await test.step("after a reload everything is still there", async () => {
       await cd.reload();
       await expect(nav(cd).getByRole("button")).toHaveCount(3);
+      // Loading history isn't a new run: the panel stays on Testcase until asked.
+      const testcaseTab = cd.getByRole("region", { name: "Tests" }).getByRole("tab", { name: "Testcase" });
+      await expectUnchanged(async () => String(await testcaseTab.getAttribute("aria-selected")), "true", 1500);
+      await cd.getByRole("region", { name: "Tests" }).getByRole("tab", { name: "Test Result" }).click();
       await navButton(cd, 2).click();
       await expect.poll(() => editorText(cd)).toBe(PRODUCT);
       await expect(results(cd)).toHaveCount(1); // history re-fetched, still filed per question

@@ -14,13 +14,16 @@ export function TestPanel({
   question,
   roomQuestion,
   entries,
+  ended = false,
 }: {
   question: CandidateQuestionView;
   /** The room question being viewed — only in multi-question rooms (scopes the results). */
   roomQuestion?: RoomQuestionView;
   entries: SubmissionEntry[];
+  /** The interview has ended: opening it is for reviewing results, so start on Test Result. */
+  ended?: boolean;
 }) {
-  const [tab, setTab] = useState<Tab>("cases");
+  const [tab, setTab] = useState<Tab>(ended ? "result" : "cases");
   const [caseIndex, setCaseIndex] = useState(0);
   const cases = question.publicTests;
   const current = cases[Math.min(caseIndex, cases.length - 1)];
@@ -28,18 +31,22 @@ export function TestPanel({
   // Back to Case 1 when the question changes.
   useEffect(() => setCaseIndex(0), [question.versionId]);
 
-  // A new run for this question (ours, or the candidate's for the interviewer) → show its result.
-  const latest = entries.find((e) => !roomQuestion || questionOf(e) === roomQuestion.id)?.submissionId;
-  const seenLatest = useRef(latest);
+  /*
+   * A run starting for this question (ours, or the candidate's for the interviewer) → show its result.
+   * "Starting" = a new newest entry that is still pending (our submit or the queued event). One effect
+   * tracks the question and its newest run together, and handles a question change first, so:
+   *  - switching to a question that already has runs keeps the current tab;
+   *  - loading history (on open, reload or reconnect) doesn't count as a run starting.
+   */
+  const newest = entries.find((e) => !roomQuestion || questionOf(e) === roomQuestion.id);
+  const questionKey = roomQuestion?.id ?? "";
+  const seen = useRef({ questionKey, newestId: newest?.submissionId });
   useEffect(() => {
-    if (latest && latest !== seenLatest.current) setTab("result");
-    seenLatest.current = latest;
-  }, [latest]);
-  // Switching questions keeps the tab but must not count the other question's history as "new".
-  useEffect(() => {
-    seenLatest.current = latest;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomQuestion?.id]);
+    const prev = seen.current;
+    seen.current = { questionKey, newestId: newest?.submissionId };
+    if (prev.questionKey !== questionKey) return; // switched questions: not a new run
+    if (newest && newest.submissionId !== prev.newestId && newest.pending) setTab("result");
+  }, [questionKey, newest]);
 
   return (
     <section className="pane tests-pane" aria-label="Tests">
