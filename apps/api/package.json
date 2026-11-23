@@ -9,8 +9,9 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.scripts.json",
     "test": "vitest run --passWithNoTests",
-    "smoke": "tsx scripts/smoke.ts",
-    "smoke:realtime": "tsx scripts/realtime-smoke.ts"
+    "smoke": "tsx scripts/smoke.ts && tsx scripts/questions-smoke.ts",
+    "smoke:realtime": "tsx scripts/realtime-smoke.ts",
+    "smoke:questions": "tsx scripts/questions-smoke.ts"
   },
   "dependencies": {
     "@coderoom/db": "workspace:^",

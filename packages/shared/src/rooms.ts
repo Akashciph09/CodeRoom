@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CandidateQuestionView } from "./questions.js";
 import { Role } from "./roles.js";
 
 export const CreateRoomRequest = z.object({
@@ -23,15 +24,12 @@ export const JoinRoomResponse = z.object({
 });
 export type JoinRoomResponse = z.infer<typeof JoinRoomResponse>;
 
-export const PublicTestCase = z.object({
-  id: z.string(),
-  input: z.string(),
-  expectedOutput: z.string(),
-});
-
+/** A question the caller can open a room with: their own ready questions plus shared library ones. */
 export const QuestionSummary = z.object({
   id: z.string().uuid(),
   title: z.string(),
+  version: z.number().int(),
+  owned: z.boolean(),
 });
 export type QuestionSummary = z.infer<typeof QuestionSummary>;
 
@@ -50,11 +48,7 @@ export const RoomView = z.object({
   role: Role,
   /** Only returned to the interviewer, so they can share it. */
   inviteCode: z.string().optional(),
-  question: z.object({
-    id: z.string().uuid(),
-    title: z.string(),
-    prompt: z.string(),
-    publicTests: z.array(PublicTestCase),
-  }),
+  /** The pinned version the room was created with — later edits to the question don't change it. */
+  question: CandidateQuestionView,
 });
 export type RoomView = z.infer<typeof RoomView>;

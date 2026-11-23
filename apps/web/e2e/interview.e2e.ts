@@ -38,7 +38,7 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
       await expect(page.locator(".badge.interviewer")).toBeVisible();
       await expect(page.getByText("live", { exact: true })).toBeVisible();
       // Starter code was seeded into the shared document.
-      await expect.poll(() => editorText(page)).toContain("def solve");
+      await expect.poll(() => editorText(page)).not.toBe(""); // starter code seeded
       // Interviewers can't run code.
       await expect(page.getByRole("button", { name: "Submit" })).toHaveCount(0);
     });
@@ -60,7 +60,7 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
       await expect(page).toHaveURL(roomUrl);
       await expect(page.locator(".badge.candidate")).toBeVisible();
       await expect(page.getByRole("button", { name: "Submit" })).toBeVisible();
-      await expect.poll(() => editorText(page)).toContain("def solve");
+      await expect.poll(() => editorText(page)).not.toBe(""); // starter code seeded
     });
 
     await test.step("both see each other in the room", async () => {

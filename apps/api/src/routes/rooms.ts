@@ -1,16 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  questions,
-  roomParticipants,
-  rooms,
-  submissions,
-  testCases,
-} from "@coderoom/db";
+import { and, desc, eq, isNull, or, questions, questionVersions, roomParticipants, rooms, submissions } from "@coderoom/db";
 import {
   CreateRoomRequest,
   JoinRoomRequest,
@@ -22,6 +12,7 @@ import {
   type RoomView,
 } from "@coderoom/shared";
 import { redis } from "../queue.js";
+import { candidateView, latestPublished } from "../services/questions.js";
 import { resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
@@ -30,7 +21,12 @@ import { UuidParam } from "./params.js";
 
 export const roomsRouter: Router = Router();
 
-/** Creator becomes the room's interviewer. TODO: restrict room creation to an org/interviewer allowlist. */
+/**
+ * Creator becomes the room's interviewer. The room pins the question's latest READY version: later
+ * edits create new versions and never change what this interview runs against.
+ * Allowed questions: the caller's own, or shared library questions (no owner).
+ * TODO: restrict room creation to an org/interviewer allowlist.
+ */
 roomsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -38,18 +34,19 @@ roomsRouter.post(
     const userId = req.user!.userId;
 
     const [question] = await db
-      .select({ status: questions.status })
+      .select({ id: questions.id })
       .from(questions)
-      .where(eq(questions.id, questionId))
+      .where(and(eq(questions.id, questionId), or(eq(questions.createdBy, userId), isNull(questions.createdBy))))
       .limit(1);
     if (!question) throw new NotFound("Question not found");
-    if (question.status !== "approved") throw new BadRequest("Question is not approved yet");
+    const version = await latestPublished(questionId);
+    if (!version) throw new BadRequest("Question isn't ready yet — mark it ready before using it in an interview");
 
     const inviteCode = randomBytes(12).toString("base64url");
     const room = await db.transaction(async (tx) => {
       const [created] = await tx
         .insert(rooms)
-        .values({ questionId, createdBy: userId, inviteCode })
+        .values({ questionVersionId: version.id, createdBy: userId, inviteCode })
         .returning({ id: rooms.id });
       await tx.insert(roomParticipants).values({ roomId: created!.id, userId, role: "interviewer" });
       return created!;
@@ -99,32 +96,19 @@ roomsRouter.get(
     const role = await requireRoomRole(roomId, req.user!.userId);
 
     const [row] = await db
-      .select({
-        status: rooms.status,
-        inviteCode: rooms.inviteCode,
-        questionId: questions.id,
-        title: questions.title,
-        prompt: questions.prompt,
-      })
+      .select({ status: rooms.status, inviteCode: rooms.inviteCode, questionVersionId: rooms.questionVersionId })
       .from(rooms)
-      .innerJoin(questions, eq(questions.id, rooms.questionId))
       .where(eq(rooms.id, roomId))
       .limit(1);
     if (!row) throw new NotFound();
-
-    // Hidden tests are filtered in SQL so they never enter this process's response path.
-    const publicTests = await db
-      .select({ id: testCases.id, input: testCases.input, expectedOutput: testCases.expectedOutput })
-      .from(testCases)
-      .where(and(eq(testCases.questionId, row.questionId), eq(testCases.isHidden, false)))
-      .orderBy(asc(testCases.position));
 
     const view: RoomView = {
       roomId,
       status: row.status,
       role,
       ...(role === "interviewer" ? { inviteCode: row.inviteCode } : {}),
-      question: { id: row.questionId, title: row.title, prompt: row.prompt, publicTests },
+      // The pinned version, candidate view (public tests only, filtered in SQL).
+      question: await candidateView(row.questionVersionId),
     };
     res.json(view);
   }),
@@ -187,12 +171,12 @@ roomsRouter.get(
         roomId: rooms.id,
         role: roomParticipants.role,
         status: rooms.status,
-        questionTitle: questions.title,
+        questionTitle: questionVersions.title,
         createdAt: rooms.createdAt,
       })
       .from(roomParticipants)
       .innerJoin(rooms, eq(rooms.id, roomParticipants.roomId))
-      .innerJoin(questions, eq(questions.id, rooms.questionId))
+      .innerJoin(questionVersions, eq(questionVersions.id, rooms.questionVersionId))
       .where(eq(roomParticipants.userId, req.user!.userId))
       .orderBy(desc(rooms.createdAt))
       .limit(50);

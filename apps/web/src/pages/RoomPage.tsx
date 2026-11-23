@@ -18,11 +18,21 @@ import {
   type RoomDoc,
 } from "../lib/realtime";
 
-const STARTER: Record<Language, string> = {
+/** Used when the question's author didn't provide starter code for a language. */
+const DEFAULT_STARTER: Record<Language, string> = {
   python: "import sys\n\n\ndef solve(data: str) -> str:\n    # TODO\n    return \"\"\n\n\nprint(solve(sys.stdin.read()))\n",
   javascript:
     "const input = require('fs').readFileSync(0, 'utf8');\n\nfunction solve(data) {\n  // TODO\n  return '';\n}\n\nconsole.log(solve(input));\n",
 };
+
+const starterFor = (room: RoomView, language: Language) =>
+  room.question.starterCode[language] ?? DEFAULT_STARTER[language];
+
+/** Start in the first language the author wrote starter code for (Python if both or neither). */
+const initialLanguage = (room: RoomView): Language =>
+  room.question.starterCode.python !== undefined || room.question.starterCode.javascript === undefined
+    ? "python"
+    : "javascript";
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
@@ -76,10 +86,11 @@ export function RoomPage() {
       if (!synced) return;
       syncLanguage();
       if (room.role === "interviewer" && !rd.meta.get("initialized")) {
+        const lang = initialLanguage(room);
         rd.doc.transact(() => {
           rd.meta.set("initialized", true);
-          rd.meta.set("language", "python");
-          if (rd.text.length === 0) rd.text.insert(0, STARTER.python);
+          rd.meta.set("language", lang);
+          if (rd.text.length === 0) rd.text.insert(0, starterFor(room, lang));
         });
       }
     };
@@ -116,18 +127,18 @@ export function RoomPage() {
 
   const changeLanguage = useCallback(
     (next: Language) => {
-      if (!roomDoc) return;
+      if (!roomDoc || !room) return;
       const previous = getLanguage(roomDoc.meta);
       roomDoc.doc.transact(() => {
         roomDoc.meta.set("language", next);
         // Swap the starter only if the code is still the untouched starter.
-        if (roomDoc.text.toString() === STARTER[previous]) {
+        if (roomDoc.text.toString() === starterFor(room, previous)) {
           roomDoc.text.delete(0, roomDoc.text.length);
-          roomDoc.text.insert(0, STARTER[next]);
+          roomDoc.text.insert(0, starterFor(room, next));
         }
       });
     },
-    [roomDoc],
+    [roomDoc, room],
   );
 
   /**
@@ -220,7 +231,7 @@ export function RoomPage() {
       {closed && <div className="banner">This interview has ended. The code is read-only.</div>}
 
       <div className="room-layout">
-        <QuestionPanel room={room} />
+        <QuestionPanel question={room.question} />
 
         <section className="editor-pane">
           <div className="editor-toolbar">

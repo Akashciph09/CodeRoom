@@ -5,6 +5,8 @@ export class HttpError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** Extra machine-readable fields merged into the JSON body (e.g. `problems`). */
+    public readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -69,7 +71,7 @@ export const errorMiddleware: ErrorRequestHandler = (err, _req, res, _next) => {
     if (err instanceof TooManyRequests && err.retryAfterSeconds) {
       res.setHeader("Retry-After", String(err.retryAfterSeconds));
     }
-    res.status(err.status).json({ error: err.message });
+    res.status(err.status).json({ ...err.details, error: err.message });
     return;
   }
   console.error(err);

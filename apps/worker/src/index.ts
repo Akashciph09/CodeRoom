@@ -28,7 +28,7 @@ async function processJob(job: Job) {
   const tests = await db
     .select()
     .from(testCases)
-    .where(eq(testCases.questionId, submission.questionId))
+    .where(eq(testCases.versionId, submission.questionVersionId)) // the exact version the room pinned
     .orderBy(asc(testCases.position));
   const selected = tests.filter((t) => submission.mode === "submit" || !t.isHidden);
 

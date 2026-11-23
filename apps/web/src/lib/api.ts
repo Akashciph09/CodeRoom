@@ -1,10 +1,15 @@
 import type {
+  CandidateQuestionView,
   CandidateSubmissionView,
   CreateRoomResponse,
   CreateSubmissionRequest,
   CreateSubmissionResponse,
   InterviewerSubmissionView,
   JoinRoomResponse,
+  MyQuestionSummary,
+  PublishProblem,
+  QuestionDetail,
+  QuestionDraftInput,
   QuestionSummary,
   RoomSummary,
   RoomView,
@@ -20,10 +25,19 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /** Parsed JSON error body (e.g. `problems` when a question can't be marked ready). */
+    public readonly body: Record<string, unknown> | null = null,
   ) {
     super(message);
   }
 }
+
+/** True if this is the server saying the draft changed elsewhere since this tab loaded it. */
+export const isDraftConflict = (err: unknown) => err instanceof ApiError && err.body?.conflict === "draft_changed";
+
+/** The reasons a question can't be marked ready, if that's what this error is. */
+export const publishProblemsOf = (err: unknown): PublishProblem[] =>
+  err instanceof ApiError && Array.isArray(err.body?.problems) ? (err.body.problems as PublishProblem[]) : [];
 
 async function request<T>(
   method: string,
@@ -42,7 +56,10 @@ async function request<T>(
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = await res.json().catch(() => null);
-  if (!res.ok) throw new ApiError(res.status, (json as { error?: string } | null)?.error ?? res.statusText);
+  if (!res.ok) {
+    const body = (json ?? null) as Record<string, unknown> | null;
+    throw new ApiError(res.status, (body?.error as string | undefined) ?? res.statusText, body);
+  }
   return json as T;
 }
 
@@ -56,6 +73,19 @@ export const api = {
   closeRoom: (roomId: string) => request<{ roomId: string; status: "closed" }>("POST", `/rooms/${roomId}/close`),
   submit: (body: CreateSubmissionRequest, idempotencyKey: string) =>
     request<CreateSubmissionResponse>("POST", "/submissions", body, { "idempotency-key": idempotencyKey }),
+
+  // Question authoring (owner-only except `questions`)
+  myQuestions: () => request<MyQuestionSummary[]>("GET", "/questions/mine"),
+  question: (id: string) => request<QuestionDetail>("GET", `/questions/${id}`),
+  createQuestion: (title?: string) => request<QuestionDetail>("POST", "/questions", title ? { title } : {}),
+  saveDraft: (id: string, draft: QuestionDraftInput) => request<QuestionDetail>("PUT", `/questions/${id}/draft`, draft),
+  discardDraft: (id: string, revision: number) =>
+    request<QuestionDetail>("DELETE", `/questions/${id}/draft`, { revision }),
+  publishQuestion: (id: string, revision: number) =>
+    request<QuestionDetail>("POST", `/questions/${id}/publish`, { revision }),
+  deleteQuestion: (id: string, revision: number) => request<void>("DELETE", `/questions/${id}`, { revision }),
+  previewQuestion: (id: string, of: "draft" | "latest") =>
+    request<CandidateQuestionView>("GET", `/questions/${id}/preview?of=${of}`),
 };
 
 /** No response, or a server-side failure: the request may or may not have been applied. */

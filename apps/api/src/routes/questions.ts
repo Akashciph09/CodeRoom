@@ -1,20 +1,91 @@
 import { Router } from "express";
-import { asc, eq, questions } from "@coderoom/db";
-import type { QuestionSummary } from "@coderoom/shared";
-import { db } from "../db.js";
-import { asyncHandler } from "../errors.js";
+import { z } from "zod";
+import { CreateQuestionRequest, DraftRevisionRequest, QuestionDraftInput } from "@coderoom/shared";
+import { asyncHandler, NotFound } from "../errors.js";
+import {
+  candidateView,
+  createQuestion,
+  deleteQuestion,
+  discardDraft,
+  latestPublished,
+  myQuestions,
+  publishDraft,
+  questionDetail,
+  requireOwnedQuestion,
+  saveDraft,
+  usableQuestions,
+} from "../services/questions.js";
+import { UuidParam } from "./params.js";
 
 export const questionsRouter: Router = Router();
 
-/** Approved questions an interviewer can open a room with. Titles only — tests stay server-side. */
+/** Questions the caller can open an interview with (own ready questions + shared library). */
 questionsRouter.get(
   "/",
-  asyncHandler(async (_req, res) => {
-    const rows: QuestionSummary[] = await db
-      .select({ id: questions.id, title: questions.title })
-      .from(questions)
-      .where(eq(questions.status, "approved"))
-      .orderBy(asc(questions.title));
-    res.json(rows);
+  asyncHandler(async (req, res) => {
+    res.json(await usableQuestions(req.user!.userId));
+  }),
+);
+
+/** The caller's own questions, with draft/ready status. */
+questionsRouter.get(
+  "/mine",
+  asyncHandler(async (req, res) => {
+    res.json(await myQuestions(req.user!.userId));
+  }),
+);
+
+questionsRouter.post(
+  "/",
+  asyncHandler(async (req, res) => {
+    const { title } = CreateQuestionRequest.parse(req.body ?? {});
+    res.status(201).json(await createQuestion(req.user!.userId, title));
+  }),
+);
+
+// Everything below acts on one question and is owner-only (404 for anyone else).
+const owned = (handler: (questionId: string, req: Parameters<Parameters<typeof asyncHandler>[0]>[0]) => Promise<unknown>) =>
+  asyncHandler(async (req, res) => {
+    const questionId = UuidParam.parse(req.params.id);
+    await requireOwnedQuestion(questionId, req.user!.userId);
+    const result = await handler(questionId, req);
+    if (result === undefined) res.status(204).end();
+    else res.json(result);
+  });
+
+questionsRouter.get("/:id", owned((id) => questionDetail(id)));
+
+/** Save the full draft (creates one if the question is currently ready). 409 if `baseRevision` isn't the question's current revision. */
+questionsRouter.put("/:id/draft", owned((id, req) => saveDraft(id, QuestionDraftInput.parse(req.body))));
+
+/** Body `{ revision }`: the question state the author is discarding from. 409 if it changed since. */
+questionsRouter.delete("/:id/draft", owned((id, req) => discardDraft(id, DraftRevisionRequest.parse(req.body).revision)));
+
+/**
+ * Mark the draft ready → next immutable version. Body `{ revision }`: the question state the author
+ * reviewed (409 if it changed since). 400 with `problems` if it isn't complete.
+ */
+questionsRouter.post("/:id/publish", owned((id, req) => publishDraft(id, DraftRevisionRequest.parse(req.body).revision)));
+
+/** Body `{ revision }`. 409 if the question changed since. */
+questionsRouter.delete("/:id", owned(async (id, req) => void (await deleteQuestion(id, DraftRevisionRequest.parse(req.body).revision))));
+
+/**
+ * Exactly what a candidate would see, produced by the same code rooms use (public tests only).
+ * `?of=draft` (default when a draft exists) or `?of=latest`.
+ */
+questionsRouter.get(
+  "/:id/preview",
+  owned(async (id, req) => {
+    const of = z.enum(["draft", "latest"]).optional().parse(req.query.of);
+    const detail = await questionDetail(id);
+    const versionId =
+      of === "latest"
+        ? detail.latest?.id
+        : of === "draft"
+          ? detail.draft?.id
+          : (detail.draft?.id ?? (await latestPublished(id))?.id);
+    if (!versionId) throw new NotFound(`No ${of ?? "version"} to preview`);
+    return candidateView(versionId);
   }),
 );

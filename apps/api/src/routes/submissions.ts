@@ -74,7 +74,7 @@ submissionsRouter.post(
 
     await requireRoomRole(body.roomId, userId, "candidate");
     const [room] = await db
-      .select({ questionId: rooms.questionId, status: rooms.status })
+      .select({ questionVersionId: rooms.questionVersionId, status: rooms.status })
       .from(rooms)
       .where(eq(rooms.id, body.roomId))
       .limit(1);
@@ -85,7 +85,7 @@ submissionsRouter.post(
       .insert(submissions)
       .values({
         roomId: body.roomId,
-        questionId: room.questionId,
+        questionVersionId: room.questionVersionId, // graded against the room's pinned version
         userId,
         language: body.language,
         mode: body.mode,

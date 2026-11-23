@@ -12,6 +12,9 @@ export function TopBar({ children }: { children?: ReactNode }) {
       <div className="topbar-center">{children}</div>
       {session && (
         <div className="topbar-user">
+          <Link to="/questions" className="small">
+            My questions
+          </Link>
           <span className="muted">{displayName(session)}</span>
           <button className="ghost" onClick={() => auth.signOut()}>
             Sign out

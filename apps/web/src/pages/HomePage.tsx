@@ -52,13 +52,17 @@ export function HomePage() {
         <div className="home-grid">
           <form className="card" onSubmit={createRoom}>
             <h2>Start an interview</h2>
-            <p className="muted">You'll be the interviewer. Share the invite link with the candidate.</p>
+            <p className="muted">
+              You'll be the interviewer. Share the invite link with the candidate. Use a library question or{" "}
+              <Link to="/questions">one of your own</Link>.
+            </p>
             <label>
               Question
               <select value={questionId} onChange={(e) => setQuestionId(e.target.value)} required>
                 {questions.map((q) => (
                   <option key={q.id} value={q.id}>
-                    {q.title}
+                    {q.title} · v{q.version}
+                    {q.owned ? " (yours)" : " (library)"}
                   </option>
                 ))}
               </select>

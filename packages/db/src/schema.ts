@@ -5,6 +5,7 @@ import {
   customType,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -27,7 +28,7 @@ export const languageEnum = pgEnum("language", Language.options);
 export const submissionModeEnum = pgEnum("submission_mode", SubmissionMode.options);
 export const submissionStatusEnum = pgEnum("submission_status", SubmissionStatus.options);
 export const verdictEnum = pgEnum("verdict", Verdict.options);
-export const questionStatusEnum = pgEnum("question_status", ["draft", "approved"]);
+export const questionVersionStatusEnum = pgEnum("question_version_status", ["draft", "published"]);
 export const roomStatusEnum = pgEnum("room_status", ["open", "closed"]);
 
 const timestamps = {
@@ -38,36 +39,79 @@ const timestamps = {
     .$onUpdate(() => new Date()),
 };
 
+/**
+ * A question's identity and owner. Its content (title, statement, tests…) lives in `question_versions`.
+ * `created_by` is the owner — only they can edit it. NULL owner = shared library question (seed data):
+ * anyone can run interviews with it, nobody can edit it.
+ */
 export const questions = pgTable("questions", {
   id: uuid("id").primaryKey().defaultRandom(),
-  title: text("title").notNull(),
-  prompt: text("prompt").notNull(),
-  /** AI-generated questions start as drafts; only approved questions can be used in rooms. */
-  status: questionStatusEnum("status").notNull().default("draft"),
   createdBy: uuid("created_by").references(() => authUsers.id, { onDelete: "set null" }),
+  /**
+   * Optimistic-concurrency counter for the question's whole editing lifecycle: +1 on every draft save,
+   * draft creation, publish and discard. It never resets (unlike a per-draft counter, which restarts
+   * when a draft is replaced — the ABA problem), so a writer that sends the revision it started from
+   * is guaranteed to be acting on exactly the state it saw.
+   */
+  revision: integer("revision").notNull().default(1),
   ...timestamps,
 }).enableRLS();
 
-export const testCases = pgTable(
-  "test_cases",
+/**
+ * A question's content lives in versions. At most one `draft` per question is editable; publishing
+ * gives it the next version number and makes it immutable (enforced by DB triggers, not just the API).
+ * Rooms pin a published version, so later edits never change what an interview ran against.
+ */
+export const questionVersions = pgTable(
+  "question_versions",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     questionId: uuid("question_id")
       .notNull()
       .references(() => questions.id, { onDelete: "cascade" }),
+    /** 1, 2, 3… assigned on publish; NULL while a draft. */
+    version: integer("version"),
+    status: questionVersionStatusEnum("status").notNull().default("draft"),
+    title: text("title").notNull(),
+    statement: text("statement").notNull(),
+    constraints: text("constraints").notNull().default(""),
+    /** Per-language starter code, e.g. { "python": "...", "javascript": "..." }. */
+    starterCode: jsonb("starter_code").$type<Partial<Record<Language, string>>>().notNull().default({}),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    uniqueIndex("question_versions_number").on(t.questionId, t.version),
+    // One editable draft per question.
+    uniqueIndex("question_versions_one_draft").on(t.questionId).where(sql`${t.status} = 'draft'`),
+    check(
+      "published_has_number",
+      sql`(${t.status} = 'published') = (${t.version} IS NOT NULL AND ${t.publishedAt} IS NOT NULL)`,
+    ),
+  ],
+).enableRLS();
+
+export const testCases = pgTable(
+  "test_cases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    versionId: uuid("version_id")
+      .notNull()
+      .references(() => questionVersions.id, { onDelete: "cascade" }),
     position: integer("position").notNull(),
     input: text("input").notNull(),
     expectedOutput: text("expected_output").notNull(),
     isHidden: boolean("is_hidden").notNull().default(false),
   },
-  (t) => [index("test_cases_question_idx").on(t.questionId, t.position)],
+  (t) => [index("test_cases_version_idx").on(t.versionId, t.position)],
 ).enableRLS();
 
 export const rooms = pgTable("rooms", {
   id: uuid("id").primaryKey().defaultRandom(),
-  questionId: uuid("question_id")
+  /** The exact published version this interview uses. Never changes after the room is created. */
+  questionVersionId: uuid("question_version_id")
     .notNull()
-    .references(() => questions.id, { onDelete: "restrict" }),
+    .references(() => questionVersions.id, { onDelete: "restrict" }),
   createdBy: uuid("created_by")
     .notNull()
     .references(() => authUsers.id, { onDelete: "cascade" }),
@@ -99,9 +143,10 @@ export const submissions = pgTable(
     roomId: uuid("room_id")
       .notNull()
       .references(() => rooms.id, { onDelete: "cascade" }),
-    questionId: uuid("question_id")
+    /** Copied from the room at submit time; results are graded against this version's tests. */
+    questionVersionId: uuid("question_version_id")
       .notNull()
-      .references(() => questions.id, { onDelete: "restrict" }),
+      .references(() => questionVersions.id, { onDelete: "restrict" }),
     userId: uuid("user_id")
       .notNull()
       .references(() => authUsers.id, { onDelete: "cascade" }),
