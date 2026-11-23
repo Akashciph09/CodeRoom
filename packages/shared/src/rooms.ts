@@ -48,12 +48,24 @@ export const QuestionSummary = z.object({
 });
 export type QuestionSummary = z.infer<typeof QuestionSummary>;
 
+/** A room's candidate as listed for its interviewer (never sent to candidates). */
+export const RoomCandidate = z.object({
+  name: z.string(),
+  email: z.string(),
+});
+export type RoomCandidate = z.infer<typeof RoomCandidate>;
+
 export const RoomSummary = z.object({
   roomId: z.string().uuid(),
   role: Role,
   status: z.enum(["open", "closed"]),
   questionTitle: z.string(),
   createdAt: z.string(),
+  /**
+   * Interviewer rows only (ADR 0013), in join order. Absent on rooms where the caller is the candidate.
+   * More than one only for rooms from before ADR 0012.
+   */
+  candidates: z.array(RoomCandidate).optional(),
 });
 export type RoomSummary = z.infer<typeof RoomSummary>;
 

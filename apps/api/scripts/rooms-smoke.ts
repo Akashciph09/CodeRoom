@@ -338,6 +338,50 @@ async function main() {
       `(Alice ${a.score}, Bob ${b.score})`,
     );
     check("the review shows the room's one candidate and their whole timeline", review.json.candidates.length === 1 && a.submissions.length === 5 && b.submissions.length === 1);
+    // --- Room list (ADR 0013): interviewer rows carry candidate name and email — nothing else ---------
+    const ivList = (await call("GET", "/rooms", interviewer)).json as any[];
+    const aliceRow = ivList.find((r) => r.roomId === rvId);
+    check(
+      "interviewer's room list shows the candidate's name and email, and no score",
+      aliceRow?.candidates?.length === 1 &&
+        aliceRow.candidates[0].name.startsWith("rv-alice") &&
+        /^rv-alice-.*@example\.test$/.test(aliceRow.candidates[0].email) &&
+        JSON.stringify(Object.keys(aliceRow.candidates[0]).sort()) === '["email","name"]',
+      `(${JSON.stringify(aliceRow?.candidates)})`,
+    );
+    const empty = await create(interviewer, [QUESTION_ID]);
+    const emptyRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === empty.json.roomId);
+    check("a room nobody joined lists no candidates", Array.isArray(emptyRow?.candidates) && emptyRow.candidates.length === 0);
+    const aliceList = await call("GET", "/rooms", alice);
+    const aliceJson = JSON.stringify(aliceList.json);
+    check(
+      "a candidate's own room list carries no candidate details (no names or emails)",
+      aliceList.status === 200 &&
+        (aliceList.json as any[]).some((r) => r.roomId === rvId) &&
+        (aliceList.json as any[]).every((r) => r.candidates === undefined) &&
+        !aliceJson.includes("@example.test"),
+    );
+
+    // A room from before one-candidate-per-room (ADR 0012): both candidates, in join order.
+    const legacyRoom = await create(interviewer, [QUESTION_ID]);
+    const legacyFirst = await signUp("legacy-first");
+    await call("POST", "/rooms/join", legacyFirst, { inviteCode: legacyRoom.json.inviteCode });
+    const legacySecond = await signUp("legacy-second");
+    const { db: legacyDb, close: closeLegacyDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    await legacyDb.insert(roomParticipants).values({
+      roomId: legacyRoom.json.roomId,
+      userId: userIdOf(legacySecond),
+      role: "candidate",
+      legacyExtra: true, // exactly how the ADR 0012 migration kept pre-existing extra candidates
+    });
+    await closeLegacyDb();
+    const legacyRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === legacyRoom.json.roomId);
+    check(
+      "a legacy room lists every candidate, in join order",
+      legacyRow?.candidates?.map((c: any) => c.name.split("-")[1]).join() === "first,second",
+      `(${JSON.stringify(legacyRow?.candidates)})`,
+    );
+
     const rq3View = review.json.questions.find((x: any) => x.id === rq3);
     check(
       "reveal windows for revealed questions only",
