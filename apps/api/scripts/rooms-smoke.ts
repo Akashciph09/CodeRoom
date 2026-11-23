@@ -355,7 +355,7 @@ async function main() {
     check("the first person with the link becomes the candidate", (await join(first)).status === 200);
     check("the candidate can rejoin (another device, a reload) → 200", (await join(first)).status === 200);
     const refused = await join(second);
-    check("anyone else with the link → 409", refused.status === 409 && /already has a candidate/.test(refused.json?.error ?? ""), `(${refused.status} ${refused.json?.error})`);
+    check("anyone else with the link → 409 room_full", refused.status === 409 && refused.json?.conflict === "room_full", `(${refused.status} ${JSON.stringify(refused.json)})`);
     const [soloQ] = (await roomQuestionIds(soloId, interviewer)) as [string];
     check(
       "…and gets no access: room 403, submit 403, review 403",
@@ -363,7 +363,15 @@ async function main() {
         (await call("POST", "/submissions", second, { roomId: soloId, roomQuestionId: soloQ, language: "python", mode: "run", code: "print(1)" })).status === 403 &&
         (await call("GET", `/rooms/${soloId}/review`, second)).status === 403,
     );
-    check("the interviewer can't take the candidate seat → 409", (await join(interviewer)).status === 409);
+    // The interviewer opening their own link is sent to the room as interviewer; the seat isn't touched.
+    const own = await create(interviewer, [QUESTION_ID]);
+    const ownJoin = await join(interviewer, own.json.inviteCode);
+    const seat = await join(first, own.json.inviteCode);
+    check(
+      "the interviewer's own link → 200 as interviewer, and the candidate seat stays free",
+      ownJoin.status === 200 && ownJoin.json.role === "interviewer" && ownJoin.json.roomId === own.json.roomId && seat.status === 200,
+      `(${ownJoin.status} ${ownJoin.json?.role}; then candidate ${seat.status})`,
+    );
 
     // Two people opening the link at the same instant: the database lets exactly one in, every time.
     const { db: raceDb, close: closeRaceDb } = createDb(process.env.DATABASE_URL!, { max: 1 });

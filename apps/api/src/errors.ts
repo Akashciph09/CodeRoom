@@ -36,6 +36,13 @@ export class Conflict extends HttpError {
     super(409, message);
   }
 }
+/** The room already has its candidate (ADR 0012). Carries a code so clients don't match on message text. */
+export class RoomFull extends HttpError {
+  constructor() {
+    super(409, "This interview already has a candidate", { conflict: "room_full" });
+  }
+}
+
 export class UnprocessableEntity extends HttpError {
   constructor(message = "Unprocessable entity") {
     super(422, message);

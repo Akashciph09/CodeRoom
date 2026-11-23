@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { TopBar } from "../components/TopBar";
-import { api, ApiError } from "../lib/api";
+import { api, isRoomFull } from "../lib/api";
 
 /** Invite links land here: /join/<code>. Joining grants the candidate role. */
 export function JoinPage() {
@@ -18,7 +18,7 @@ export function JoinPage() {
       .then(({ roomId }) => navigate(`/rooms/${roomId}`, { replace: true }))
       .catch((err: Error) =>
         setError(
-          err instanceof ApiError && err.status === 409 && /candidate/.test(err.message)
+          isRoomFull(err)
             ? "This interview already has a candidate. Each interview is one interviewer and one candidate — ask the interviewer for your own interview link."
             : err.message,
         ),

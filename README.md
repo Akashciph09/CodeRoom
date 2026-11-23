@@ -252,7 +252,7 @@ All endpoints except `/health` require `Authorization: Bearer <supabase access t
 | `GET` | `/rooms` | any user | Rooms the caller participates in |
 | `GET` | `/rooms/:id/review` | interviewer | Per candidate: test score + breakdown, reveal window per question, every run/submission with code (ADR 0011) |
 | `POST` | `/rooms` | any user | `{ questionIds, questionPoints? }` (1–5, ordered; your own or library questions; points 1–100 each, default equal). **Pins each question's latest ready version**; Q1 is revealed. Caller becomes interviewer |
-| `POST` | `/rooms/join` | any user | Join with invite code as the room's candidate; the same candidate can rejoin, anyone else gets `409` (one candidate per room) |
+| `POST` | `/rooms/join` | any user | Join with invite code as the room's candidate; the same candidate can rejoin, anyone else gets `409` `{ conflict: "room_full" }` (one candidate per room); the interviewer's own link returns `{ role: "interviewer" }` |
 | `GET` | `/rooms/:id` | participant | Questions (pinned versions, public tests only), caller's role, invite code for the interviewer. Candidates get only revealed questions |
 | `POST` | `/rooms/:id/questions/:roomQuestionId/reveal` | interviewer | Reveal the next question to the candidate (in order; repeating is a no-op; `409` if out of order) |
 | `GET` | `/rooms/:id/submissions` | participant | History, newest first, in the caller's role view (candidates see only their own) |
@@ -311,7 +311,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~100 s for all twenty-two tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~100 s for all twenty-three tests):
 
 | Step | Checked |
 |---|---|
