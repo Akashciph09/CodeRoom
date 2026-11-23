@@ -342,7 +342,8 @@ export function RoomPage() {
           </button>
         )}
         {room.role === "interviewer" && (
-          <Link to={`/rooms/${room.roomId}/review`} className="button-link" target="_blank" rel="noopener">
+          // Same tab: sign-in is per tab (lib/auth.tsx), so a new tab would open signed out.
+          <Link to={`/rooms/${room.roomId}/review`} className="button-link">
             Review
           </Link>
         )}

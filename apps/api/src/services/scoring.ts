@@ -56,10 +56,11 @@ export function scoreCandidate(
 }
 
 /**
- * Time spent per question: from its reveal to the next reveal (in reveal order), or to `end` for the
- * last one. Unrevealed questions get no time.
+ * Reveal window per question: from its reveal to the next reveal (in reveal order), or to `end` for
+ * the last one. Unrevealed questions get none. It's when the question was the newest one on screen,
+ * not measured candidate effort (they can go back to earlier questions; Q1 starts at room creation).
  */
-export function timePerQuestion(questions: { id: string; revealedAt: Date | null }[], end: Date): Map<string, number> {
+export function revealWindows(questions: { id: string; revealedAt: Date | null }[], end: Date): Map<string, number> {
   const revealed = questions
     .filter((q): q is { id: string; revealedAt: Date } => q.revealedAt !== null)
     .sort((a, b) => a.revealedAt.getTime() - b.revealedAt.getTime());

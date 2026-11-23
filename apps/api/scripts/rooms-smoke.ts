@@ -335,8 +335,8 @@ async function main() {
     check("each candidate has their own timeline", a.submissions.length === 5 && b.submissions.length === 1);
     const rq3View = review.json.questions.find((x: any) => x.id === rq3);
     check(
-      "time per question for revealed questions only",
-      review.json.questions.find((x: any) => x.id === rq1).timeSpentMs >= 0 && rq3View.timeSpentMs === undefined && rq3View.points === 50,
+      "reveal windows for revealed questions only",
+      review.json.questions.find((x: any) => x.id === rq1).revealWindowMs >= 0 && rq3View.revealWindowMs === undefined && rq3View.points === 50,
     );
   }
 

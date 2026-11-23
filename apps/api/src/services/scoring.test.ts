@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreCandidate, timePerQuestion, type ScoredSubmission } from "./scoring.js";
+import { revealWindows, scoreCandidate, type ScoredSubmission } from "./scoring.js";
 
 const at = (min: number) => new Date(Date.UTC(2026, 0, 1, 10, min));
 let n = 0;
@@ -63,9 +63,9 @@ describe("test score", () => {
   });
 });
 
-describe("time per question", () => {
+describe("reveal windows", () => {
   it("runs from each reveal to the next, the last one to the end; unrevealed get none", () => {
-    const times = timePerQuestion(
+    const times = revealWindows(
       [
         { id: "q1", revealedAt: at(0) },
         { id: "q2", revealedAt: at(15) },

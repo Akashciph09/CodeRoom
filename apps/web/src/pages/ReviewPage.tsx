@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { ReviewCandidate, ReviewQuestion, ReviewSubmission, RoomReview, Verdict } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError } from "../lib/api";
 import { lineDiff } from "../lib/lineDiff";
+import { connectRoomEvents } from "../lib/realtime";
 import { formatElapsed } from "../lib/timer";
+
+/** While any submission is still being graded, re-fetch this often. */
+const REVIEW_POLL_MS = 2000;
 
 const VERDICT_LABEL: Record<Verdict, string> = {
   accepted: "Accepted",
@@ -25,11 +29,54 @@ export function ReviewPage() {
   const [review, setReview] = useState<RoomReview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.review(roomId).then(setReview, (err: unknown) =>
-      setError(err instanceof ApiError && err.status === 403 ? "Only the interviewer can review this interview." : String(err)),
+  /*
+   * The review must keep up with submissions that are still being graded (PR #8 review):
+   *  - live room: re-fetch on room events, and on every events (re)connect since events can be lost;
+   *  - anything still queued/running (also after the room ended, when there's no event stream):
+   *    poll until every submission has finished;
+   *  - re-fetch when the tab regains focus.
+   * Responses can arrive out of order, so only the newest request's answer is applied.
+   */
+  const latestRequest = useRef(0);
+  const load = useCallback(() => {
+    const id = ++latestRequest.current;
+    api.review(roomId).then(
+      (r) => {
+        if (id === latestRequest.current) setReview(r);
+      },
+      (err: unknown) => {
+        if (id !== latestRequest.current) return;
+        setError(err instanceof ApiError && err.status === 403 ? "Only the interviewer can review this interview." : String(err));
+      },
     );
   }, [roomId]);
+
+  useEffect(() => {
+    setReview(null);
+    setError(null);
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+  }, [load]);
+
+  const live = review?.status === "open";
+  useEffect(() => {
+    if (!live) return;
+    return connectRoomEvents(roomId, {
+      onEvent: (e) => {
+        if (e.type === "submission:queued" || e.type === "submission:result" || e.type === "room:closed" || e.type === "room:question_revealed") load();
+      },
+      onStatus: () => {},
+      onOpen: load,
+    });
+  }, [roomId, live, load]);
+
+  const pending = review?.candidates.some((c) => c.submissions.some((s) => s.status === "queued" || s.status === "running")) ?? false;
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setInterval(load, REVIEW_POLL_MS);
+    return () => clearInterval(timer);
+  }, [pending, load]);
 
   if (error) {
     return (
@@ -76,7 +123,7 @@ export function ReviewPage() {
                 <th>Question</th>
                 <th>Points</th>
                 <th>Revealed</th>
-                <th>Time spent</th>
+                <th title="From this question's reveal to the next reveal, or to the end">Reveal window</th>
               </tr>
             </thead>
             <tbody>
@@ -88,11 +135,16 @@ export function ReviewPage() {
                   </td>
                   <td>{q.points}</td>
                   <td>{q.revealedAt ? `+${formatElapsed(Date.parse(q.revealedAt) - start)}` : <span className="muted">not revealed</span>}</td>
-                  <td>{q.timeSpentMs !== undefined ? formatElapsed(q.timeSpentMs) : "—"}</td>
+                  <td>{q.revealWindowMs !== undefined ? formatElapsed(q.revealWindowMs) : "—"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <p className="muted small">
+            Reveal window: from a question's reveal to the next reveal, or to the end. It shows how the interview was paced,
+            not how long the candidate worked on each question — they can go back to earlier questions, and Q1's window starts
+            when the room was created.
+          </p>
         </section>
 
         {review.candidates.length === 0 && <p className="muted">No candidate joined this interview.</p>}

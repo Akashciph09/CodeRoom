@@ -16,8 +16,12 @@ export const ReviewQuestion = z.object({
   version: z.number().int().nullable(),
   points: z.number().int(),
   revealedAt: z.string().optional(),
-  /** From this question's reveal to the next reveal, or to the end (or now, while live). */
-  timeSpentMs: z.number().int().nonnegative().optional(),
+  /**
+   * Reveal window: from this question's reveal to the next reveal, or to the end (or now, while live).
+   * NOT the candidate's time on it — participants can revisit questions, and Q1 is revealed at room
+   * creation, possibly long before anyone joined.
+   */
+  revealWindowMs: z.number().int().nonnegative().optional(),
 });
 export type ReviewQuestion = z.infer<typeof ReviewQuestion>;
 

@@ -14,7 +14,7 @@ import {
 import type { RoomReview } from "@coderoom/shared";
 import { db } from "../db.js";
 import { NotFound } from "../errors.js";
-import { scoreCandidate, timePerQuestion } from "./scoring.js";
+import { revealWindows, scoreCandidate } from "./scoring.js";
 
 /**
  * Everything the interviewer needs to evaluate a room afterwards (ADR 0011), built from stored data:
@@ -43,7 +43,7 @@ export async function roomReview(roomId: string): Promise<RoomReview> {
     .innerJoin(questionVersions, eq(questionVersions.id, roomQuestions.questionVersionId))
     .where(eq(roomQuestions.roomId, roomId))
     .orderBy(asc(roomQuestions.position));
-  const times = timePerQuestion(qs, room.closedAt ?? now);
+  const windows = revealWindows(qs, room.closedAt ?? now);
 
   // Candidates with their display name (Supabase keeps it in user metadata; fall back to the email's name).
   const candidates = await db
@@ -96,7 +96,7 @@ export async function roomReview(roomId: string): Promise<RoomReview> {
       version: q.version,
       points: q.points,
       ...(q.revealedAt ? { revealedAt: q.revealedAt.toISOString() } : {}),
-      ...(times.has(q.id) ? { timeSpentMs: times.get(q.id)! } : {}),
+      ...(windows.has(q.id) ? { revealWindowMs: windows.get(q.id)! } : {}),
     })),
     candidates: candidates.map((c) => {
       const mine = subs

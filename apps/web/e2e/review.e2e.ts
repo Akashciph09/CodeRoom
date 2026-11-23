@@ -29,10 +29,13 @@ test("after the session, the interviewer reviews the score, timeline and diffs; 
     await expect(iv.getByText("This interview has ended.")).toBeVisible();
     const reviewUrl = `${iv.url()}/review`;
 
-    // The room links to the review (opens beside the room).
-    await expect(iv.getByRole("link", { name: "Review" })).toHaveAttribute("href", new URL(reviewUrl).pathname);
+    // The room links to the review, in the same tab (sign-in is per tab, a new tab would be signed out).
+    const reviewLink = iv.getByRole("link", { name: "Review" });
+    await expect(reviewLink).toHaveAttribute("href", new URL(reviewUrl).pathname);
+    await expect(reviewLink).not.toHaveAttribute("target", "_blank");
 
-    await iv.goto(reviewUrl);
+    await reviewLink.click();
+    await expect(iv).toHaveURL(reviewUrl);
     await expect(iv.getByRole("heading", { name: "Interview review" })).toBeVisible();
     await expect(iv.getByText(/lasted \d+:\d{2}/)).toBeVisible();
     const casey = iv.getByRole("region", { name: "Candidate Casey Candidate" });
@@ -84,5 +87,53 @@ test("points set in the room picker are what the review uses", async ({ browser 
     await expect(iv.page.getByText("No candidate joined this interview.")).toBeVisible();
   } finally {
     await iv.close();
+  }
+});
+
+/**
+ * Regression (PR #8 review): the review must keep up with results that are still being graded —
+ * a Submit landing while the review is open next to the live room (event path), and one still
+ * grading when the session ended and the review was opened (polling path) — without a reload.
+ */
+test("the review updates as submissions finish, without a reload", async ({ browser }) => {
+  const SLOW_SUM = "import time\ntime.sleep(1.2)\na, b = map(int, input().split())\nprint(a + b)";
+  const { interviewer, candidate, close } = await startInterview(browser);
+  const iv = interviewer.page;
+  const cd = candidate.page;
+  try {
+    const roomUrl = iv.url();
+    const review = iv; // the interviewer opens the review while the room is still live
+    await review.getByRole("link", { name: "Review" }).click();
+    await expect(review).toHaveURL(`${roomUrl}/review`);
+    const casey = review.getByRole("region", { name: "Candidate Casey Candidate" });
+    await expect(casey.getByLabel("Test score")).toHaveText("0 / 100");
+    const timeline = casey.getByLabel("Q1 timeline");
+    await expect(timeline.getByRole("listitem")).toHaveCount(0);
+
+    // Live room: a Submit appears on the open review by itself (room events).
+    await submit(cd, WRONG, 1);
+    await expect(timeline.getByRole("listitem")).toHaveCount(1);
+    await expect(timeline.getByRole("listitem").first()).toContainText("Wrong answer");
+
+    // A slow, correct Submit, then the session ends while it's still being graded.
+    await cd.bringToFront();
+    await replaceCode(cd, SLOW_SUM);
+    await cd.getByRole("button", { name: "Submit" }).click();
+    await expect(results(cd)).toHaveCount(2);
+    await iv.bringToFront();
+    await iv.goto(roomUrl);
+    iv.once("dialog", (d) => d.accept());
+    await iv.getByRole("button", { name: "End session" }).click();
+    await expect(iv.getByText("This interview has ended.")).toBeVisible();
+
+    // Open the review of the ended room while that Submit is still grading…
+    await iv.getByRole("link", { name: "Review" }).click();
+    await expect(timeline.getByRole("listitem").nth(1)).toContainText("Running…");
+    // …and it catches up on its own.
+    await expect(timeline.getByRole("listitem").nth(1)).toContainText("Accepted", { timeout: 20_000 });
+    await expect(timeline.getByRole("listitem").nth(1)).toContainText("counted");
+    await expect(casey.getByLabel("Test score")).toHaveText("100 / 100");
+  } finally {
+    await close();
   }
 });
