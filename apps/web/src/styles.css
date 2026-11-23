@@ -109,13 +109,17 @@ label input, label select { color: var(--text); font-size: 14px; }
 .room-list li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
 .room-search { width: min(320px, 100%); }
 
-/* "Your rooms" table (ADR 0013): fixed columns so long names/emails never shift the others. */
+/*
+ * "Your rooms" table (ADR 0013): fixed columns so long names/emails never shift the others.
+ * Only the four metadata columns have widths (384px in all); Interview and Candidate share whatever is
+ * left, so the declared widths can never add up to more than the table has (a fixed-layout table would
+ * otherwise grow past its card). Below 680px of *list* width it becomes cards — see the container query.
+ */
+.rooms-card { container: rooms / inline-size; }
 .rooms-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
-.rooms-table .col-interview { width: 30%; }
-.rooms-table .col-candidate { width: 30%; }
 .rooms-table .col-role { width: 112px; }
 .rooms-table .col-status { width: 76px; }
-.rooms-table .col-created { width: 118px; }
+.rooms-table .col-created { width: 132px; } /* fits "23 Nov 2025, 18:20" */
 .rooms-table .col-action { width: 64px; }
 .rooms-table th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); padding: 0 10px 8px; }
 .rooms-table td { padding: 10px; border-top: 1px solid var(--border); vertical-align: middle; min-width: 0; }
@@ -130,8 +134,11 @@ label input, label select { color: var(--text); font-size: 14px; }
 .rooms-table time { color: var(--muted); white-space: nowrap; }
 .rooms-table .cell-action a { white-space: nowrap; }
 
-/* Narrow screens: each room is a compact card (no horizontal scrolling). */
-@media (max-width: 680px) {
+/*
+ * Narrow list (phones, small windows): each room is a compact card, no horizontal scrolling. Keyed to
+ * the list's own width, so the text columns never get squeezed (below 680px they'd have < ~150px each).
+ */
+@container rooms (max-width: 679px) {
   .rooms-head { flex-wrap: wrap; }
   .rooms-head .room-search { width: 100%; }
   .rooms-table, .rooms-table tbody { display: block; }

@@ -175,7 +175,7 @@ export function HomePage() {
           </form>
         </div>
 
-        <section className="card">
+        <section className="card rooms-card">
           <div className="section-head rooms-head">
             <h2>Your rooms</h2>
             {rooms && rooms.length > 0 && (

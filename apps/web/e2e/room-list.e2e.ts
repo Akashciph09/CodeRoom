@@ -128,3 +128,74 @@ test("rooms list: aligned columns, candidate details, ended status, search, phon
     await cd.close();
   }
 });
+
+/**
+ * Regression (PR #11 review): at intermediate widths the desktop columns' fixed budget can exceed the
+ * table's width. The list must stay inside its card with no page overflow at every width — with an
+ * older-year date, a very long name/email and a legacy "+1" room. The room data is shaped in the
+ * response (no DB access from browser tests); everything rendered is real UI.
+ */
+test("the rooms list stays inside its card at every width", async ({ browser }) => {
+  const iv = await openAs(browser, "Iris Interviewer");
+  try {
+    await iv.page.goto("/");
+    await signUp(iv.page, iv.name);
+    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+    const roomPath = new URL(iv.page.url()).pathname;
+
+    await iv.page.route("**/rooms", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const rooms = (await response.json()) as Record<string, unknown>[];
+      const shaped = rooms.map((r) => ({
+        ...r,
+        createdAt: "2025-01-05T09:04:00.000Z", // an older year → the longest date format
+        candidates: [
+          {
+            name: "Maximiliana Alexandrina Konstantinopoulou-Wetherby the Third",
+            email: "maximiliana.alexandrina.konstantinopoulou-wetherby.the-third@very-long-subdomain.example.test",
+          },
+          { name: "Sam Second", email: "sam.second@example.test" }, // legacy second candidate → "+1"
+        ],
+      }));
+      await route.fulfill({ response, json: shaped });
+    });
+    await iv.page.goto("/");
+    const row = rowFor(iv.page, roomPath);
+    await expect(row).toContainText("+1");
+    await expect(cell(row, "cell-created").locator("[aria-hidden=true]")).toHaveText(/^5 Jan 2025, \d{2}:\d{2}$/); // shown in local time
+
+    const card = table(iv.page).locator("xpath=ancestor::section[1]");
+    for (const width of [700, 768, 820, 960, 1280]) {
+      await iv.page.setViewportSize({ width, height: 900 });
+      await row.scrollIntoViewIfNeeded();
+      const cardBox = (await card.boundingBox())!;
+      const right = cardBox.x + cardBox.width + 1;
+      for (const part of ["cell-interview", "cell-candidate", "cell-role", "cell-status", "cell-created", "cell-action"]) {
+        const box = (await cell(row, part).boundingBox())!;
+        expect(box.x + box.width, `${part} inside the card at ${width}px`).toBeLessThanOrEqual(right);
+      }
+      expect((await table(iv.page).boundingBox())!.x + (await table(iv.page).boundingBox())!.width, `table at ${width}px`).toBeLessThanOrEqual(right);
+      expect(await iv.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no page overflow at ${width}px`).toBe(true);
+      // Either cards, or a table whose two text columns get a readable width — never squeezed columns
+      // (and never declared widths that add up to more than the table has).
+      const tableMode = await table(iv.page).locator("thead").evaluate((el) => getComputedStyle(el).position !== "absolute");
+      if (tableMode) {
+        for (const part of ["cell-interview", "cell-candidate"]) {
+          const w = (await cell(row, part).boundingBox())!.width;
+          expect(w, `${part} readable width at ${width}px`).toBeGreaterThanOrEqual(140);
+        }
+      }
+      // Each cell's content fits its column: nothing spills into the next column or gets cut
+      // (a cell's own box always stays in the table, so measure its content instead).
+      for (const part of ["cell-role", "cell-status", "cell-created", "cell-action"]) {
+        const fits = await cell(row, part).evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+        expect(fits, `${part} content fits its column at ${width}px`).toBe(true);
+      }
+      await expect(cell(row, "cell-action").getByRole("link", { name: "Review" })).toBeInViewport({ ratio: 1 });
+    }
+  } finally {
+    await iv.close();
+  }
+});
