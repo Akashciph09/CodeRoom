@@ -12,3 +12,4 @@ Rule for this repo: a technology goes in only if it has a "why" and a "why not t
 | [0005](0005-yjs-over-own-websocket.md) | Yjs over our own WebSocket gateway, not Supabase Realtime | Accepted |
 | [0006](0006-rls-deny-all-server-side-access.md) | RLS enabled, no policies: all data access goes through the API | Accepted |
 | [0007](0007-immutable-question-versions.md) | Rooms pin immutable, published question versions (DB-enforced) | Accepted |
+| [0008](0008-room-layout-own-splitter.md) | Resizable room panels: own splitter, layout kept per browser | Accepted |
