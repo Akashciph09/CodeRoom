@@ -137,3 +137,56 @@ test("the review updates as submissions finish, without a reload", async ({ brow
     await close();
   }
 });
+
+/**
+ * Regression (PR #8 review): one failed refresh (poll/event/focus) must not lock the page on an error
+ * screen. The loaded review stays visible with a retrying warning, and the next successful refresh
+ * clears it and shows the finished result — without a reload.
+ */
+test("a failed refresh doesn't hide the review; the next successful one recovers it", async ({ browser }) => {
+  const SLOW_SUM = "import time\ntime.sleep(1.2)\na, b = map(int, input().split())\nprint(a + b)";
+  const { interviewer, candidate, close } = await startInterview(browser);
+  const iv = interviewer.page;
+  const cd = candidate.page;
+  try {
+    // A slow Submit, so the review opens while it's still being graded and keeps polling.
+    await replaceCode(cd, SLOW_SUM);
+    await cd.getByRole("button", { name: "Submit" }).click();
+    await expect(results(cd)).toHaveCount(1);
+
+    // The review loads normally (still grading, so it keeps polling)…
+    await iv.bringToFront();
+    await iv.getByRole("link", { name: "Review" }).click();
+    const casey = iv.getByRole("region", { name: "Candidate Casey Candidate" });
+    await expect(casey.getByLabel("Q1 timeline").getByRole("listitem").first()).toContainText("Running…");
+
+    // …then refreshes start failing with a 500 (polls, events and focus alike) until we lift it.
+    let failing = true;
+    let failures = 0;
+    await iv.route("**/rooms/*/review", (route) => {
+      if (route.request().method() !== "GET" || !failing) return route.continue(); // preflights pass
+      failures++;
+      return route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: '{"error":"boom"}',
+      });
+    });
+
+    // The failed refresh shows a warning but keeps the loaded review on screen (no error screen).
+    await expect(iv.getByRole("status").filter({ hasText: "Couldn't refresh" })).toBeVisible();
+    expect(failures).toBeGreaterThan(0);
+    await expect(iv.getByRole("heading", { name: "Interview review" })).toBeVisible();
+    await expect(casey.getByLabel("Test score")).toBeVisible();
+    await expect(iv.getByText("boom")).toHaveCount(0);
+
+    // The backend recovers: the next successful refresh clears the warning and shows the result.
+    failing = false;
+    await expect(casey.getByLabel("Test score")).toHaveText("100 / 100", { timeout: 20_000 });
+    await expect(casey.getByLabel("Q1 timeline").getByRole("listitem").first()).toContainText("counted");
+    await expect(iv.getByRole("status").filter({ hasText: "Couldn't refresh" })).toHaveCount(0);
+  } finally {
+    await close();
+  }
+});

@@ -27,7 +27,11 @@ const VERDICT_LABEL: Record<Verdict, string> = {
 export function ReviewPage() {
   const { roomId = "" } = useParams();
   const [review, setReview] = useState<RoomReview | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** Nothing valid to show: access denied, or the first load failed. */
+  const [error, setError] = useState<{ message: string; retryable: boolean } | null>(null);
+  /** A refresh failed after the review loaded: keep showing it, warn, and keep retrying. */
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const loaded = useRef(false);
 
   /*
    * The review must keep up with submissions that are still being graded (PR #8 review):
@@ -36,24 +40,38 @@ export function ReviewPage() {
    *    poll until every submission has finished;
    *  - re-fetch when the tab regains focus.
    * Responses can arrive out of order, so only the newest request's answer is applied.
+   * A failed refresh is transient (PR #8 review): it never replaces a loaded review with an error
+   * screen; the next success clears it. Only "access denied" or a failed first load is fatal.
    */
   const latestRequest = useRef(0);
   const load = useCallback(() => {
     const id = ++latestRequest.current;
     api.review(roomId).then(
       (r) => {
-        if (id === latestRequest.current) setReview(r);
+        if (id !== latestRequest.current) return;
+        loaded.current = true;
+        setReview(r);
+        setError(null);
+        setRefreshFailed(false);
       },
       (err: unknown) => {
         if (id !== latestRequest.current) return;
-        setError(err instanceof ApiError && err.status === 403 ? "Only the interviewer can review this interview." : String(err));
+        if (err instanceof ApiError && err.status === 403) {
+          setError({ message: "Only the interviewer can review this interview.", retryable: false });
+        } else if (loaded.current) {
+          setRefreshFailed(true);
+        } else {
+          setError({ message: err instanceof Error ? err.message : String(err), retryable: true });
+        }
       },
     );
   }, [roomId]);
 
   useEffect(() => {
+    loaded.current = false;
     setReview(null);
     setError(null);
+    setRefreshFailed(false);
     load();
     window.addEventListener("focus", load);
     return () => window.removeEventListener("focus", load);
@@ -72,11 +90,12 @@ export function ReviewPage() {
   }, [roomId, live, load]);
 
   const pending = review?.candidates.some((c) => c.submissions.some((s) => s.status === "queued" || s.status === "running")) ?? false;
+  // Poll while grading is in progress, and keep retrying after a failed refresh until one succeeds.
   useEffect(() => {
-    if (!pending) return;
+    if (!pending && !refreshFailed) return;
     const timer = setInterval(load, REVIEW_POLL_MS);
     return () => clearInterval(timer);
-  }, [pending, load]);
+  }, [pending, refreshFailed, load]);
 
   if (error) {
     return (
@@ -84,7 +103,17 @@ export function ReviewPage() {
         <TopBar />
         <main className="center">
           <div className="card">
-            <p className="error">{error}</p>
+            <p className="error">{error.message}</p>
+            {error.retryable && (
+              <button
+                onClick={() => {
+                  setError(null);
+                  load();
+                }}
+              >
+                Try again
+              </button>
+            )}
             <Link to="/">Back home</Link>
           </div>
         </main>
@@ -100,6 +129,11 @@ export function ReviewPage() {
     <>
       <TopBar />
       <main className="review-page">
+        {refreshFailed && (
+          <p className="warning small" role="status">
+            Couldn't refresh — showing the last loaded review and retrying…
+          </p>
+        )}
         <div className="page-head">
           <div>
             <Link to={`/rooms/${review.roomId}`} className="small">
