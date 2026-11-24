@@ -9,7 +9,7 @@
  *  - interviewer notes stay private and can only link the same room's questions/submissions (ADR 0016).
  */
 import { randomUUID } from "node:crypto";
-import { and, createDb, eq, interviewNotes, roomParticipants, roomQuestions, rooms, submissions } from "@coderoom/db";
+import { and, createDb, eq, interviewNotes, roomParticipants, roomQuestions, rooms, sql, submissions } from "@coderoom/db";
 import { call, check, finish, QUESTION_ID, readyQuestion, roomQuestionIds, signUp, sleep, userIdOf } from "./lib.js";
 
 const SUM = "a, b = map(int, input().split())\nprint(a + b)";
@@ -592,6 +592,35 @@ async function main() {
     check("the database refuses another room's question", qRefused.includes("interview_notes_question_fk"), `(${qRefused.slice(0, 60)})`);
     check("the database refuses another room's submission", sRefused.includes("interview_notes_submission_fk"), `(${sRefused.slice(0, 60)})`);
     check("the database refuses a blank note", blank.includes("interview_notes_body_length"), `(${blank.slice(0, 60)})`);
+
+    // PR #15 review: deleting a candidate's account (Supabase Auth) cascades to their submissions. A note
+    // linking one of them must not block that: the note stays (it's the interviewer's), keeps its room
+    // and question, and only loses the submission link.
+    {
+      const gone = await signUp("notes-deleted-candidate");
+      const goneRoom = await create(interviewer, [QUESTION_ID]);
+      await call("POST", "/rooms/join", gone, { inviteCode: goneRoom.json.inviteCode });
+      const [goneQ] = (await roomQuestionIds(goneRoom.json.roomId, interviewer)) as [string];
+      const goneRun = await call("POST", "/submissions", gone, { roomId: goneRoom.json.roomId, roomQuestionId: goneQ, language: "python", mode: "run", code: SUM });
+      await waitFor(goneRun.json.submissionId, gone);
+      const linkedNote = await call("POST", `/rooms/${goneRoom.json.roomId}/notes`, interviewer, { body: "Linked to a run", submissionId: goneRun.json.submissionId });
+      const { db: authDb, close: closeAuthDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+      let deleteError = "";
+      try {
+        await authDb.execute(sql`delete from auth.users where id = ${userIdOf(gone)}`);
+      } catch (e) {
+        deleteError = dbError(e as Error & { cause?: { message?: string } });
+      }
+      const [kept] = await authDb.select().from(interviewNotes).where(eq(interviewNotes.id, linkedNote.json.id));
+      const [run] = await authDb.select({ id: submissions.id }).from(submissions).where(eq(submissions.id, goneRun.json.submissionId));
+      await closeAuthDb();
+      check("deleting a candidate whose run is linked from a note succeeds", deleteError === "" && run === undefined, `(${deleteError.slice(0, 80)})`);
+      check(
+        "…the note stays, with its room and question, and only loses the run link",
+        kept?.roomId === goneRoom.json.roomId && kept?.roomQuestionId === goneQ && kept?.submissionId === null && kept?.body === "Linked to a run",
+        `(${JSON.stringify(kept && { roomId: kept.roomId === goneRoom.json.roomId, q: kept.roomQuestionId === goneQ, sub: kept.submissionId })})`,
+      );
+    }
 
     // After the session ends: still writable; the review carries the notes, oldest first.
     await call("POST", `/rooms/${nId}/close`, interviewer);

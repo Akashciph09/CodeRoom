@@ -304,6 +304,9 @@ export const interviewNotes = pgTable(
       columns: [t.roomQuestionId, t.roomId],
       foreignColumns: [roomQuestions.id, roomQuestions.roomId],
     }),
+    // ON DELETE SET NULL (submission_id): a deleted submission (e.g. the candidate's account was
+    // deleted) clears only the link and keeps the note and its room. drizzle-kit can't express the
+    // column list, so it's set in the hand-written migration `…_interview_notes_submission_set_null.sql`.
     foreignKey({
       name: "interview_notes_submission_fk",
       columns: [t.submissionId, t.roomId],

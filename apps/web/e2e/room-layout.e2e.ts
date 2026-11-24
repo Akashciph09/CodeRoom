@@ -67,7 +67,15 @@ test("panels resize by mouse and keyboard, the editor follows, and the layout is
     await expect.poll(async () => (await monacoBox(page)).width).toBeGreaterThanOrEqual(380 - 30);
     await separator(page, "test").focus();
     await page.keyboard.press("End");
-    await expect.poll(async () => (await monacoBox(page)).height).toBeGreaterThanOrEqual(160 - 80); // minus header/toolbar/footer
+    // Wait for the end state (a poll's first sample can come before the layout paints): the code pane
+    // at exactly its 160 px minimum, and Monaco filling what its header, toolbar and footer leave.
+    const codePane = page.getByRole("region", { name: "Code" });
+    await expect.poll(async () => Math.round((await codePane.boundingBox())!.height)).toBe(160);
+    const chrome = await codePane.evaluate((el) =>
+      [".pane-head", ".pane-toolbar", ".pane-foot"].reduce((sum, sel) => sum + el.querySelector(sel)!.getBoundingClientRect().height, 0),
+    );
+    await expect.poll(async () => (await monacoBox(page)).height).toBeCloseTo(160 - 2 - chrome, -1); // 2 = pane borders
+    expect((await monacoBox(page)).height).toBeGreaterThan(40); // still a usable few lines
     await page.keyboard.press("Home");
     await separator(page, "question").focus();
     await page.keyboard.press("Home");
@@ -75,8 +83,9 @@ test("panels resize by mouse and keyboard, the editor follows, and the layout is
     // Each pane scrolls on its own; the page itself doesn't scroll.
     expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true);
 
-    // Resizing never touched the shared code or remounted the editor.
-    expect(await editorText(page)).toBe(code);
+    // Resizing never touched the shared code or remounted the editor. (Monaco only renders the lines
+    // that fit, so wait for it to grow back before reading.)
+    await expect.poll(() => editorText(page)).toBe(code);
     await editorNotRemounted(page);
 
     // Restored on reload.
