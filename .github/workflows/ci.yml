@@ -20,6 +20,14 @@ jobs:
     name: Typecheck, unit tests, build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The API's config (apps/api/src/config.ts) requires these at import time. Unit tests never connect
+    # to them (they pass with nothing listening), so the local-stack defaults from .env.example are
+    # enough — no services and no secrets in this job.
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+      REDIS_URL: redis://127.0.0.1:6379
+      SUPABASE_URL: http://127.0.0.1:54321
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1 (version from package.json "packageManager")
@@ -58,6 +66,8 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-logs
+          # The logs live in .ci-logs/, which upload-artifact skips by default (hidden directory).
+          include-hidden-files: true
           path: |
             .ci-logs/
             apps/web/playwright-report/
