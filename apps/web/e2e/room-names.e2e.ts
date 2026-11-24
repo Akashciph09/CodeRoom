@@ -49,7 +49,7 @@ test("the interviewer names, renames and finds a room; the candidate never sees 
     }
     await iv.page.setViewportSize({ width: 1400, height: 900 });
 
-    // The room list: the name, with the question underneath; search finds it.
+    // The Interview cell shows only the room name, and search finds it.
     await iv.page.goto("/");
     const row = iv.page.getByRole("table", { name: "Your rooms" }).getByRole("row").filter({ has: iv.page.locator(`a[href="${roomPath}"]`) });
     await expect(row.locator(`a[href="${roomPath}"]`)).toHaveText("SRE interview");

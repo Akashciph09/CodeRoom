@@ -9,7 +9,7 @@ Rooms were identified only by their first question, so an interviewer running ma
 - **An optional name per room** (`rooms.name`, e.g. "Backend interview"): set when the room is created, renamed or cleared later by the interviewer (`PATCH /rooms/:id { name }`), also after the session ended.
 - **1–80 characters after trimming**; an empty name means "no name" (stored as `NULL`). The database enforces it too (`CHECK` on the trimmed length), so no code path can store a blank or oversized name.
 - **Interviewer only.** It's the interviewer's label for organizing their interviews and may hold internal notes ("SRE — referral from Priya"), so it is never sent to candidates: `GET /rooms/:id` includes it only for the interviewer, and `GET /rooms` only on interviewer rows. Candidates keep seeing question titles. Renaming is interviewer-only (`403` otherwise).
-- **Where it shows:** the room list's Interview column (name, with the first question underneath; search matches it), the room's top bar (with a rename control), and the review page header. Rooms without a name show the first question as before.
+- The name appears in the room list's Interview column, the room's top bar with a rename control, and the review page header. The Interview column shows one title, using the first question as a fallback for unnamed rooms. Room search matches both the room name and the first question title.
 
 ## Alternatives considered
 - **Show the name to candidates** — friendlier, but leaks whatever the interviewer typed; question titles already tell the candidate what they're doing. Easy to add later as a separate "public title" if wanted.
