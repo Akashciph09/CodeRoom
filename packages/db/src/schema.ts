@@ -107,19 +107,25 @@ export const testCases = pgTable(
   (t) => [index("test_cases_version_idx").on(t.versionId, t.position)],
 ).enableRLS();
 
-export const rooms = pgTable("rooms", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  // The room's questions (each pinning an exact published version) are in `room_questions`.
-  createdBy: uuid("created_by")
-    .notNull()
-    .references(() => authUsers.id, { onDelete: "cascade" }),
-  /** Shared with the candidate out-of-band; joining with it grants the candidate role. */
-  inviteCode: text("invite_code").notNull().unique(),
-  status: roomStatusEnum("status").notNull().default("open"),
-  /** When the interviewer ended the session (the interview timer stops here). */
-  closedAt: timestamp("closed_at", { withTimezone: true }),
-  ...timestamps,
-}).enableRLS();
+export const rooms = pgTable(
+  "rooms",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The interviewer's label for the room, e.g. "Backend interview" (ADR 0014). Never sent to candidates. */
+    name: text("name"),
+    // The room's questions (each pinning an exact published version) are in `room_questions`.
+    createdBy: uuid("created_by")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    /** Shared with the candidate out-of-band; joining with it grants the candidate role. */
+    inviteCode: text("invite_code").notNull().unique(),
+    status: roomStatusEnum("status").notNull().default("open"),
+    /** When the interviewer ended the session (the interview timer stops here). */
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [check("rooms_name_length", sql`${t.name} IS NULL OR char_length(btrim(${t.name})) BETWEEN 1 AND 80`)],
+).enableRLS();
 
 /**
  * The questions of a room, in order (ADR 0009). Each row pins one published version, like rooms used

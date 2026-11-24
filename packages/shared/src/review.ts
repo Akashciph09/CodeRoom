@@ -67,6 +67,8 @@ export type ReviewCandidate = z.infer<typeof ReviewCandidate>;
 
 export const RoomReview = z.object({
   roomId: z.string().uuid(),
+  /** The room's name, when set (ADR 0014). */
+  name: z.string().optional(),
   status: z.enum(["open", "closed"]),
   createdAt: z.string(),
   closedAt: z.string().optional(),

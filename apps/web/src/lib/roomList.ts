@@ -35,11 +35,12 @@ export function candidateCell(candidates: RoomCandidate[]): { first: RoomCandida
   return { first, more: rest.length, others: rest.map((c) => `${c.name} (${c.email})`).join(", ") };
 }
 
-/** Search: the question title, or any candidate's name or email — including ones collapsed into "+N". */
-export function roomMatches(room: Pick<RoomSummary, "questionTitle" | "candidates">, query: string): boolean {
+/** Search: the room's name, the question title, or any candidate's name or email — including ones collapsed into "+N". */
+export function roomMatches(room: Pick<RoomSummary, "questionTitle" | "candidates" | "name">, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
   return (
+    (room.name ?? "").toLowerCase().includes(needle) ||
     room.questionTitle.toLowerCase().includes(needle) ||
     (room.candidates ?? []).some((c) => c.name.toLowerCase().includes(needle) || c.email.toLowerCase().includes(needle))
   );

@@ -5,6 +5,24 @@ import { Role } from "./roles.js";
 /** Most questions one interview can hold (ADR 0009). */
 export const MAX_ROOM_QUESTIONS = 5;
 
+/** Longest room name (ADR 0014). */
+export const MAX_ROOM_NAME = 80;
+
+/**
+ * A room name as typed: trimmed; empty means "no name" (null); at most MAX_ROOM_NAME characters.
+ * The database enforces the same rule.
+ */
+export const RoomName = z
+  .string()
+  .max(1000)
+  .transform((s) => s.trim())
+  .pipe(z.string().max(MAX_ROOM_NAME, `Room names can be at most ${MAX_ROOM_NAME} characters`))
+  .transform((s) => (s === "" ? null : s));
+
+/** Rename (or clear, with null or "") a room — interviewer only. */
+export const RenameRoomRequest = z.object({ name: z.union([RoomName, z.null()]) });
+export type RenameRoomRequest = z.input<typeof RenameRoomRequest>;
+
 /** The room's questions, in order. Each is pinned to its latest ready version at creation. */
 export const CreateRoomRequest = z
   .object({
@@ -15,12 +33,14 @@ export const CreateRoomRequest = z
       .refine((ids) => new Set(ids).size === ids.length, "Each question can only be used once per room"),
     /** Optional weight per question for the test score (ADR 0011), same order as `questionIds`. Default: equal. */
     questionPoints: z.array(z.number().int().min(1).max(100)).optional(),
+    /** Optional label, e.g. "Backend interview" (ADR 0014). Interviewer-only. */
+    name: RoomName.optional(),
   })
   .refine((b) => !b.questionPoints || b.questionPoints.length === b.questionIds.length, {
     message: "Give points for every question, or for none",
     path: ["questionPoints"],
   });
-export type CreateRoomRequest = z.infer<typeof CreateRoomRequest>;
+export type CreateRoomRequest = z.input<typeof CreateRoomRequest>;
 
 export const CreateRoomResponse = z.object({
   roomId: z.string().uuid(),
@@ -61,6 +81,8 @@ export const RoomSummary = z.object({
   status: z.enum(["open", "closed"]),
   questionTitle: z.string(),
   createdAt: z.string(),
+  /** The room's name (ADR 0014) — interviewer rows only, when set. */
+  name: z.string().optional(),
   /**
    * Interviewer rows only (ADR 0013), in join order. Absent on rooms where the caller is the candidate.
    * More than one only for rooms from before ADR 0012.
@@ -86,6 +108,8 @@ export const RoomView = z.object({
   role: Role,
   /** Only returned to the interviewer, so they can share it. */
   inviteCode: z.string().optional(),
+  /** The room's name (ADR 0014) — only returned to the interviewer, when set. */
+  name: z.string().optional(),
   /**
    * In order. The interviewer gets every question (with `revealed`); the candidate gets only the
    * revealed ones — unrevealed questions are never sent to the candidate, not even their count.

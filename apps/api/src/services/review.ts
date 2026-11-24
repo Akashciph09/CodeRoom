@@ -69,7 +69,7 @@ export async function roomCandidates(roomIds: string[]): Promise<Map<string, Roo
  */
 export async function roomReview(roomId: string): Promise<RoomReview> {
   const [room] = await db
-    .select({ status: rooms.status, createdAt: rooms.createdAt, closedAt: rooms.closedAt })
+    .select({ status: rooms.status, name: rooms.name, createdAt: rooms.createdAt, closedAt: rooms.closedAt })
     .from(rooms)
     .where(eq(rooms.id, roomId))
     .limit(1);
@@ -103,6 +103,7 @@ export async function roomReview(roomId: string): Promise<RoomReview> {
 
   return {
     roomId,
+    ...(room.name ? { name: room.name } : {}),
     status: room.status,
     createdAt: room.createdAt.toISOString(),
     ...(room.closedAt ? { closedAt: room.closedAt.toISOString() } : {}),
