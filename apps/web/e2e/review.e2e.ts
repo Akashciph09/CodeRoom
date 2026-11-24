@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addInterviewQuestion, createInterviewRoom, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
+import { addInterviewQuestion, authorQuestion, createInterviewRoom, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
 
 /*
  * Post-interview review and test score (ADR 0011).
@@ -69,22 +69,40 @@ test("after the session, the interviewer reviews the score, timeline and diffs; 
   }
 });
 
-test("points set in the room picker are what the review uses", async ({ browser }) => {
+test("custom question points must total 100 and are what the review uses", async ({ browser }) => {
   const iv = await openAs(browser, "Iris Interviewer");
   try {
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
+    await authorQuestion(iv.page, "Weighted multiplication", "# multiply\n", "2 3", "6");
+    await iv.page.goto("/");
     await addInterviewQuestion(iv.page);
+    await addInterviewQuestion(iv.page, "Weighted multiplication");
     await expect(iv.page.getByLabel("Q1 points")).toHaveCount(0); // equal weights unless asked
     await iv.page.getByLabel(/Set points per question/).check();
-    await expect(iv.page.getByLabel("Q1 points")).toHaveValue("100"); // equal split of 100 by default
-    await iv.page.getByLabel("Q1 points").fill("40");
+    const points = iv.page.getByRole("spinbutton", { name: "Q1 points" });
+    const create = iv.page.getByRole("button", { name: "Create room" });
+    await iv.page.getByRole("textbox", { name: "Room name" }).fill("Weighted interview");
+    const second = iv.page.getByRole("spinbutton", { name: "Q2 points" });
+    await expect(points).toHaveValue("50");
+    await expect(second).toHaveValue("50");
+    await points.clear();
+    await expect(points).toHaveValue("");
+    await expect(create).toBeDisabled();
+    await points.pressSequentially("40");
+    await expect(points).toHaveValue("40");
+    await expect(create).toBeDisabled();
+    await second.fill("70");
+    await expect(create).toBeDisabled();
+    await second.fill("60");
+    await expect(create).toBeEnabled();
     await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
 
     await iv.page.goto(`${iv.page.url()}/review`);
     const questions = iv.page.getByRole("region", { name: "Questions" });
-    await expect(questions.getByRole("row").nth(1)).toContainText("40");
+    await expect(questions.getByRole("row").nth(1).getByRole("cell").nth(2)).toHaveText("40");
+    await expect(questions.getByRole("row").nth(2).getByRole("cell").nth(2)).toHaveText("60");
     await expect(iv.page.getByText("No candidate joined this interview.")).toBeVisible();
   } finally {
     await iv.close();
