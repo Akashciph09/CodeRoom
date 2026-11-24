@@ -312,7 +312,7 @@ Ended rooms still accept WebSocket connections (to view the final code), but the
 
 > Latency is measured on one machine, so it reflects gateway + Redis overhead, not network distance.
 
-- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~110 s for all twenty-six tests):
+- **Browser tests** (`pnpm e2e`, Playwright) — two real users in two browser contexts, in Chrome (~110 s for all twenty-eight tests):
 
 | Step | Checked |
 |---|---|

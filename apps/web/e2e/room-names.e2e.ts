@@ -71,3 +71,72 @@ test("the interviewer names, renames and finds a room; the candidate never sees 
     await cd.close();
   }
 });
+
+/**
+ * Regression (PR #13 review): while a rename is saving, the form can't be cancelled, re-opened or
+ * edited, so a slow response can't close (and lose) a newer edit.
+ */
+test("a rename that's still saving can't be cancelled or edited", async ({ browser }) => {
+  const iv = await openAs(browser, "Iris Interviewer");
+  try {
+    await iv.page.goto("/");
+    await signUp(iv.page, iv.name);
+    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+    const topbar = iv.page.locator(".topbar");
+
+    // Hold the PATCH response (the rename itself reaches the server) until released.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let held = false;
+    await iv.page.route("**/rooms/*", async (route) => {
+      if (route.request().method() !== "PATCH") return route.continue();
+      const response = await route.fetch();
+      held = true;
+      await gate;
+      await route.fulfill({ response });
+    });
+
+    await iv.page.getByRole("button", { name: "Name this room" }).click();
+    const input = topbar.getByLabel("Room name");
+    await input.fill("Backend interview");
+    await iv.page.getByRole("button", { name: "Save" }).click();
+    await expect.poll(() => held).toBe(true);
+
+    // While saving: the field, Cancel and Escape do nothing.
+    await expect(input).not.toBeEditable();
+    await expect(iv.page.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await input.press("Escape");
+    await expect(input).toBeVisible(); // still open — Escape didn't close it mid-save
+
+    release();
+    await expect(topbar.locator(".room-name-text")).toHaveText("Backend interview");
+    await expect(topbar.getByLabel("Room name")).toHaveCount(0);
+  } finally {
+    await iv.close();
+  }
+});
+
+/** Regression (PR #13 review): an 80-character unbroken name wraps on the review page instead of overflowing. */
+test("a long unbroken room name wraps on the review page", async ({ browser }) => {
+  const LONG = "W".repeat(80);
+  const iv = await openAs(browser, "Iris Interviewer");
+  try {
+    await iv.page.goto("/");
+    await signUp(iv.page, iv.name);
+    await iv.page.getByLabel("Room name").fill(LONG);
+    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+    await iv.page.goto(`${iv.page.url()}/review`);
+    for (const width of [390, 768]) {
+      await iv.page.setViewportSize({ width, height: 844 });
+      const name = iv.page.locator(".review-room-name");
+      await expect(name).toHaveText(LONG);
+      const box = (await name.boundingBox())!;
+      expect(box.x + box.width, `name inside the viewport at ${width}px`).toBeLessThanOrEqual(width);
+      expect(await iv.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no page overflow at ${width}px`).toBe(true);
+    }
+  } finally {
+    await iv.close();
+  }
+});
