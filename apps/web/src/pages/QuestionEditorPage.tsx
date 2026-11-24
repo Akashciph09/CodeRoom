@@ -97,13 +97,25 @@ export function QuestionEditorPage() {
     setForm((current) => (sent === undefined || !current || snapshot(current) === sent ? serverForm : current));
   }, []);
 
+  // Load once per question. A superseded load (StrictMode's double run in development, or a question
+  // change) is ignored when it answers late, so it can't overwrite what the author typed meanwhile.
   useEffect(() => {
-    api.question(questionId).then((d) => applyServer(d), (err: unknown) =>
-      setMessage({
-        kind: "error",
-        text: err instanceof ApiError && err.status === 404 ? "Question not found." : String(err),
-      }),
+    let current = true;
+    api.question(questionId).then(
+      (d) => {
+        if (current) applyServer(d);
+      },
+      (err: unknown) => {
+        if (!current) return;
+        setMessage({
+          kind: "error",
+          text: err instanceof ApiError && err.status === 404 ? "Question not found." : String(err),
+        });
+      },
     );
+    return () => {
+      current = false;
+    };
   }, [questionId, applyServer]);
 
   const dirty = useMemo(() => form !== null && snapshot(form) !== baseline, [form, baseline]);

@@ -1,5 +1,7 @@
 # CodeRoom
 
+[![CI](https://github.com/Akashciph09/CodeRoom/actions/workflows/ci.yml/badge.svg)](https://github.com/Akashciph09/CodeRoom/actions/workflows/ci.yml)
+
 **A live technical-interview platform where candidate code runs in isolated sandboxes and AI assists the interviewer — without ever deciding who gets hired.**
 
 Interviewer and candidate share a room. The candidate writes code; every run goes through a queue to a disposable, locked-down Docker container and comes back with per-test verdicts. Hidden test cases never leave the server. An AI copilot (in progress) helps the interviewer prepare questions, ask follow-ups and summarize evidence against a rubric.
@@ -224,6 +226,7 @@ SMOKE_API_URL_2=http://localhost:4001 pnpm smoke:realtime
 | `pnpm smoke` | End-to-end checks against the running stack (API + sandbox, question authoring/versioning, multi-question rooms) |
 | `pnpm smoke:realtime` | Realtime checks: upgrade auth, sync latency, convergence, live results, persistence |
 | `pnpm e2e` | Playwright browser tests of the interviewer/candidate flow (local stack only) |
+| `bash scripts/ci/integration.sh` | What CI's integration job runs: starts the stack, two API instances, worker and web app, then all smoke, realtime and browser suites (needs ports 4000/4001/5173 free) |
 | `pnpm screenshots` | Re-creates the README screenshots from a real interview driven through the UI (local stack only) |
 | `pnpm db:start` / `db:stop` | Start / stop local Supabase |
 | `pnpm db:reset` | Wipe local DB, reapply migrations and seed |
@@ -273,6 +276,8 @@ Both require the subprotocols `["coderoom.v1", <access token>]` and room members
 Ended rooms still accept WebSocket connections (to view the final code), but the server drops every document write.
 
 ## Testing
+
+**CI** ([ADR 0015](docs/decisions/0015-ci-github-actions.md)) runs on every pull request and every push to `main`, in two jobs: typecheck + unit tests + production build, then the integration suites below against a real stack inside the runner (local Supabase, Redis, the sandbox images, two API instances, the worker and the web app). The integration job is one script, `scripts/ci/integration.sh`, so a CI failure reproduces locally with the same command. Actions are pinned to commit SHAs and the workflow token is read-only.
 
 - **Unit tests** — every sandbox `docker run` flag, verdict mapping, the candidate/interviewer serializers (hidden test ids never appear in the candidate view), the document manager against a fake database (failed saves are retried, saves never overlap, unload waits for an in-flight save, edits are retained and recovered — even by a new process — when the DB is down, read-only rooms drop writes), and the browser's history merge (a result is never rolled back by an older snapshot).
 - **Smoke test** (`pnpm smoke`) — signs up real Supabase users and checks 25 behaviours against the running stack, then `questions-smoke.ts` checks 40 more for authoring, ownership, versioning and two-tab conflicts (including a draft being replaced while an old tab is open) (an interview on v1 keeps showing and grading v1 after v2 is ready; the DB rejects edits to a published version), and `rooms-smoke.ts` checks multi-question rooms: candidates never receive unrevealed questions or submit to them, reveals happen only in order (also under racing requests), each question is graded on its own version, and the DB rejects a submission pinned to the wrong version. Latest local run of the first part:
@@ -374,7 +379,7 @@ docs/decisions/ Architecture Decision Records
 - [x] WebSocket gateway: Yjs collaborative editing, cross-instance fan-out, persistence, live role-aware results
 - [x] Browser UI: sign in, invite links, collaborative Monaco with live cursors, run/submit, role-aware live results
 - [x] Browser end-to-end tests (Playwright) for the two-role flow
-- [ ] Run unit, smoke and browser tests in CI against a containerized stack
+- [x] CI on GitHub Actions: typecheck, unit tests and build, then smoke, realtime and browser tests against a real local stack
 - [x] Question authoring: statement, constraints, starter code, public/hidden tests, preview, immutable versions pinned by rooms
 - [x] Multi-question rooms: ordered questions revealed by the interviewer, a code buffer per question, per-question grading
 - [ ] Evaluation rubric and interviewer hints (revealed by the interviewer, recorded as evidence)
