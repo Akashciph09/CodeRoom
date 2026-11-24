@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { openAs, replaceCode, results, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, replaceCode, results, signUp } from "./helpers";
 
 /*
  * README screenshots, generated from a real interview driven through the UI (local stack only):
@@ -103,16 +103,14 @@ test("README screenshots", async ({ browser }) => {
 
     // 2. Starting a two-question interview with points
     await ivp.goto("/");
-    const picked = ivp.getByLabel("Interview questions").getByRole("listitem");
-    await expect(picked).toHaveCount(1);
-    await ivp.getByRole("button", { name: "Add question" }).click();
-    if (!(await picked.first().textContent())?.includes("Maximum")) await ivp.getByRole("button", { name: "Move Q2 up" }).click();
+    await addInterviewQuestion(ivp, "Maximum Subarray Sum");
+    await addInterviewQuestion(ivp);
     await ivp.getByLabel(/Set points per question/).check();
     await ivp.getByLabel("Q1 points").fill("60");
     await ivp.getByLabel("Q2 points").fill("40");
     await ivp.getByRole("heading", { name: "Start an interview" }).click(); // no focus ring in the shot
     await shot(ivp, "home");
-    await ivp.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(ivp);
     await expect(ivp).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomUrl = ivp.url();
     await ivp.getByRole("button", { name: "Copy invite link" }).click();

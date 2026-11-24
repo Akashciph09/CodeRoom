@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { authorQuestion, editorText, expectUnchanged, openAs, replaceCode, results, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, authorQuestion, editorText, expectUnchanged, openAs, replaceCode, results, signUp } from "./helpers";
 
 /*
  * Multi-question rooms (ADR 0009): the interviewer picks an ordered list, reveals questions one at a
@@ -31,26 +31,37 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
 
       await iv.goto("/");
       const picked = iv.getByLabel("Interview questions").getByRole("listitem");
-      const order = ["Sum two numbers", "Multiply two numbers", "Subtract two numbers"];
-      const labels: Record<string, string> = {
-        "Sum two numbers": "Sum two numbers · v1 (library)",
-        "Multiply two numbers": "Multiply two numbers · v1 (yours)",
-        "Subtract two numbers": "Subtract two numbers · v1 (yours)",
-      };
-      // The list starts with one question preselected; add the missing ones, then order them.
-      await expect(picked).toHaveCount(1);
-      for (const title of order) {
-        if ((await picked.filter({ hasText: title }).count()) > 0) continue;
-        await iv.getByLabel("Question to add").selectOption({ label: labels[title]! });
-        await iv.getByRole("button", { name: "Add question" }).click();
+      const createRoom = iv.getByRole("button", { name: "Create room" });
+      const roomName = iv.getByRole("textbox", { name: "Room name" });
+      const dialog = iv.getByRole("dialog", { name: "Add questions" });
+      const picker = dialog.getByRole("list", { name: "Available questions" });
+      const search = dialog.getByRole("searchbox", { name: "Search questions" });
+      await expect(createRoom).toBeDisabled();
+      await expect(picked).toHaveCount(0);
+      await expect(dialog).toBeHidden();
+      await iv.getByRole("button", { name: "Add question", exact: true }).click();
+      await expect(dialog).toBeVisible();
+      await expect(picker.getByRole("button")).toHaveCount(3);
+      await expect(search).toBeFocused();
+      await search.press("Escape");
+      await expect(dialog).toBeHidden();
+
+      await addInterviewQuestion(iv);
+      await expect(createRoom).toBeDisabled();
+      await roomName.fill("   ");
+      await expect(createRoom).toBeDisabled();
+      await roomName.fill("Multi-question interview");
+      await expect(createRoom).toBeEnabled();
+      await iv.getByRole("button", { name: "Remove Q1" }).click();
+      await expect(createRoom).toBeDisabled();
+
+      await iv.getByRole("button", { name: "Add question", exact: true }).click();
+      for (const title of ["Sum two numbers", "Multiply two numbers", "Subtract two numbers"]) {
+        await search.fill(title);
+        await expect(picker.getByRole("button")).toHaveCount(1);
+        await picker.getByRole("button").click();
       }
-      for (const [target, title] of order.entries()) {
-        let at = (await picked.allTextContents()).findIndex((t) => t.includes(title));
-        while (at > target) {
-          await iv.getByRole("button", { name: `Move Q${at + 1} up` }).click();
-          at--;
-        }
-      }
+      await dialog.getByRole("button", { name: "Done" }).click();
       await expect(picked).toHaveText([/Q1.*Sum two numbers/, /Q2.*Multiply two numbers/, /Q3.*Subtract two numbers/]);
 
       // Reordering works (then put it back).
@@ -59,7 +70,7 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await iv.getByRole("button", { name: "Move Q2 down" }).click();
       await expect(picked.nth(1)).toContainText("Multiply");
 
-      await iv.getByRole("button", { name: "Create room" }).click();
+      await createInterviewRoom(iv);
       await expect(iv).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
       await expect(navButton(iv, 1)).toHaveAttribute("aria-current", "true");
       await expect(navButton(iv, 2)).toHaveAccessibleName("Q2: Multiply two numbers (not revealed)");
@@ -203,11 +214,11 @@ test("a reveal whose notification is lost right before the session ends still re
     await authorQuestion(iv, "Multiply two numbers", "# multiply\n", "2 3", "6");
     await iv.goto("/");
     const picked = iv.getByLabel("Interview questions").getByRole("listitem");
-    await expect(picked).toHaveCount(1);
-    await iv.getByRole("button", { name: "Add question" }).click(); // the other of {Sum, Multiply}
+    await addInterviewQuestion(iv);
+    await addInterviewQuestion(iv, "Multiply two numbers");
     await expect(picked).toHaveCount(2);
     const secondTitle = (await picked.nth(1).textContent())!.includes("Multiply") ? "Multiply two numbers" : "Sum two numbers";
-    await iv.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv);
     await expect(iv).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
 
     await iv.getByRole("button", { name: "Copy invite link" }).click();

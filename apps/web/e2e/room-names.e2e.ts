@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openAs, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, signUp } from "./helpers";
 
 /** Room names (ADR 0014): set when creating, renamed in the room, shown to the interviewer only. */
 test("the interviewer names, renames and finds a room; the candidate never sees the name", async ({ browser }) => {
@@ -9,7 +9,8 @@ test("the interviewer names, renames and finds a room; the candidate never sees 
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await iv.page.getByLabel("Room name").fill("Backend interview");
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await addInterviewQuestion(iv.page);
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomPath = new URL(iv.page.url()).pathname;
     const topbar = iv.page.locator(".topbar");
@@ -53,7 +54,7 @@ test("the interviewer names, renames and finds a room; the candidate never sees 
     await iv.page.goto("/");
     const row = iv.page.getByRole("table", { name: "Your rooms" }).getByRole("row").filter({ has: iv.page.locator(`a[href="${roomPath}"]`) });
     await expect(row.locator(`a[href="${roomPath}"]`)).toHaveText("SRE interview");
-    await expect(row.locator(".room-question")).toHaveText("Sum two numbers");
+    await expect(row.getByRole("cell").first()).toHaveText("SRE interview");
     await iv.page.getByLabel("Search rooms").fill("sre");
     await expect(row).toBeVisible();
 
@@ -81,7 +82,8 @@ test("a rename that's still saving can't be cancelled or edited", async ({ brows
   try {
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await addInterviewQuestion(iv.page);
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const topbar = iv.page.locator(".topbar");
 
@@ -97,7 +99,7 @@ test("a rename that's still saving can't be cancelled or edited", async ({ brows
       await route.fulfill({ response });
     });
 
-    await iv.page.getByRole("button", { name: "Name this room" }).click();
+    await iv.page.getByRole("button", { name: "Rename room" }).click();
     const input = topbar.getByLabel("Room name");
     await input.fill("Backend interview");
     await iv.page.getByRole("button", { name: "Save" }).click();
@@ -125,7 +127,8 @@ test("a long unbroken room name wraps on the review page", async ({ browser }) =
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await iv.page.getByLabel("Room name").fill(LONG);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await addInterviewQuestion(iv.page);
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     await iv.page.goto(`${iv.page.url()}/review`);
     for (const width of [390, 768]) {

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MAX_ROOM_NAME, MAX_ROOM_QUESTIONS, type QuestionSummary, type RoomSummary } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
@@ -14,7 +14,10 @@ export function HomePage() {
   /** Optional weights for the test score (ADR 0011); off = equal weights. */
   const [weighted, setWeighted] = useState(false);
   const [points, setPoints] = useState<Record<string, number>>({});
-  const [toAdd, setToAdd] = useState("");
+  const [questionSearch, setQuestionSearch] = useState("");
+  const questionPicker = useRef<HTMLDialogElement>(null);
+  const questionSearchInput = useRef<HTMLInputElement>(null);
+  const roomNameInput = useRef<HTMLInputElement>(null);
   const [invite, setInvite] = useState("");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -22,10 +25,7 @@ export function HomePage() {
   const [roomName, setRoomName] = useState("");
 
   useEffect(() => {
-    api.questions().then((qs) => {
-      setQuestions(qs);
-      setSelected((current) => (current.length > 0 || !qs[0] ? current : [qs[0].id]));
-    }, fail);
+    api.questions().then(setQuestions, fail);
     api.myRooms().then(setRooms, fail);
   }, []);
 
@@ -35,9 +35,11 @@ export function HomePage() {
 
   async function createRoom(e: FormEvent) {
     e.preventDefault();
+    const name = roomName.trim();
+    if (busy || selected.length === 0 || !name) return;
     setBusy(true);
     try {
-      const { roomId } = await api.createRoom(selected, weighted ? selected.map((id) => pointsOf(id)) : undefined, roomName);
+      const { roomId } = await api.createRoom(selected, weighted ? selected.map((id) => pointsOf(id)) : undefined, name);
       navigate(`/rooms/${roomId}`);
     } catch (err) {
       fail(err);
@@ -47,7 +49,9 @@ export function HomePage() {
 
   const byId = new Map(questions.map((q) => [q.id, q]));
   const available = questions.filter((q) => !selected.includes(q.id));
-  const addId = available.some((q) => q.id === toAdd) ? toAdd : (available[0]?.id ?? "");
+  const atQuestionLimit = selected.length >= MAX_ROOM_QUESTIONS;
+  const canAdd = !atQuestionLimit && available.length > 0;
+  const matchingQuestions = available.filter((q) => q.title.toLowerCase().includes(questionSearch.trim().toLowerCase()));
   const label = (q: QuestionSummary) => `${q.title} · v${q.version}${q.owned ? " (yours)" : " (library)"}`;
 
   /** Equal split of 100 by default (e.g. 33/33/34), until the interviewer edits a value. */
@@ -91,7 +95,9 @@ export function HomePage() {
             </p>
             <div className="picked" aria-label="Interview questions">
               <span className="label">
-                Questions, in order — the candidate sees Q1 first; you reveal the rest during the interview
+                {selected.length === 0
+                  ? "Add at least one question to create a room."
+                  : "The candidate sees the first question when they join. Reveal the rest during the interview."}
               </span>
               <ol className="picked-list">
                 {selected.map((id, i) => {
@@ -129,7 +135,6 @@ export function HomePage() {
                         type="button"
                         className="ghost small-btn"
                         aria-label={`Remove Q${i + 1}`}
-                        disabled={selected.length === 1}
                         onClick={() => setSelected((list) => list.filter((x) => x !== id))}
                       >
                         ✕
@@ -138,39 +143,42 @@ export function HomePage() {
                   );
                 })}
               </ol>
-              {selected.length < MAX_ROOM_QUESTIONS && available.length > 0 && (
-                <div className="picked-add">
-                  <select aria-label="Question to add" value={addId} onChange={(e) => setToAdd(e.target.value)}>
-                    {available.map((q) => (
-                      <option key={q.id} value={q.id}>
-                        {label(q)}
-                      </option>
-                    ))}
-                  </select>
-                  <button type="button" onClick={() => addId && setSelected((list) => [...list, addId])}>
-                    Add question
-                  </button>
-                </div>
+              <button
+                type="button"
+                className="add-question"
+                aria-haspopup="dialog"
+                disabled={!canAdd}
+                onClick={() => {
+                  setQuestionSearch("");
+                  questionPicker.current?.showModal();
+                  questionSearchInput.current?.focus();
+                }}
+              >
+                Add question
+              </button>
+              {selected.length > 0 && (
+                <label className="inline small">
+                  <input type="checkbox" checked={weighted} onChange={(e) => setWeighted(e.target.checked)} />
+                  Set points per question for the test score
+                  {weighted
+                    ? ` (total ${pointsTotal}; scores are scaled to 100)`
+                    : " (otherwise every question counts equally)"}
+                </label>
               )}
-              <label className="inline small">
-                <input type="checkbox" checked={weighted} onChange={(e) => setWeighted(e.target.checked)} />
-                Set points per question for the test score
-                {weighted
-                  ? ` (total ${pointsTotal}; scores are scaled to 100)`
-                  : " (otherwise every question counts equally)"}
-              </label>
             </div>
             <label>
-              Room name (optional)
+              Room name (required)
               <input
+                ref={roomNameInput}
                 aria-label="Room name"
+                required
                 value={roomName}
                 maxLength={MAX_ROOM_NAME}
                 placeholder="e.g. Backend interview, SRE interview"
                 onChange={(e) => setRoomName(e.target.value)}
               />
             </label>
-            <button className="primary" disabled={busy || selected.length === 0}>
+            <button className="primary" disabled={busy || selected.length === 0 || !roomName.trim()}>
               Create room
             </button>
           </form>
@@ -185,6 +193,51 @@ export function HomePage() {
             <button className="primary">Join</button>
           </form>
         </div>
+
+        <dialog
+          ref={questionPicker}
+          className="question-dialog"
+          aria-labelledby="question-picker-title"
+          onClose={() => {
+            if (!canAdd) roomNameInput.current?.focus();
+          }}
+        >
+          <div className="question-dialog-content">
+            <h2 id="question-picker-title">Add questions</h2>
+            <input
+              ref={questionSearchInput}
+              type="search"
+              aria-label="Search questions"
+              placeholder="Search questions"
+              value={questionSearch}
+              onChange={(e) => setQuestionSearch(e.target.value)}
+            />
+            {atQuestionLimit ? (
+              <p className="muted">This room has the maximum of {MAX_ROOM_QUESTIONS} questions.</p>
+            ) : matchingQuestions.length > 0 ? (
+              <ul className="question-picker" aria-label="Available questions">
+                {matchingQuestions.map((q) => (
+                  <li key={q.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelected((list) => [...list, q.id]);
+                        questionSearchInput.current?.focus();
+                      }}
+                    >
+                      {label(q)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">{available.length ? "No matching questions." : "All available questions have been added."}</p>
+            )}
+            <button type="button" className="primary" onClick={() => questionPicker.current?.close()}>
+              Done
+            </button>
+          </div>
+        </dialog>
 
         <section className="card rooms-card">
           <div className="section-head rooms-head">

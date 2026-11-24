@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { openAs, replaceCode, results, signUp, startInterview } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
 
 /*
  * Post-interview review and test score (ADR 0011).
@@ -74,11 +74,12 @@ test("points set in the room picker are what the review uses", async ({ browser 
   try {
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
+    await addInterviewQuestion(iv.page);
     await expect(iv.page.getByLabel("Q1 points")).toHaveCount(0); // equal weights unless asked
     await iv.page.getByLabel(/Set points per question/).check();
     await expect(iv.page.getByLabel("Q1 points")).toHaveValue("100"); // equal split of 100 by default
     await iv.page.getByLabel("Q1 points").fill("40");
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
 
     await iv.page.goto(`${iv.page.url()}/review`);
