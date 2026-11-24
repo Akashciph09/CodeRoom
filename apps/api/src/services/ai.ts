@@ -42,7 +42,7 @@ const summaryFormat = {
   },
 };
 
-export const claudeSummary: SummaryModel = async (evidence) => {
+const claudeSummary: SummaryModel = async (evidence) => {
   if (!config.ANTHROPIC_API_KEY) throw new HttpError(503, "AI summaries are unavailable until a model API key is configured.");
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -68,6 +68,45 @@ export const claudeSummary: SummaryModel = async (evidence) => {
     throw new HttpError(502, "The AI provider could not draft a summary. Try again.");
   }
 };
+
+const GroqCompletion = z.object({
+  choices: z.array(z.object({
+    finish_reason: z.literal("stop"),
+    message: z.object({ content: z.string() }),
+  })).length(1),
+});
+
+const groqSummary: SummaryModel = async (evidence) => {
+  if (!config.GROQ_API_KEY) throw new HttpError(503, "AI summaries are unavailable until a Groq API key is configured.");
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-oss-20b",
+        reasoning_effort: "low",
+        max_completion_tokens: 2400,
+        response_format: {
+          type: summaryFormat.type,
+          json_schema: { name: "interview_summary", strict: true, schema: summaryFormat.schema },
+        },
+        messages: [{ role: "system", content: SYSTEM }, { role: "user", content: evidence }],
+      }),
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!response.ok) throw new Error("Model request failed");
+    const completion = GroqCompletion.parse(await response.json());
+    return JSON.parse(completion.choices[0]!.message.content);
+  } catch {
+    throw new HttpError(502, "The AI provider could not draft a summary. Try again.");
+  }
+};
+
+export const configuredSummaryModel: SummaryModel = (evidence) =>
+  config.AI_SUMMARY_PROVIDER === "groq" ? groqSummary(evidence) : claudeSummary(evidence);
 
 const ModelOutput = z.object({ items: z.array(z.unknown()).max(9) }).strict();
 

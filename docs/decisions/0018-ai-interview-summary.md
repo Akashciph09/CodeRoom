@@ -1,11 +1,16 @@
-# 0018 — Claude drafts an evidence-linked interview summary
+# 0018 — AI drafts an evidence-linked interview summary
 
 ## Decision
 
 The interviewer can request a summary on the review page. The API builds the prompt from the
 interviewer's review and sends it to the Claude Messages API through one server-side service.
 We chose Claude Haiku as the default for short synthesis tasks, with a server-side model override.
-We use Node's built-in fetch for this single endpoint. An SDK or a multi-provider framework would
+For portfolio demos, CodeRoom can also use GroqCloud's free tier with GPT-OSS 20B. This model
+supports [strict structured output](https://console.groq.com/docs/structured-outputs) and keeps
+the response contract shared with Claude. Select a provider explicitly through server configuration.
+Use synthetic interview data for free-tier demos.
+
+We use Node's built-in fetch for these two HTTP endpoints. An SDK or a multi-provider framework would
 add dependencies for features this flow does not use.
 
 The prompt includes revealed question titles, structured run results, interviewer notes, and saved

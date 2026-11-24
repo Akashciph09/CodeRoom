@@ -3,10 +3,10 @@ import { z } from "zod";
 import { requireRoomRole } from "../auth.js";
 import { asyncHandler, HttpError, TooManyRequests } from "../errors.js";
 import { redis } from "../queue.js";
-import { claudeSummary, draftInterviewSummary, type SummaryModel } from "../services/ai.js";
+import { configuredSummaryModel, draftInterviewSummary, type SummaryModel } from "../services/ai.js";
 import { roomReview } from "../services/review.js";
 
-export function interviewSummaryRouter(model: SummaryModel = claudeSummary): Router {
+export function interviewSummaryRouter(model: SummaryModel = configuredSummaryModel): Router {
   const router = Router();
   router.post("/:id/review/summary", asyncHandler(async (req, res) => {
     const roomId = z.string().uuid().parse(req.params.id);

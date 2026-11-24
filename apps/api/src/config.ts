@@ -11,6 +11,8 @@ const Env = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   SUPABASE_URL: z.string().url(),
+  AI_SUMMARY_PROVIDER: z.enum(["claude", "groq"]).default("claude"),
+  GROQ_API_KEY: z.string().trim().optional(),
   ANTHROPIC_API_KEY: z.string().trim().optional(),
   ANTHROPIC_SUMMARY_MODEL: z.string().trim().min(1).default("claude-haiku-4-5-20251001"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
