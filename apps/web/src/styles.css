@@ -340,7 +340,6 @@ a.button-link:hover { border-color: var(--muted); text-decoration: none; }
 .room-name-text { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-name-form { display: inline-flex; align-items: center; gap: 6px; }
 .room-name-form input { padding: 4px 8px; width: 170px; }
-.rooms-table .room-question { margin-top: 2px; }
 .review-room-name { font-size: 16px; font-weight: 600; margin: 0 0 4px; overflow-wrap: anywhere; }
 /* The review header's text column may shrink, so a long unbroken room name wraps instead of widening the page. */
 .review-page .page-head > div:first-child { flex: 1 1 0; min-width: 0; }
