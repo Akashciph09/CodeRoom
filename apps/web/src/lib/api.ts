@@ -67,8 +67,15 @@ async function request<T>(
 export const api = {
   questions: () => request<QuestionSummary[]>("GET", "/questions"),
   myRooms: () => request<RoomSummary[]>("GET", "/rooms"),
-  createRoom: (questionIds: string[], questionPoints?: number[]) =>
-    request<CreateRoomResponse>("POST", "/rooms", { questionIds, ...(questionPoints ? { questionPoints } : {}) }),
+  createRoom: (questionIds: string[], questionPoints?: number[], name?: string) =>
+    request<CreateRoomResponse>("POST", "/rooms", {
+      questionIds,
+      ...(questionPoints ? { questionPoints } : {}),
+      ...(name?.trim() ? { name } : {}),
+    }),
+  /** Rename or clear (empty) the room's name — interviewer only (ADR 0014). */
+  renameRoom: (roomId: string, name: string) =>
+    request<{ roomId: string; name: string | null }>("PATCH", `/rooms/${roomId}`, { name }),
   /** Interviewer-only post-interview review (ADR 0011). */
   review: (roomId: string) => request<RoomReview>("GET", `/rooms/${roomId}/review`),
   revealQuestion: (roomId: string, roomQuestionId: string) =>

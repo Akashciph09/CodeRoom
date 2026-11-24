@@ -1,0 +1,2 @@
+ALTER TABLE "rooms" ADD COLUMN "name" text;--> statement-breakpoint
+ALTER TABLE "rooms" ADD CONSTRAINT "rooms_name_length" CHECK ("rooms"."name" IS NULL OR char_length(btrim("rooms"."name")) BETWEEN 1 AND 80);

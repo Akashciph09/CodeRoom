@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, isNull, or, questions, questionVersions, roomPa
 import {
   CreateRoomRequest,
   JoinRoomRequest,
+  RenameRoomRequest,
   roomEventsChannel,
   type RoomBusEvent,
   type CreateRoomResponse,
@@ -33,7 +34,7 @@ export const roomsRouter: Router = Router();
 roomsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    const { questionIds, questionPoints } = CreateRoomRequest.parse(req.body);
+    const { questionIds, questionPoints, name } = CreateRoomRequest.parse(req.body);
     const userId = req.user!.userId;
 
     const allowed = await db
@@ -50,7 +51,10 @@ roomsRouter.post(
 
     const inviteCode = randomBytes(12).toString("base64url");
     const room = await db.transaction(async (tx) => {
-      const [created] = await tx.insert(rooms).values({ createdBy: userId, inviteCode }).returning({ id: rooms.id });
+      const [created] = await tx
+        .insert(rooms)
+        .values({ createdBy: userId, inviteCode, name: name ?? null })
+        .returning({ id: rooms.id });
       const roomId = created!.id;
       const now = new Date();
       await tx.insert(roomQuestions).values(
@@ -131,7 +135,7 @@ roomsRouter.get(
     const role = await requireRoomRole(roomId, req.user!.userId);
 
     const [row] = await db
-      .select({ status: rooms.status, inviteCode: rooms.inviteCode, createdAt: rooms.createdAt, closedAt: rooms.closedAt })
+      .select({ status: rooms.status, inviteCode: rooms.inviteCode, name: rooms.name, createdAt: rooms.createdAt, closedAt: rooms.closedAt })
       .from(rooms)
       .where(eq(rooms.id, roomId))
       .limit(1);
@@ -141,7 +145,8 @@ roomsRouter.get(
       roomId,
       status: row.status,
       role,
-      ...(role === "interviewer" ? { inviteCode: row.inviteCode } : {}),
+      // The invite code and the room's name are the interviewer's (ADR 0014: names may hold internal notes).
+      ...(role === "interviewer" ? { inviteCode: row.inviteCode, ...(row.name ? { name: row.name } : {}) } : {}),
       // Pinned versions, candidate view (public tests only). Candidates get revealed questions only.
       questions: await roomQuestionsFor(roomId, role),
       createdAt: row.createdAt.toISOString(),
@@ -149,6 +154,18 @@ roomsRouter.get(
       serverTime: new Date().toISOString(),
     };
     res.json(view);
+  }),
+);
+
+/** Rename or clear the room's name (ADR 0014). Interviewer only; allowed after the session ended too. */
+roomsRouter.patch(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const { name } = RenameRoomRequest.parse(req.body);
+    await db.update(rooms).set({ name }).where(eq(rooms.id, roomId));
+    res.json({ roomId, name });
   }),
 );
 
@@ -254,6 +271,7 @@ roomsRouter.get(
     const rows = await db
       .select({
         roomId: rooms.id,
+        name: rooms.name,
         role: roomParticipants.role,
         status: rooms.status,
         questionTitle: questionVersions.title,
@@ -270,10 +288,11 @@ roomsRouter.get(
     // Candidate names and emails only for rooms the caller interviews (ADR 0013): a candidate's own list
     // never carries another person's details. (Scores are on the review page, not here.)
     const candidates = await roomCandidates(rows.filter((r) => r.role === "interviewer").map((r) => r.roomId));
-    const list: RoomSummary[] = rows.map((r) => ({
+    const list: RoomSummary[] = rows.map(({ name, ...r }) => ({
       ...r,
       createdAt: r.createdAt.toISOString(),
-      ...(r.role === "interviewer" ? { candidates: candidates.get(r.roomId) ?? [] } : {}),
+      // Interviewer rows only: candidates (ADR 0013) and the room's name (ADR 0014).
+      ...(r.role === "interviewer" ? { candidates: candidates.get(r.roomId) ?? [], ...(name ? { name } : {}) } : {}),
     }));
     res.json(list);
   }),

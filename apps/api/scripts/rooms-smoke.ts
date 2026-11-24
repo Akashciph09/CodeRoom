@@ -389,6 +389,49 @@ async function main() {
     );
   }
 
+  // --- Room names (ADR 0014): optional, trimmed, ≤ 80, interviewer-only -----------------------------
+  {
+    const named = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID], name: "  Backend interview  " });
+    const namedId = named.json.roomId as string;
+    const asIv = (await call("GET", `/rooms/${namedId}`, interviewer)).json;
+    check("a room can be created with a name (trimmed)", named.status === 201 && asIv.name === "Backend interview", `(${JSON.stringify(asIv.name)})`);
+    const blank = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID], name: "   " });
+    check("a blank name means no name", blank.status === 201 && (await call("GET", `/rooms/${blank.json.roomId}`, interviewer)).json.name === undefined);
+    check("a name over 80 characters → 400", (await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID], name: "x".repeat(81) })).status === 400);
+
+    const nameCandidate = await signUp("name-candidate");
+    await call("POST", "/rooms/join", nameCandidate, { inviteCode: named.json.inviteCode });
+    const asCd = await call("GET", `/rooms/${namedId}`, nameCandidate);
+    const cdList = await call("GET", "/rooms", nameCandidate);
+    check(
+      "the candidate never receives the name (room view and room list)",
+      asCd.status === 200 && asCd.json.name === undefined && !JSON.stringify(asCd.json).includes("Backend interview") &&
+        !JSON.stringify(cdList.json).includes("Backend interview"),
+    );
+    const ivRow = ((await call("GET", "/rooms", interviewer)).json as any[]).find((r) => r.roomId === namedId);
+    check("the interviewer's room list shows the name", ivRow?.name === "Backend interview");
+    check("the candidate can't rename → 403", (await call("PATCH", `/rooms/${namedId}`, nameCandidate, { name: "Hacked" })).status === 403);
+    check("an outsider can't rename → 403", (await call("PATCH", `/rooms/${namedId}`, outsider, { name: "Hacked" })).status === 403);
+    const renamed = await call("PATCH", `/rooms/${namedId}`, interviewer, { name: "SRE interview" });
+    check("the interviewer renames it", renamed.status === 200 && (await call("GET", `/rooms/${namedId}`, interviewer)).json.name === "SRE interview");
+    check("rename over 80 characters → 400", (await call("PATCH", `/rooms/${namedId}`, interviewer, { name: "y".repeat(81) })).status === 400);
+    await call("POST", `/rooms/${namedId}/close`, interviewer);
+    const cleared = await call("PATCH", `/rooms/${namedId}`, interviewer, { name: "" });
+    check("…clears it, also after the session ended", cleared.status === 200 && (await call("GET", `/rooms/${namedId}`, interviewer)).json.name === undefined);
+    check("the review shows the name when set", (await call("PATCH", `/rooms/${namedId}`, interviewer, { name: "Final name" })).status === 200 &&
+      (await call("GET", `/rooms/${namedId}/review`, interviewer)).json.name === "Final name");
+
+    const { db: nameDb, close: closeNameDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    let dbRefused = "";
+    try {
+      await nameDb.update(rooms).set({ name: "   " }).where(eq(rooms.id, namedId));
+    } catch (e) {
+      dbRefused = dbError(e as Error & { cause?: { message?: string } });
+    }
+    await closeNameDb();
+    check("the database itself refuses a blank name", dbRefused.includes("rooms_name_length"), `(${dbRefused.slice(0, 60)})`);
+  }
+
   // --- One interviewer, one candidate per room (ADR 0012) --------------------------------------------
   {
     const solo = await create(interviewer, [QUESTION_ID]);

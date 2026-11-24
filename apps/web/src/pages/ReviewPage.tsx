@@ -140,6 +140,7 @@ export function ReviewPage() {
               ← Back to the room
             </Link>
             <h1>Interview review</h1>
+            {review.name && <p className="review-room-name">{review.name}</p>}
             <p className="muted">
               {new Date(review.createdAt).toLocaleString()} · {review.closedAt ? "lasted" : "in progress,"} {formatElapsed(end - start)}
               {!review.closedAt && " so far"}

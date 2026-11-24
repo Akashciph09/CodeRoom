@@ -39,5 +39,6 @@ describe("room list helpers", () => {
     expect(roomMatches(room, "sam.second@")).toBe(true); // the collapsed "+1" candidate
     expect(roomMatches(room, "nobody")).toBe(false);
     expect(roomMatches({ questionTitle: "Sum two numbers" }, "casey")).toBe(false); // candidate rows carry no details
+    expect(roomMatches({ ...room, name: "SRE interview" }, "sre")).toBe(true); // the room's name (ADR 0014)
   });
 });

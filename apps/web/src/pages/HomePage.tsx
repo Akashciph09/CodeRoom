@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MAX_ROOM_QUESTIONS, type QuestionSummary, type RoomSummary } from "@coderoom/shared";
+import { MAX_ROOM_NAME, MAX_ROOM_QUESTIONS, type QuestionSummary, type RoomSummary } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
 import { api } from "../lib/api";
 import { candidateCell, formatRoomDate, roleLabel, roomMatches, roomStatusLabel } from "../lib/roomList";
@@ -19,6 +19,7 @@ export function HomePage() {
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [roomName, setRoomName] = useState("");
 
   useEffect(() => {
     api.questions().then((qs) => {
@@ -36,7 +37,7 @@ export function HomePage() {
     e.preventDefault();
     setBusy(true);
     try {
-      const { roomId } = await api.createRoom(selected, weighted ? selected.map((id) => pointsOf(id)) : undefined);
+      const { roomId } = await api.createRoom(selected, weighted ? selected.map((id) => pointsOf(id)) : undefined, roomName);
       navigate(`/rooms/${roomId}`);
     } catch (err) {
       fail(err);
@@ -159,6 +160,16 @@ export function HomePage() {
                   : " (otherwise every question counts equally)"}
               </label>
             </div>
+            <label>
+              Room name (optional)
+              <input
+                aria-label="Room name"
+                value={roomName}
+                maxLength={MAX_ROOM_NAME}
+                placeholder="e.g. Backend interview, SRE interview"
+                onChange={(e) => setRoomName(e.target.value)}
+              />
+            </label>
             <button className="primary" disabled={busy || selected.length === 0}>
               Create room
             </button>
@@ -183,7 +194,7 @@ export function HomePage() {
                 type="search"
                 className="room-search"
                 aria-label="Search rooms"
-                placeholder="Search by candidate, email or question"
+                placeholder="Search by name, candidate, email or question"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -238,10 +249,15 @@ function RoomsTable({ rooms }: { rooms: RoomSummary[] }) {
           return (
             <tr key={r.roomId} role="row" className="room-row">
               <td role="cell" className="cell-interview">
-                {/* No room names yet: the room is named by its first question. */}
-                <Link to={`/rooms/${r.roomId}`} className="truncate" title={r.questionTitle}>
-                  {r.questionTitle}
+                {/* The room's name if it has one (interviewer rows, ADR 0014), else its first question. */}
+                <Link to={`/rooms/${r.roomId}`} className="truncate" title={r.name ?? r.questionTitle}>
+                  {r.name ?? r.questionTitle}
                 </Link>
+                {r.name && (
+                  <span className="truncate muted small room-question" title={r.questionTitle}>
+                    {r.questionTitle}
+                  </span>
+                )}
               </td>
               <td role="cell" className="cell-candidate">
                 {r.role === "candidate" ? (

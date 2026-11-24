@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { MAX_CUSTOM_CASES, type Language, type RoomView, type ServerEvent, type SubmissionMode } from "@coderoom/shared";
 import { CollaborativeEditor } from "../components/CollaborativeEditor";
 import { InterviewTimer } from "../components/InterviewTimer";
+import { RoomNameControl } from "../components/RoomNameControl";
 import { Presence, RemoteCursorStyles } from "../components/Presence";
 import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
@@ -325,6 +326,9 @@ export function RoomPage() {
     <div className="room-page">
       {roomDoc && <RemoteCursorStyles awareness={roomDoc.provider.awareness} />}
       <TopBar>
+        {room.role === "interviewer" && (
+          <RoomNameControl roomId={room.roomId} name={room.name} onRenamed={(name) => setRoom((r) => (r ? { ...r, name: name ?? undefined } : r))} />
+        )}
         <span className={`badge ${room.role}`}>{room.role}</span>
         {/* Both roles see the same elapsed time (server timestamps), stopping when the session ends. */}
         <InterviewTimer createdAt={room.createdAt} closedAt={room.closedAt} serverTime={room.serverTime} ended={closed} />
