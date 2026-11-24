@@ -20,6 +20,14 @@ back to the evidence. The draft lives in the current page. The selected provider
 run results, notes, and saved rubric dimensions. See [ADR 0018](docs/decisions/0018-ai-interview-summary.md)
 for the provider and data boundaries. The smoke suite uses an injected fake model.
 
+## AI question drafts
+
+In **My questions**, click **Draft with AI** and enter a short role or topic brief. The configured
+provider drafts one question with Python and JavaScript starter code and public and hidden tests.
+The worker checks each case against the generated Python reference in Docker. The editor shows
+those verdicts so you can review and correct the draft before clicking **Mark ready**.
+See [ADR 0019](docs/decisions/0019-ai-question-drafts.md).
+
 ## Screenshots
 
 **Interviewer view during a live interview:** the question, the shared editor with the candidate's named cursor, and every test result, hidden ones included. Run/Submit belong to the candidate; the interviewer reveals the next question (Q2 🔒) when ready.

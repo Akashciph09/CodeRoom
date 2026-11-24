@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Verdict } from "./verdicts.js";
 
 /** Per-language starter code; a language may be omitted (the editor then starts empty). */
 export const StarterCode = z
@@ -58,7 +59,11 @@ export const CreateQuestionRequest = z.object({
 });
 export type CreateQuestionRequest = z.infer<typeof CreateQuestionRequest>;
 
-export const TestCaseView = TestCaseInput.extend({ id: z.string().uuid(), position: z.number().int() });
+export const TestCaseView = TestCaseInput.extend({
+  id: z.string().uuid(),
+  position: z.number().int(),
+  referenceVerdict: Verdict.optional(),
+});
 export type TestCaseView = z.infer<typeof TestCaseView>;
 
 /** One version as its owner sees it (all tests, hidden included). */

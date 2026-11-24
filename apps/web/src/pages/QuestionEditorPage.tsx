@@ -9,6 +9,7 @@ import type {
   QuestionVersionView,
 } from "@coderoom/shared";
 import { QuestionPanel } from "../components/QuestionPanel";
+import { VERDICT_LABEL } from "../lib/verdicts";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError, isDraftConflict, publishProblemsOf } from "../lib/api";
 
@@ -398,13 +399,24 @@ export function QuestionEditorPage() {
                 Public tests are shown to the candidate as examples and used by Run. Submit runs all of them. Hidden
                 inputs and outputs are never shown to the candidate.
               </p>
+              {(detail.draft ?? detail.latest)?.tests.some((test) => test.referenceVerdict) && (
+                <p className="muted small">Reference checks compare the generated solution with each generated test. Review the question and tests before marking it ready.</p>
+              )}
               <ol className="test-list">
                 {form.tests.map((t, i) => {
                   const n = i + 1;
+                  const checked = (detail.draft ?? detail.latest)?.tests.find((test) => test.id === t.key && test.referenceVerdict);
+                  const verdict = checked?.referenceVerdict;
+                  const edited = checked && (checked.input !== t.input || checked.expectedOutput !== t.expectedOutput);
                   return (
                     <li key={t.key} className={`test-row ${t.isHidden ? "hidden-test" : ""}`}>
                       <div className="test-row-head">
                         <strong>Test {n}</strong>
+                        {verdict && (
+                          <span className={edited || verdict === "accepted" ? "muted small" : "error small"}>
+                            {edited ? "Edited since reference check" : verdict === "accepted" ? "Passed against the reference solution" : `Reference check: ${VERDICT_LABEL[verdict]}`}
+                          </span>
+                        )}
                         <label className="inline">
                           <input
                             type="checkbox"

@@ -1,7 +1,7 @@
 import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
 import { asc, createDb, customCaseResults, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
-import { EXECUTION_QUEUE, ExecutionJob, roomEventsChannel, type RoomBusEvent } from "@coderoom/shared";
+import { EXECUTION_QUEUE, ExecutionJob, QUESTION_VALIDATION_JOB, QuestionValidationJob, roomEventsChannel, type RoomBusEvent } from "@coderoom/shared";
 import { config } from "./config.js";
 import { startOutboxSweeper } from "./outbox.js";
 import { runInSandbox } from "./sandbox/runner.js";
@@ -17,7 +17,26 @@ async function finish(roomId: string, submissionId: string, status: "completed" 
   await publisher.publish(roomEventsChannel(roomId), JSON.stringify(event));
 }
 
+async function validateQuestionDraft(data: unknown) {
+  const { referencePython, tests, expiresAt } = QuestionValidationJob.parse(data);
+  const verdicts = [];
+  for (const test of tests) {
+    if (Date.now() >= expiresAt) throw new UnrecoverableError("Question validation expired");
+    const result = await runInSandbox({
+      language: "python",
+      code: referencePython,
+      stdin: test.input,
+      timeoutMs: config.SANDBOX_TIMEOUT_MS,
+      memoryMb: config.SANDBOX_MEMORY_MB,
+      cpus: config.SANDBOX_CPUS,
+    });
+    verdicts.push(judge(result, test.expectedOutput));
+  }
+  return verdicts;
+}
+
 async function processJob(job: Job) {
+  if (job.name === QUESTION_VALIDATION_JOB) return validateQuestionDraft(job.data);
   const { submissionId } = ExecutionJob.parse(job.data);
 
   const [submission] = await db.select().from(submissions).where(eq(submissions.id, submissionId)).limit(1);
@@ -104,6 +123,10 @@ const worker = new Worker(EXECUTION_QUEUE, processJob, {
 });
 
 worker.on("failed", async (job, err) => {
+  if (job?.name === QUESTION_VALIDATION_JOB) {
+    console.error(`question validation job ${job.id} failed`);
+    return;
+  }
   console.error(`job ${job?.id} failed:`, err.message);
   const attemptsLeft = job ? (job.opts.attempts ?? 1) - job.attemptsMade : 0;
   if (!job || attemptsLeft > 0) return;
