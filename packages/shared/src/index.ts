@@ -8,3 +8,4 @@ export * from "./queue.js";
 export * from "./events.js";
 export * from "./review.js";
 export * from "./notes.js";
+export * from "./evaluations.js";

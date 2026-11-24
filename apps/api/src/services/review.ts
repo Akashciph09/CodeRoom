@@ -14,6 +14,7 @@ import {
 import type { RoomCandidate, RoomReview } from "@coderoom/shared";
 import { db } from "../db.js";
 import { NotFound } from "../errors.js";
+import { evaluationsBy } from "./evaluations.js";
 import { listNotes } from "./notes.js";
 import { revealWindows, scoreCandidate } from "./scoring.js";
 
@@ -100,7 +101,11 @@ export async function roomReview(roomId: string, viewerId: string): Promise<Room
     .where(eq(submissions.roomId, roomId))
     .orderBy(asc(submissions.createdAt));
 
-  const [countOf, notes] = await Promise.all([passCounts(subs.map((s) => s.id)), listNotes(roomId, viewerId)]);
+  const [countOf, notes, evaluationOf] = await Promise.all([
+    passCounts(subs.map((s) => s.id)),
+    listNotes(roomId, viewerId),
+    evaluationsBy(roomId, viewerId),
+  ]);
 
   return {
     roomId,
@@ -147,6 +152,8 @@ export async function roomReview(roomId: string, viewerId: string): Promise<Room
         userId: c.userId,
         name: c.name,
         score: scored.score,
+        // The interviewer's own evaluation (ADR 0017) — separate from the test score above.
+        evaluation: evaluationOf.get(c.userId) ?? null,
         questions: scored.questions,
         submissions: mine.map((m) => ({
           submissionId: m.submission.id,

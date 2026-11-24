@@ -81,6 +81,13 @@ export const errorMiddleware: ErrorRequestHandler = (err, _req, res, _next) => {
     res.status(err.status).json({ ...err.details, error: err.message });
     return;
   }
+  // A database trigger refused a locked change (ADR 0007, 0017) that slipped past the API's own checks
+  // (e.g. a race): a conflict, not a server error.
+  const pgCode = (err as { cause?: { code?: unknown }; code?: unknown })?.cause?.code ?? (err as { code?: unknown })?.code;
+  if (pgCode === "23001") {
+    res.status(409).json({ error: "That can't be changed any more.", conflict: "locked" });
+    return;
+  }
   console.error(err);
   res.status(500).json({ error: "Internal server error" });
 };

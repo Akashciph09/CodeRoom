@@ -4,6 +4,8 @@ import type {
   CreateRoomResponse,
   CreateSubmissionRequest,
   CreateSubmissionResponse,
+  EvaluationDraftInput,
+  EvaluationView,
   InterviewerSubmissionView,
   JoinRoomResponse,
   MyQuestionSummary,
@@ -83,6 +85,11 @@ export const api = {
   addNote: (roomId: string, note: NoteRequest) => request<NoteView>("POST", `/rooms/${roomId}/notes`, note),
   editNote: (roomId: string, noteId: string, note: NoteRequest) => request<NoteView>("PATCH", `/rooms/${roomId}/notes/${noteId}`, note),
   deleteNote: (roomId: string, noteId: string) => request<void>("DELETE", `/rooms/${roomId}/notes/${noteId}`),
+  /** The interviewer's structured evaluation (ADR 0017): save a draft / submit and lock. */
+  saveEvaluation: (roomId: string, candidateId: string, input: EvaluationDraftInput) =>
+    request<EvaluationView>("PUT", `/rooms/${roomId}/evaluations/${candidateId}`, input),
+  submitEvaluation: (roomId: string, candidateId: string, revision: number) =>
+    request<EvaluationView>("POST", `/rooms/${roomId}/evaluations/${candidateId}/submit`, { revision }),
   /** Interviewer-only post-interview review (ADR 0011). */
   review: (roomId: string) => request<RoomReview>("GET", `/rooms/${roomId}/review`),
   revealQuestion: (roomId: string, roomQuestionId: string) =>

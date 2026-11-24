@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Language } from "./languages.js";
 import { NoteView } from "./notes.js";
+import { EvaluationView } from "./evaluations.js";
 import { SubmissionMode, SubmissionStatus } from "./submissions.js";
 import { Verdict } from "./verdicts.js";
 
@@ -60,6 +61,8 @@ export const ReviewCandidate = z.object({
   name: z.string(),
   /** Out of 100, one decimal. */
   score: z.number(),
+  /** The viewer's structured evaluation (ADR 0017), if started. Never derived from the test score. */
+  evaluation: EvaluationView.nullable(),
   questions: z.array(QuestionScore),
   /** Oldest first. */
   submissions: z.array(ReviewSubmission),

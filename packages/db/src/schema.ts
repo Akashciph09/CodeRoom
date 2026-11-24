@@ -16,7 +16,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { authUsers } from "drizzle-orm/supabase";
-import { Language, Role, SubmissionMode, SubmissionStatus, Verdict } from "@coderoom/shared";
+import { Language, Recommendation, Role, RubricDimension, SubmissionMode, SubmissionStatus, Verdict } from "@coderoom/shared";
 
 /*
  * Every table has RLS enabled with NO policies: Supabase's public API (anon / authenticated roles)
@@ -31,6 +31,9 @@ export const submissionStatusEnum = pgEnum("submission_status", SubmissionStatus
 export const verdictEnum = pgEnum("verdict", Verdict.options);
 export const questionVersionStatusEnum = pgEnum("question_version_status", ["draft", "published"]);
 export const roomStatusEnum = pgEnum("room_status", ["open", "closed"]);
+export const evaluationStatusEnum = pgEnum("evaluation_status", ["draft", "submitted"]);
+export const recommendationEnum = pgEnum("recommendation", Recommendation.options);
+export const rubricDimensionEnum = pgEnum("rubric_dimension", RubricDimension.options);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -223,6 +226,8 @@ export const submissions = pgTable(
     uniqueIndex("submissions_user_idempotency_key").on(t.userId, t.idempotencyKey),
     // Target of interview_notes' composite FK: a note's submission must belong to the note's room.
     uniqueIndex("submissions_room_scope").on(t.id, t.roomId),
+    // Target of evaluation_evidence's composite FK: evidence must be THIS candidate's run in this room.
+    uniqueIndex("submissions_candidate_scope").on(t.id, t.roomId, t.userId),
     // The submission's room and graded version must be exactly its room question's: a submission can't
     // be recorded against another room's question or a version other than the pinned one.
     foreignKey({
@@ -299,6 +304,8 @@ export const interviewNotes = pgTable(
   },
   (t) => [
     index("interview_notes_room_idx").on(t.roomId, t.createdAt),
+    // Target of evaluation_evidence's composite FK: a cited note must be from the evaluation's room.
+    uniqueIndex("interview_notes_room_scope").on(t.id, t.roomId),
     foreignKey({
       name: "interview_notes_question_fk",
       columns: [t.roomQuestionId, t.roomId],
@@ -313,6 +320,111 @@ export const interviewNotes = pgTable(
       foreignColumns: [submissions.id, submissions.roomId],
     }),
     check("interview_notes_body_length", sql`char_length(btrim(${t.body})) BETWEEN 1 AND 5000`),
+  ],
+).enableRLS();
+
+/**
+ * The interviewer's structured evaluation of one candidate (ADR 0017): a human judgement, kept apart
+ * from the automated test score. Drafts are editable (optimistic concurrency on `revision`); once
+ * submitted — only after the room ended — the evaluation, its scores and evidence are locked by
+ * triggers (migration `…_evaluation_rubric.sql`), which also refuse an incomplete submit.
+ */
+export const evaluations = pgTable(
+  "evaluations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    roomId: uuid("room_id").notNull(),
+    candidateId: uuid("candidate_id").notNull(),
+    evaluatorId: uuid("evaluator_id").notNull(),
+    status: evaluationStatusEnum("status").notNull().default("draft"),
+    recommendation: recommendationEnum("recommendation"),
+    summary: text("summary").notNull().default(""),
+    revision: integer("revision").notNull().default(1),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    submittedBy: uuid("submitted_by").references(() => authUsers.id, { onDelete: "cascade" }),
+    ...timestamps,
+  },
+  (t) => [
+    // Both people must be participants of the room (deleting either participant removes it).
+    foreignKey({
+      name: "evaluations_candidate_fk",
+      columns: [t.roomId, t.candidateId],
+      foreignColumns: [roomParticipants.roomId, roomParticipants.userId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "evaluations_evaluator_fk",
+      columns: [t.roomId, t.evaluatorId],
+      foreignColumns: [roomParticipants.roomId, roomParticipants.userId],
+    }).onDelete("cascade"),
+    uniqueIndex("evaluations_one_per_evaluator").on(t.roomId, t.candidateId, t.evaluatorId),
+    uniqueIndex("evaluations_scope").on(t.id, t.roomId, t.candidateId),
+    check(
+      "evaluations_submitted_complete",
+      sql`(${t.status} = 'draft' AND ${t.submittedAt} IS NULL AND ${t.submittedBy} IS NULL) OR (${t.status} = 'submitted' AND ${t.submittedAt} IS NOT NULL AND ${t.submittedBy} IS NOT NULL AND ${t.recommendation} IS NOT NULL)`,
+    ),
+    check("evaluations_summary_length", sql`char_length(${t.summary}) <= 5000`),
+  ],
+).enableRLS();
+
+/** One row per rubric dimension: a 1–4 rating, or "not observed", and an optional explanation. */
+export const evaluationScores = pgTable(
+  "evaluation_scores",
+  {
+    evaluationId: uuid("evaluation_id")
+      .notNull()
+      .references(() => evaluations.id, { onDelete: "cascade" }),
+    dimension: rubricDimensionEnum("dimension").notNull(),
+    rating: integer("rating"),
+    notObserved: boolean("not_observed").notNull().default(false),
+    explanation: text("explanation").notNull().default(""),
+  },
+  (t) => [
+    primaryKey({ columns: [t.evaluationId, t.dimension] }),
+    check("evaluation_scores_rating", sql`${t.rating} BETWEEN 1 AND 4`),
+    check("evaluation_scores_rating_or_not_observed", sql`NOT (${t.rating} IS NOT NULL AND ${t.notObserved})`),
+    check("evaluation_scores_explanation_length", sql`char_length(${t.explanation}) <= 2000`),
+  ],
+).enableRLS();
+
+/**
+ * Evidence for a dimension: a note from the evaluation's room, or a run by the evaluated candidate in
+ * that room — exactly one, both enforced by composite foreign keys.
+ */
+export const evaluationEvidence = pgTable(
+  "evaluation_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    evaluationId: uuid("evaluation_id").notNull(),
+    roomId: uuid("room_id").notNull(),
+    candidateId: uuid("candidate_id").notNull(),
+    dimension: rubricDimensionEnum("dimension").notNull(),
+    noteId: uuid("note_id"),
+    submissionId: uuid("submission_id"),
+    position: integer("position").notNull(),
+  },
+  (t) => [
+    foreignKey({
+      name: "evaluation_evidence_score_fk",
+      columns: [t.evaluationId, t.dimension],
+      foreignColumns: [evaluationScores.evaluationId, evaluationScores.dimension],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "evaluation_evidence_scope_fk",
+      columns: [t.evaluationId, t.roomId, t.candidateId],
+      foreignColumns: [evaluations.id, evaluations.roomId, evaluations.candidateId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "evaluation_evidence_note_fk",
+      columns: [t.noteId, t.roomId],
+      foreignColumns: [interviewNotes.id, interviewNotes.roomId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "evaluation_evidence_submission_fk",
+      columns: [t.submissionId, t.roomId, t.candidateId],
+      foreignColumns: [submissions.id, submissions.roomId, submissions.userId],
+    }).onDelete("cascade"),
+    check("evaluation_evidence_one_target", sql`num_nonnulls(${t.noteId}, ${t.submissionId}) = 1`),
+    uniqueIndex("evaluation_evidence_order").on(t.evaluationId, t.dimension, t.position),
   ],
 ).enableRLS();
 
@@ -344,3 +456,4 @@ export type TestResultRow = typeof testResults.$inferSelect;
 export type NewTestResult = typeof testResults.$inferInsert;
 export type CustomCaseResultRow = typeof customCaseResults.$inferSelect;
 export type InterviewNote = typeof interviewNotes.$inferSelect;
+export type Evaluation = typeof evaluations.$inferSelect;

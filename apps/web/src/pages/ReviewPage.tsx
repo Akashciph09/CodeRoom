@@ -8,6 +8,7 @@ import { connectRoomEvents } from "../lib/realtime";
 import { formatElapsed } from "../lib/timer";
 import { VERDICT_LABEL } from "../lib/verdicts";
 import { offsetLabel, submissionLabel, wasEdited } from "../lib/notes";
+import { EvaluationCard } from "../components/EvaluationCard";
 
 /** While any submission is still being graded, re-fetch this often. */
 const REVIEW_POLL_MS = 2000;
@@ -179,7 +180,22 @@ export function ReviewPage() {
 
         {review.candidates.length === 0 && <p className="muted">No candidate joined this interview.</p>}
         {review.candidates.map((c) => (
-          <CandidateReview key={c.userId} candidate={c} questions={review.questions} start={start} />
+          <div key={c.userId} className="candidate-block">
+            <CandidateReview candidate={c} questions={review.questions} start={start} />
+            {/* The interviewer's judgement (ADR 0017) — its own card, apart from the test score. */}
+            <EvaluationCard
+              roomId={review.roomId}
+              candidateId={c.userId}
+              candidateName={c.name}
+              evaluation={c.evaluation}
+              ended={review.status === "closed"}
+              notes={review.notes}
+              submissions={c.submissions}
+              questions={review.questions}
+              startedAt={review.createdAt}
+              onReload={load}
+            />
+          </div>
         ))}
       </main>
     </>
@@ -200,7 +216,7 @@ function ReviewNotes({ review }: { review: RoomReview }) {
             const q = review.questions.find((x) => x.id === n.roomQuestionId);
             const sub = n.submissionId ? allSubmissions.find((s) => s.submissionId === n.submissionId) : undefined;
             return (
-              <li key={n.id} className="note">
+              <li key={n.id} className="note" id={`note-${n.id}`}>
                 <div className="note-meta">
                   <time dateTime={n.createdAt} title={new Date(n.createdAt).toLocaleString()} className="mono">
                     {offsetLabel(n.createdAt, review.createdAt)}

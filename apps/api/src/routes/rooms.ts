@@ -3,9 +3,11 @@ import { Router } from "express";
 import { and, desc, eq, inArray, isNull, or, questions, questionVersions, roomParticipants, roomQuestions, rooms, sql, submissions } from "@coderoom/db";
 import {
   CreateRoomRequest,
+  EvaluationDraftInput,
   JoinRoomRequest,
   NoteRequest,
   RenameRoomRequest,
+  SubmitEvaluationRequest,
   roomEventsChannel,
   type RoomBusEvent,
   type CreateRoomResponse,
@@ -18,6 +20,7 @@ import { latestPublished } from "../services/questions.js";
 import { revealQuestion, roomQuestionsFor } from "../services/roomQuestions.js";
 import { roomCandidates, roomReview } from "../services/review.js";
 import { createNote, deleteNote, listNotes, updateNote } from "../services/notes.js";
+import { saveEvaluationDraft, submitEvaluation } from "../services/evaluations.js";
 import { customResultsFor, resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
@@ -227,6 +230,33 @@ roomsRouter.delete(
     const noteId = UuidParam.parse(req.params.noteId);
     await deleteNote(roomId, req.user!.userId, noteId);
     res.status(204).end();
+  }),
+);
+
+/*
+ * The interviewer's structured evaluation of the room's candidate (ADR 0017). Interviewer-only.
+ * Drafts can be saved during the interview and after; submitting (which locks it) only after the
+ * interview ended. Read through the review (`GET /rooms/:id/review`).
+ */
+roomsRouter.put(
+  "/:id/evaluations/:candidateId",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const candidateId = UuidParam.parse(req.params.candidateId);
+    const input = EvaluationDraftInput.parse(req.body);
+    res.json(await saveEvaluationDraft(roomId, candidateId, req.user!.userId, input));
+  }),
+);
+
+roomsRouter.post(
+  "/:id/evaluations/:candidateId/submit",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const candidateId = UuidParam.parse(req.params.candidateId);
+    const { revision } = SubmitEvaluationRequest.parse(req.body);
+    res.json(await submitEvaluation(roomId, candidateId, req.user!.userId, revision));
   }),
 );
 

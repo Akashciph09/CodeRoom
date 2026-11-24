@@ -2,6 +2,7 @@ import { and, asc, eq, interviewNotes, roomQuestions, sql, submissions } from "@
 import type { NoteView } from "@coderoom/shared";
 import { db } from "../db.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
+import { assertNoteNotCited } from "./evaluations.js";
 
 /*
  * Private interviewer notes (ADR 0016). Callers must have checked the interviewer role; these
@@ -93,6 +94,7 @@ async function requireAuthor(roomId: string, userId: string, noteId: string) {
 /** Replace the text and links; `updated_at` records the edit. */
 export async function updateNote(roomId: string, userId: string, noteId: string, body: string, links: Links): Promise<NoteView> {
   await requireAuthor(roomId, userId, noteId);
+  await assertNoteNotCited(noteId);
   const resolved = await resolveLinks(roomId, links);
   await db
     .update(interviewNotes)
@@ -103,6 +105,7 @@ export async function updateNote(roomId: string, userId: string, noteId: string,
 
 export async function deleteNote(roomId: string, userId: string, noteId: string): Promise<void> {
   await requireAuthor(roomId, userId, noteId);
+  await assertNoteNotCited(noteId);
   await db
     .delete(interviewNotes)
     .where(and(eq(interviewNotes.id, noteId), eq(interviewNotes.roomId, roomId), eq(interviewNotes.authorId, userId)));
