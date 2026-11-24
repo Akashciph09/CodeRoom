@@ -1,24 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { ReviewCandidate, ReviewQuestion, ReviewSubmission, RoomReview, Verdict } from "@coderoom/shared";
+import type { NoteView, ReviewCandidate, ReviewQuestion, ReviewSubmission, RoomReview } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError } from "../lib/api";
 import { lineDiff } from "../lib/lineDiff";
 import { connectRoomEvents } from "../lib/realtime";
 import { formatElapsed } from "../lib/timer";
+import { VERDICT_LABEL } from "../lib/verdicts";
+import { offsetLabel, submissionLabel, wasEdited } from "../lib/notes";
 
 /** While any submission is still being graded, re-fetch this often. */
 const REVIEW_POLL_MS = 2000;
 
-const VERDICT_LABEL: Record<Verdict, string> = {
-  accepted: "Accepted",
-  wrong_answer: "Wrong answer",
-  time_limit_exceeded: "Time limit exceeded",
-  memory_limit_exceeded: "Memory limit exceeded",
-  runtime_error: "Runtime error",
-  compile_error: "Compile error",
-  internal_error: "Internal error",
-};
 
 /**
  * Post-interview review (ADR 0011), interviewer only. The test score is evidence for the evaluation —
@@ -182,12 +175,59 @@ export function ReviewPage() {
           </p>
         </section>
 
+        <ReviewNotes review={review} />
+
         {review.candidates.length === 0 && <p className="muted">No candidate joined this interview.</p>}
         {review.candidates.map((c) => (
           <CandidateReview key={c.userId} candidate={c} questions={review.questions} start={start} />
         ))}
       </main>
     </>
+  );
+}
+
+/** The interviewer's private notes (ADR 0016), oldest first, each linked to its question and run. */
+function ReviewNotes({ review }: { review: RoomReview }) {
+  const allSubmissions = review.candidates.flatMap((c) => c.submissions);
+  return (
+    <section className="card review-notes" aria-label="Notes">
+      <h2>Notes</h2>
+      {review.notes.length === 0 ? (
+        <p className="muted small">No notes. Add them in the room's Notes tab — during the interview or afterwards.</p>
+      ) : (
+        <ol className="note-list">
+          {review.notes.map((n: NoteView) => {
+            const q = review.questions.find((x) => x.id === n.roomQuestionId);
+            const sub = n.submissionId ? allSubmissions.find((s) => s.submissionId === n.submissionId) : undefined;
+            return (
+              <li key={n.id} className="note">
+                <div className="note-meta">
+                  <time dateTime={n.createdAt} title={new Date(n.createdAt).toLocaleString()} className="mono">
+                    {offsetLabel(n.createdAt, review.createdAt)}
+                  </time>
+                  <span className="badge" title={q?.title ?? "Not about one question"}>
+                    {q ? `Q${q.position}` : "General"}
+                  </span>
+                  {sub && (
+                    <a className="note-jump" href={`#submission-${sub.submissionId}`}>
+                      ↳ {submissionLabel(sub, review.createdAt)}
+                    </a>
+                  )}
+                  {wasEdited(n) && (
+                    <span className="muted small" title={`Edited ${new Date(n.updatedAt).toLocaleString()}`}>
+                      edited
+                    </span>
+                  )}
+                  {!n.mine && <span className="muted small">by {n.authorName}</span>}
+                </div>
+                <p className="note-body">{n.body}</p>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      <p className="muted small">Private to you — never shown to the candidate.</p>
+    </section>
   );
 }
 
@@ -307,7 +347,7 @@ function TimelineEntry({
   const done = s.status === "completed" || s.status === "failed";
   const verdict = done ? (s.overall ?? "internal_error") : null;
   return (
-    <li className="timeline-entry">
+    <li className="timeline-entry" id={`submission-${s.submissionId}`}>
       <div className="timeline-row">
         <span className="mono muted">+{formatElapsed(Date.parse(s.createdAt) - start)}</span>
         <span className="badge">{s.mode === "submit" ? "Submit" : "Run"}</span>

@@ -5,10 +5,11 @@
  * Guarantees checked here:
  *  - the candidate never receives an unrevealed question (content or count) and can't submit to one;
  *  - questions are revealed only by the interviewer, strictly in order, idempotently — also under races;
- *  - every submission is graded against its own question's pinned version, enforced by the database.
+ *  - every submission is graded against its own question's pinned version, enforced by the database;
+ *  - interviewer notes stay private and can only link the same room's questions/submissions (ADR 0016).
  */
 import { randomUUID } from "node:crypto";
-import { and, createDb, eq, roomParticipants, roomQuestions, rooms, submissions } from "@coderoom/db";
+import { and, createDb, eq, interviewNotes, roomParticipants, roomQuestions, rooms, sql, submissions } from "@coderoom/db";
 import { call, check, finish, QUESTION_ID, readyQuestion, roomQuestionIds, signUp, sleep, userIdOf } from "./lib.js";
 
 const SUM = "a, b = map(int, input().split())\nprint(a + b)";
@@ -475,6 +476,166 @@ async function main() {
     }
     await closeRaceDb();
     check("simultaneous joins (10 rounds): exactly one candidate, the other gets 409", exactlyOne);
+  }
+
+  // --- Private interviewer notes (ADR 0016) ----------------------------------------------------------
+  {
+    const nRoom = await create(interviewer, [QUESTION_ID, product]);
+    const nId = nRoom.json.roomId as string;
+    const nCandidate = await signUp("notes-candidate");
+    await call("POST", "/rooms/join", nCandidate, { inviteCode: nRoom.json.inviteCode });
+    const [nq1, nq2] = (await roomQuestionIds(nId, interviewer)) as [string, string];
+    const run = await call("POST", "/submissions", nCandidate, { roomId: nId, roomQuestionId: nq1, language: "python", mode: "run", code: SUM });
+    await waitFor(run.json.submissionId, nCandidate);
+    // Another room, with its own question and submission, to try cross-room links.
+    const other = await create(interviewer, [QUESTION_ID]);
+    const otherId = other.json.roomId as string;
+    const otherCandidate = await signUp("notes-other");
+    await call("POST", "/rooms/join", otherCandidate, { inviteCode: other.json.inviteCode });
+    const [otherQ] = (await roomQuestionIds(otherId, interviewer)) as [string];
+    const otherRun = await call("POST", "/submissions", otherCandidate, { roomId: otherId, roomQuestionId: otherQ, language: "python", mode: "run", code: SUM });
+
+    const notes = (token: string) => call("GET", `/rooms/${nId}/notes`, token);
+    const add = (token: string, body: unknown) => call("POST", `/rooms/${nId}/notes`, token, body);
+    const SECRET = "SECRET-NOTE: hinted at the two-pointer approach";
+
+    const general = await add(interviewer, { body: `  ${SECRET}  ` });
+    check(
+      "the interviewer adds a general note (trimmed, no links, author's name, created = edited)",
+      general.status === 201 && general.json.body === SECRET && general.json.roomQuestionId === null &&
+        general.json.submissionId === null && general.json.mine === true && typeof general.json.authorName === "string" &&
+        general.json.createdAt === general.json.updatedAt,
+      `(${general.status} ${JSON.stringify(general.json)})`,
+    );
+    const onQuestion = await add(interviewer, { body: "Asked about edge cases", roomQuestionId: nq2 });
+    check("…a note on a question (also one not revealed yet)", onQuestion.status === 201 && onQuestion.json.roomQuestionId === nq2);
+    const onSubmission = await add(interviewer, { body: "First run passed", submissionId: run.json.submissionId });
+    check(
+      "…a note linked to a submission takes that submission's question",
+      onSubmission.status === 201 && onSubmission.json.submissionId === run.json.submissionId && onSubmission.json.roomQuestionId === nq1,
+    );
+    check(
+      "a submission with a different question → 400",
+      (await add(interviewer, { body: "x", submissionId: run.json.submissionId, roomQuestionId: nq2 })).status === 400,
+    );
+    check("another room's question → 404", (await add(interviewer, { body: "x", roomQuestionId: otherQ })).status === 404);
+    check("another room's submission → 404", (await add(interviewer, { body: "x", submissionId: otherRun.json.submissionId })).status === 404);
+    check("an empty / whitespace note → 400", (await add(interviewer, { body: " \n\t " })).status === 400);
+    check("over 5000 characters → 400; exactly 5000 is fine", (await add(interviewer, { body: "x".repeat(5001) })).status === 400 &&
+      (await add(interviewer, { body: "😀".repeat(5000) })).status === 201);
+    check("unknown fields → 400", (await add(interviewer, { body: "x", authorId: userIdOf(nCandidate) })).status === 400);
+
+    // Privacy: candidate and outsider can't list, add, edit or delete; nothing the candidate can fetch has the text.
+    const path = `/rooms/${nId}/notes/${general.json.id}`;
+    for (const [who, token] of [["candidate", nCandidate], ["outsider", outsider]] as const) {
+      const statuses = [
+        (await notes(token)).status,
+        (await add(token, { body: "mine" })).status,
+        (await call("PATCH", path, token, { body: "changed" })).status,
+        (await call("DELETE", path, token)).status,
+      ];
+      check(`the ${who} can't list/add/edit/delete notes → 403`, statuses.every((st) => st === 403), `(${statuses.join(",")})`);
+    }
+    const candidateSees = JSON.stringify([
+      (await call("GET", `/rooms/${nId}`, nCandidate)).json,
+      (await call("GET", `/rooms/${nId}/submissions`, nCandidate)).json,
+      (await call("GET", `/submissions/${run.json.submissionId}`, nCandidate)).json,
+      (await call("GET", "/rooms", nCandidate)).json,
+    ]);
+    check("nothing the candidate can fetch contains a note", !candidateSees.includes("SECRET-NOTE") && !candidateSees.includes("Asked about edge cases"));
+
+    // Another interviewer's note id, or a note id of another room, is "not found" here.
+    const otherNote = await call("POST", `/rooms/${otherId}/notes`, interviewer, { body: "other room" });
+    check(
+      "a note of another room can't be edited or deleted through this room → 404",
+      (await call("PATCH", `/rooms/${nId}/notes/${otherNote.json.id}`, interviewer, { body: "moved?" })).status === 404 &&
+        (await call("DELETE", `/rooms/${nId}/notes/${otherNote.json.id}`, interviewer)).status === 404,
+    );
+
+    // Edit: text + links replaced, updated_at moves, created_at doesn't.
+    await sleep(20);
+    const edited = await call("PATCH", path, interviewer, { body: "Edited: hinted at two pointers", roomQuestionId: nq1 });
+    check(
+      "the author edits a note (text and link); edited time recorded, created time kept",
+      edited.status === 200 && edited.json.body === "Edited: hinted at two pointers" && edited.json.roomQuestionId === nq1 &&
+        edited.json.createdAt === general.json.createdAt && Date.parse(edited.json.updatedAt) > Date.parse(general.json.updatedAt),
+    );
+    check("editing to another room's submission → 404", (await call("PATCH", path, interviewer, { body: "x", submissionId: otherRun.json.submissionId })).status === 404);
+
+    // The database refuses cross-room links itself (composite foreign keys), whatever the API does.
+    const { db: notesDb, close: closeNotesDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    const refusal = async (values: Partial<typeof interviewNotes.$inferInsert>) => {
+      try {
+        await notesDb.insert(interviewNotes).values({ roomId: nId, authorId: userIdOf(interviewer), body: "direct", ...values });
+        return "";
+      } catch (e) {
+        return dbError(e as Error & { cause?: { message?: string } });
+      }
+    };
+    const qRefused = await refusal({ roomQuestionId: otherQ });
+    const sRefused = await refusal({ submissionId: otherRun.json.submissionId });
+    const blank = await refusal({ body: "   " });
+    // Rooms have one interviewer today (ADR 0012); plant a note by someone else to check author-only edits.
+    const [foreign] = await notesDb
+      .insert(interviewNotes)
+      .values({ roomId: nId, authorId: userIdOf(outsider), body: "another author's note" })
+      .returning({ id: interviewNotes.id });
+    await closeNotesDb();
+    const foreignPath = `/rooms/${nId}/notes/${foreign!.id}`;
+    const listed = ((await notes(interviewer)).json as { id: string; mine: boolean }[]).find((n) => n.id === foreign!.id);
+    check(
+      "only the author edits or deletes: another author's note → 403 (listed with mine=false)",
+      listed?.mine === false &&
+        (await call("PATCH", foreignPath, interviewer, { body: "rewritten" })).status === 403 &&
+        (await call("DELETE", foreignPath, interviewer)).status === 403,
+    );
+    check("the database refuses another room's question", qRefused.includes("interview_notes_question_fk"), `(${qRefused.slice(0, 60)})`);
+    check("the database refuses another room's submission", sRefused.includes("interview_notes_submission_fk"), `(${sRefused.slice(0, 60)})`);
+    check("the database refuses a blank note", blank.includes("interview_notes_body_length"), `(${blank.slice(0, 60)})`);
+
+    // PR #15 review: deleting a candidate's account (Supabase Auth) cascades to their submissions. A note
+    // linking one of them must not block that: the note stays (it's the interviewer's), keeps its room
+    // and question, and only loses the submission link.
+    {
+      const gone = await signUp("notes-deleted-candidate");
+      const goneRoom = await create(interviewer, [QUESTION_ID]);
+      await call("POST", "/rooms/join", gone, { inviteCode: goneRoom.json.inviteCode });
+      const [goneQ] = (await roomQuestionIds(goneRoom.json.roomId, interviewer)) as [string];
+      const goneRun = await call("POST", "/submissions", gone, { roomId: goneRoom.json.roomId, roomQuestionId: goneQ, language: "python", mode: "run", code: SUM });
+      await waitFor(goneRun.json.submissionId, gone);
+      const linkedNote = await call("POST", `/rooms/${goneRoom.json.roomId}/notes`, interviewer, { body: "Linked to a run", submissionId: goneRun.json.submissionId });
+      const { db: authDb, close: closeAuthDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+      let deleteError = "";
+      try {
+        await authDb.execute(sql`delete from auth.users where id = ${userIdOf(gone)}`);
+      } catch (e) {
+        deleteError = dbError(e as Error & { cause?: { message?: string } });
+      }
+      const [kept] = await authDb.select().from(interviewNotes).where(eq(interviewNotes.id, linkedNote.json.id));
+      const [run] = await authDb.select({ id: submissions.id }).from(submissions).where(eq(submissions.id, goneRun.json.submissionId));
+      await closeAuthDb();
+      check("deleting a candidate whose run is linked from a note succeeds", deleteError === "" && run === undefined, `(${deleteError.slice(0, 80)})`);
+      check(
+        "…the note stays, with its room and question, and only loses the run link",
+        kept?.roomId === goneRoom.json.roomId && kept?.roomQuestionId === goneQ && kept?.submissionId === null && kept?.body === "Linked to a run",
+        `(${JSON.stringify(kept && { roomId: kept.roomId === goneRoom.json.roomId, q: kept.roomQuestionId === goneQ, sub: kept.submissionId })})`,
+      );
+    }
+
+    // After the session ends: still writable; the review carries the notes, oldest first.
+    await call("POST", `/rooms/${nId}/close`, interviewer);
+    const late = await add(interviewer, { body: "Wrap-up: strong on testing" });
+    check("notes can be added after the session ended", late.status === 201);
+    check("…and deleted (204), then gone", (await call("DELETE", `/rooms/${nId}/notes/${onQuestion.json.id}`, interviewer)).status === 204 &&
+      !(await notes(interviewer)).json.some((n: { id: string }) => n.id === onQuestion.json.id));
+    const review = await call("GET", `/rooms/${nId}/review`, interviewer);
+    const reviewNotes = (review.json.notes ?? []) as { id: string; body: string }[];
+    check(
+      "the review includes the room's notes, oldest first (and not other rooms')",
+      review.status === 200 && reviewNotes[0]?.id === general.json.id && reviewNotes.at(-1)?.id === late.json.id &&
+        !reviewNotes.some((n) => n.body === "other room"),
+      `(${reviewNotes.map((n) => n.body.slice(0, 12)).join(" | ")})`,
+    );
   }
 
   // --- After the session ends --------------------------------------------------------------------

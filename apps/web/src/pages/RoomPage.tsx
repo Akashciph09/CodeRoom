@@ -9,8 +9,9 @@ import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { RoomColumns, useRoomLayout } from "../components/RoomLayout";
 import { TestPanel } from "../components/TestPanel";
+import { NotesPanel } from "../components/NotesPanel";
 import { TopBar } from "../components/TopBar";
-import { api, ApiError, isRetryable, submitWithRetry } from "../lib/api";
+import { api, ApiError, isInterviewerView, isRetryable, submitWithRetry } from "../lib/api";
 import { mergeHistory, upsertEntry, type SubmissionEntry } from "../lib/submissions";
 import { displayName, useSession } from "../lib/auth";
 import {
@@ -471,6 +472,17 @@ export function RoomPage() {
               const index = cases.toArray().findIndex((c) => (c as { id?: unknown })?.id === id);
               if (index >= 0) cases.delete(index, 1);
             }}
+            notes={
+              room.role === "interviewer" ? (
+                <NotesPanel
+                  roomId={room.roomId}
+                  startedAt={room.createdAt}
+                  questions={room.questions.map((q) => ({ id: q.id, position: q.position, title: q.question.title }))}
+                  activeQuestionId={active.id}
+                  submissions={entries.flatMap((e) => (!e.pending && isInterviewerView(e.view) ? [e.view] : []))}
+                />
+              ) : undefined
+            }
           />
         }
       />

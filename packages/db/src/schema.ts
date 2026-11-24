@@ -153,6 +153,8 @@ export const roomQuestions = pgTable(
     uniqueIndex("room_questions_position").on(t.roomId, t.position),
     // Target of submissions' composite FK: a submission's room + version must match its room question.
     uniqueIndex("room_questions_identity").on(t.id, t.roomId, t.questionVersionId),
+    // Target of interview_notes' composite FK: a note's question must belong to the note's room.
+    uniqueIndex("room_questions_room_scope").on(t.id, t.roomId),
     check("room_questions_position_positive", sql`${t.position} >= 1`),
     check("room_questions_points_range", sql`${t.points} BETWEEN 1 AND 100`),
   ],
@@ -219,6 +221,8 @@ export const submissions = pgTable(
   (t) => [
     // NULLs are distinct in a Postgres unique index, so rows without a key never collide.
     uniqueIndex("submissions_user_idempotency_key").on(t.userId, t.idempotencyKey),
+    // Target of interview_notes' composite FK: a note's submission must belong to the note's room.
+    uniqueIndex("submissions_room_scope").on(t.id, t.roomId),
     // The submission's room and graded version must be exactly its room question's: a submission can't
     // be recorded against another room's question or a version other than the pinned one.
     foreignKey({
@@ -273,6 +277,45 @@ export const customCaseResults = pgTable(
   (t) => [primaryKey({ columns: [t.submissionId, t.position] })],
 ).enableRLS();
 
+/**
+ * The interviewer's private notes (ADR 0016). Never in the shared Yjs document (candidates receive it);
+ * read and written only through interviewer-only API routes. Optional links to one of the room's
+ * questions / submissions are enforced per room by composite foreign keys.
+ */
+export const interviewNotes = pgTable(
+  "interview_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => authUsers.id, { onDelete: "cascade" }),
+    roomQuestionId: uuid("room_question_id"),
+    submissionId: uuid("submission_id"),
+    body: text("body").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("interview_notes_room_idx").on(t.roomId, t.createdAt),
+    foreignKey({
+      name: "interview_notes_question_fk",
+      columns: [t.roomQuestionId, t.roomId],
+      foreignColumns: [roomQuestions.id, roomQuestions.roomId],
+    }),
+    // ON DELETE SET NULL (submission_id): a deleted submission (e.g. the candidate's account was
+    // deleted) clears only the link and keeps the note and its room. drizzle-kit can't express the
+    // column list, so it's set in the hand-written migration `…_interview_notes_submission_set_null.sql`.
+    foreignKey({
+      name: "interview_notes_submission_fk",
+      columns: [t.submissionId, t.roomId],
+      foreignColumns: [submissions.id, submissions.roomId],
+    }),
+    check("interview_notes_body_length", sql`char_length(btrim(${t.body})) BETWEEN 1 AND 5000`),
+  ],
+).enableRLS();
+
 const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
   dataType: () => "bytea",
   toDriver: (value) => Buffer.from(value),
@@ -300,3 +343,4 @@ export type Submission = typeof submissions.$inferSelect;
 export type TestResultRow = typeof testResults.$inferSelect;
 export type NewTestResult = typeof testResults.$inferInsert;
 export type CustomCaseResultRow = typeof customCaseResults.$inferSelect;
+export type InterviewNote = typeof interviewNotes.$inferSelect;

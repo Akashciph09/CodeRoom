@@ -7,6 +7,8 @@ import type {
   InterviewerSubmissionView,
   JoinRoomResponse,
   MyQuestionSummary,
+  NoteRequest,
+  NoteView,
   PublishProblem,
   QuestionDetail,
   QuestionDraftInput,
@@ -76,6 +78,11 @@ export const api = {
   /** Rename or clear (empty) the room's name — interviewer only (ADR 0014). */
   renameRoom: (roomId: string, name: string) =>
     request<{ roomId: string; name: string | null }>("PATCH", `/rooms/${roomId}`, { name }),
+  /** The interviewer's private notes (ADR 0016) — interviewer-only routes. */
+  notes: (roomId: string) => request<NoteView[]>("GET", `/rooms/${roomId}/notes`),
+  addNote: (roomId: string, note: NoteRequest) => request<NoteView>("POST", `/rooms/${roomId}/notes`, note),
+  editNote: (roomId: string, noteId: string, note: NoteRequest) => request<NoteView>("PATCH", `/rooms/${roomId}/notes/${noteId}`, note),
+  deleteNote: (roomId: string, noteId: string) => request<void>("DELETE", `/rooms/${roomId}/notes/${noteId}`),
   /** Interviewer-only post-interview review (ADR 0011). */
   review: (roomId: string) => request<RoomReview>("GET", `/rooms/${roomId}/review`),
   revealQuestion: (roomId: string, roomQuestionId: string) =>

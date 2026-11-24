@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { editorText, expectUnchanged, openAs, replaceCode, results, signUp } from "./helpers";
+import { authorQuestion, editorText, expectUnchanged, openAs, replaceCode, results, signUp } from "./helpers";
 
 /*
  * Multi-question rooms (ADR 0009): the interviewer picks an ordered list, reveals questions one at a
@@ -10,28 +10,12 @@ const SUM = "a, b = map(int, input().split())\nprint(a + b)";
 const PRODUCT = "a, b = map(int, input().split())\nprint(a * b)";
 const DIFFERENCE = "a, b = map(int, input().split())\nprint(a - b)";
 
-const field = (page: Page, label: string) => page.getByLabel(label, { exact: true });
 const questionPanel = (page: Page) => page.getByRole("complementary", { name: "Question" });
 const nav = (page: Page) => page.getByRole("navigation", { name: "Questions" });
 const navButton = (page: Page, n: number) => nav(page).getByRole("button", { name: new RegExp(`^Q${n}:`) });
 const resultsHeading = (page: Page) => page.locator(".results-panel h2");
 /** Test-case rows of the newest result card. */
 const testRows = (page: Page) => results(page).first().locator("table.tests tr");
-
-/** Author and publish a question with one public test, through the UI. */
-async function authorQuestion(page: Page, title: string, starter: string, input: string, output: string) {
-  await page.getByRole("link", { name: "My questions", exact: true }).click();
-  await page.getByRole("button", { name: "Create question" }).click();
-  await expect(page).toHaveURL(/\/questions\/[0-9a-f-]{36}$/);
-  await field(page, "Title").fill(title);
-  await field(page, "Problem statement").fill(`${title}: read a and b.`);
-  await field(page, "Python starter code").fill(starter);
-  await page.getByRole("button", { name: "Add public test" }).click();
-  await field(page, "Test 1 input").fill(input);
-  await field(page, "Test 1 expected output").fill(output);
-  await page.getByRole("button", { name: "Mark ready" }).click();
-  await expect(page.getByText("Marked ready as version 1")).toBeVisible();
-}
 
 test("interviewer reveals questions one by one; the candidate sees only revealed ones", async ({ browser }) => {
   const interviewer = await openAs(browser, "Iris Interviewer");

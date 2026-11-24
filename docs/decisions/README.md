@@ -20,3 +20,4 @@ Rule for this repo: a technology goes in only if it has a "why" and a "why not t
 | [0013](0013-room-list-candidates.md) | The interviewer's room list shows each candidate's name and email | Accepted |
 | [0014](0014-room-names.md) | Optional room names, visible to the interviewer only | Accepted |
 | [0015](0015-ci-github-actions.md) | CI on GitHub Actions: fast checks, then the real stack | Accepted |
+| [0016](0016-interviewer-notes.md) | Private interviewer notes, stored outside the shared document | Accepted |

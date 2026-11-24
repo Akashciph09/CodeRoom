@@ -185,3 +185,19 @@ export async function expectUnchanged(read: () => Promise<string>, expected: str
 
 export const results = (page: Page) => page.locator(".results-panel .submission");
 export const avatars = (page: Page) => page.locator(".presence .avatar");
+
+/** Author and publish a question with one public test, through the UI. */
+export async function authorQuestion(page: Page, title: string, starter: string, input: string, output: string) {
+  const field = (label: string) => page.getByLabel(label, { exact: true });
+  await page.getByRole("link", { name: "My questions", exact: true }).click();
+  await page.getByRole("button", { name: "Create question" }).click();
+  await expect(page).toHaveURL(/\/questions\/[0-9a-f-]{36}$/);
+  await field("Title").fill(title);
+  await field("Problem statement").fill(`${title}: read a and b.`);
+  await field("Python starter code").fill(starter);
+  await page.getByRole("button", { name: "Add public test" }).click();
+  await field("Test 1 input").fill(input);
+  await field("Test 1 expected output").fill(output);
+  await page.getByRole("button", { name: "Mark ready" }).click();
+  await expect(page.getByText("Marked ready as version 1")).toBeVisible();
+}

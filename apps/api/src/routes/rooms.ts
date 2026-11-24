@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, isNull, or, questions, questionVersions, roomPa
 import {
   CreateRoomRequest,
   JoinRoomRequest,
+  NoteRequest,
   RenameRoomRequest,
   roomEventsChannel,
   type RoomBusEvent,
@@ -16,6 +17,7 @@ import { redis } from "../queue.js";
 import { latestPublished } from "../services/questions.js";
 import { revealQuestion, roomQuestionsFor } from "../services/roomQuestions.js";
 import { roomCandidates, roomReview } from "../services/review.js";
+import { createNote, deleteNote, listNotes, updateNote } from "../services/notes.js";
 import { customResultsFor, resultsFor, viewFor } from "../services/submissionViews.js";
 import { requireRoomRole } from "../auth.js";
 import { db } from "../db.js";
@@ -178,7 +180,53 @@ roomsRouter.get(
   asyncHandler(async (req, res) => {
     const roomId = UuidParam.parse(req.params.id);
     await requireRoomRole(roomId, req.user!.userId, "interviewer");
-    res.json(await roomReview(roomId));
+    res.json(await roomReview(roomId, req.user!.userId));
+  }),
+);
+
+/*
+ * Private interviewer notes (ADR 0016). Every route is interviewer-only (403 for candidates and
+ * outsiders); only a note's author can edit or delete it. Allowed after the session ended too.
+ * Notes never go through Yjs or room events — those reach the candidate.
+ */
+roomsRouter.get(
+  "/:id/notes",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    res.json(await listNotes(roomId, req.user!.userId));
+  }),
+);
+
+roomsRouter.post(
+  "/:id/notes",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const { body, ...links } = NoteRequest.parse(req.body);
+    res.status(201).json(await createNote(roomId, req.user!.userId, body, links));
+  }),
+);
+
+roomsRouter.patch(
+  "/:id/notes/:noteId",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const noteId = UuidParam.parse(req.params.noteId);
+    const { body, ...links } = NoteRequest.parse(req.body);
+    res.json(await updateNote(roomId, req.user!.userId, noteId, body, links));
+  }),
+);
+
+roomsRouter.delete(
+  "/:id/notes/:noteId",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const noteId = UuidParam.parse(req.params.noteId);
+    await deleteNote(roomId, req.user!.userId, noteId);
+    res.status(204).end();
   }),
 );
 

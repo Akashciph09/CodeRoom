@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   MAX_CUSTOM_CASE_BYTES,
   MAX_CUSTOM_CASES,
@@ -10,7 +10,7 @@ import type { SharedCase } from "../lib/roomQuestions";
 import { questionOf, type SubmissionEntry } from "../lib/submissions";
 import { ResultsPanel } from "./ResultsPanel";
 
-type Tab = "cases" | "result";
+type Tab = "cases" | "result" | "notes";
 
 /** What the Case tabs list: the question's public examples, then the shared custom cases. */
 type CaseItem =
@@ -23,7 +23,10 @@ type CaseItem =
  *    through the room doc, ADR 0010), one case at a time, plus "+" to add one. Hidden tests are never
  *    listed — only their count.
  *  - "Test Result": the runs for this question.
- * Switches to Test Result when a run for this question starts.
+ *  - "Notes": the interviewer's private notes — only when `notes` is given (never for the candidate).
+ *    Kept mounted while another tab shows, so a half-written note survives switching tabs.
+ * Switches to Test Result when a run for this question starts — except from Notes, so the candidate
+ * pressing Run never pulls the interviewer out of a note they're writing.
  */
 export function TestPanel({
   question,
@@ -34,6 +37,7 @@ export function TestPanel({
   canEditCases,
   onAddCase,
   onRemoveCase,
+  notes,
 }: {
   question: CandidateQuestionView;
   /** The room question being viewed — only in multi-question rooms (scopes the results). */
@@ -47,6 +51,8 @@ export function TestPanel({
   /** Adds the case unless that's no longer allowed (checked at that moment): its id, or why it was refused. */
   onAddCase: (c: { input: string; expectedOutput?: string }) => { id: string } | { refused: string };
   onRemoveCase: (id: string) => void;
+  /** The interviewer's notes panel. Omitted for candidates: no tab, nothing rendered. */
+  notes?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>(ended ? "result" : "cases");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -86,7 +92,7 @@ export function TestPanel({
     const prev = seen.current;
     seen.current = { questionKey, newestId: newest?.submissionId };
     if (prev.questionKey !== questionKey) return; // switched questions: not a new run
-    if (newest && newest.submissionId !== prev.newestId && newest.pending) setTab("result");
+    if (newest && newest.submissionId !== prev.newestId && newest.pending) setTab((t) => (t === "notes" ? t : "result"));
   }, [questionKey, newest]);
 
   const full = customCases.length >= MAX_CUSTOM_CASES;
@@ -111,6 +117,19 @@ export function TestPanel({
         >
           <span className="pane-icon ok" aria-hidden="true">&gt;_</span> Test Result
         </button>
+        {notes && (
+          <>
+            <span className="pane-sep" aria-hidden="true" />
+            <button
+              role="tab"
+              aria-selected={tab === "notes"}
+              className={`pane-tab ${tab === "notes" ? "active" : ""}`}
+              onClick={() => setTab("notes")}
+            >
+              <span className="pane-icon" aria-hidden="true">✎</span> Notes
+            </button>
+          </>
+        )}
       </div>
 
       {tab === "cases" ? (
@@ -205,9 +224,14 @@ export function TestPanel({
             </p>
           )}
         </div>
-      ) : (
+      ) : tab === "result" ? (
         <div className="pane-body">
           <ResultsPanel entries={entries} question={roomQuestion} />
+        </div>
+      ) : null}
+      {notes && (
+        <div className="pane-body" hidden={tab !== "notes"}>
+          {notes}
         </div>
       )}
     </section>

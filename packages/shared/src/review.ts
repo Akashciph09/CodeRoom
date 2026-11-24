@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Language } from "./languages.js";
+import { NoteView } from "./notes.js";
 import { SubmissionMode, SubmissionStatus } from "./submissions.js";
 import { Verdict } from "./verdicts.js";
 
@@ -75,5 +76,7 @@ export const RoomReview = z.object({
   serverTime: z.string(),
   questions: z.array(ReviewQuestion),
   candidates: z.array(ReviewCandidate),
+  /** The interviewers' private notes (ADR 0016), oldest first. */
+  notes: z.array(NoteView),
 });
 export type RoomReview = z.infer<typeof RoomReview>;
