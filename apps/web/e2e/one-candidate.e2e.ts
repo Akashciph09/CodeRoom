@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { addInterviewQuestion, openAs, signUp, startInterview } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, signUp, startInterview } from "./helpers";
 
 /** One interviewer, one candidate per room (ADR 0012): a forwarded invite link doesn't let anyone else in. */
 test("a third person with the invite link is turned away; the candidate can rejoin", async ({ browser }) => {
@@ -42,7 +42,7 @@ test("the interviewer opening their own invite link goes to their room; the seat
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await addInterviewQuestion(iv.page);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomUrl = iv.page.url();
     await iv.page.getByRole("button", { name: "Copy invite link" }).click();

@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   addInterviewQuestion,
+  createInterviewRoom,
   appendLine,
   avatars,
   editorText,
@@ -33,7 +34,7 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
       await signUp(page, interviewer.name);
       await expect(page.getByRole("heading", { name: "Start an interview" })).toBeVisible();
       await addInterviewQuestion(page);
-      await page.getByRole("button", { name: "Create room" }).click();
+      await createInterviewRoom(page);
       await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
       roomUrl = page.url();
 

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { addInterviewQuestion, openAs, replaceCode, results, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, replaceCode, results, signUp } from "./helpers";
 
 /*
  * README screenshots, generated from a real interview driven through the UI (local stack only):
@@ -110,7 +110,7 @@ test("README screenshots", async ({ browser }) => {
     await ivp.getByLabel("Q2 points").fill("40");
     await ivp.getByRole("heading", { name: "Start an interview" }).click(); // no focus ring in the shot
     await shot(ivp, "home");
-    await ivp.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(ivp);
     await expect(ivp).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomUrl = ivp.url();
     await ivp.getByRole("button", { name: "Copy invite link" }).click();

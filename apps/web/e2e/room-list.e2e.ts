@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { addInterviewQuestion, openAs, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, signUp } from "./helpers";
 
 /*
  * "Your rooms" (ADR 0013): aligned columns Interview | Candidate | Your role | Status | Created | Action,
@@ -36,7 +36,7 @@ test("rooms list: aligned columns, candidate details, ended status, search, phon
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await addInterviewQuestion(iv.page);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomA = new URL(iv.page.url()).pathname;
     await iv.page.getByRole("button", { name: "Copy invite link" }).click();
@@ -51,7 +51,7 @@ test("rooms list: aligned columns, candidate details, ended status, search, phon
     await expect(iv.page.getByText("This interview has ended.")).toBeVisible();
     await iv.page.goto("/");
     await addInterviewQuestion(iv.page);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomB = new URL(iv.page.url()).pathname;
     await iv.page.goto("/");
@@ -143,7 +143,7 @@ test("the rooms list stays inside its card at every width", async ({ browser }) 
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await addInterviewQuestion(iv.page);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomPath = new URL(iv.page.url()).pathname;
 

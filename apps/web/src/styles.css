@@ -162,6 +162,11 @@ label input, label select { color: var(--text); font-size: 14px; }
 .picked-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .small-btn { padding: 2px 8px; }
 .add-question { align-self: flex-start; }
+.question-dialog { width: min(32rem, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); box-sizing: border-box; padding: 0; overflow: auto; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+.question-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+.question-dialog-content { display: grid; gap: 12px; padding: 20px; }
+.question-dialog-content h2, .question-dialog-content p { margin: 0; }
+.question-dialog-content > button { justify-self: end; }
 .question-picker { list-style: none; margin: 0; padding: 6px; display: grid; gap: 4px; max-height: 15rem; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
 .question-picker button { width: 100%; text-align: left; overflow-wrap: anywhere; }
 

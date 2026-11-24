@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { addInterviewQuestion, openAs, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, signUp } from "./helpers";
 
 /** Room names (ADR 0014): set when creating, renamed in the room, shown to the interviewer only. */
 test("the interviewer names, renames and finds a room; the candidate never sees the name", async ({ browser }) => {
@@ -10,7 +10,7 @@ test("the interviewer names, renames and finds a room; the candidate never sees 
     await signUp(iv.page, iv.name);
     await iv.page.getByLabel("Room name").fill("Backend interview");
     await addInterviewQuestion(iv.page);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomPath = new URL(iv.page.url()).pathname;
     const topbar = iv.page.locator(".topbar");
@@ -83,7 +83,7 @@ test("a rename that's still saving can't be cancelled or edited", async ({ brows
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await addInterviewQuestion(iv.page);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const topbar = iv.page.locator(".topbar");
 
@@ -99,7 +99,7 @@ test("a rename that's still saving can't be cancelled or edited", async ({ brows
       await route.fulfill({ response });
     });
 
-    await iv.page.getByRole("button", { name: "Name this room" }).click();
+    await iv.page.getByRole("button", { name: "Rename room" }).click();
     const input = topbar.getByLabel("Room name");
     await input.fill("Backend interview");
     await iv.page.getByRole("button", { name: "Save" }).click();
@@ -128,7 +128,7 @@ test("a long unbroken room name wraps on the review page", async ({ browser }) =
     await signUp(iv.page, iv.name);
     await iv.page.getByLabel("Room name").fill(LONG);
     await addInterviewQuestion(iv.page);
-    await iv.page.getByRole("button", { name: "Create room" }).click();
+    await createInterviewRoom(iv.page);
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     await iv.page.goto(`${iv.page.url()}/review`);
     for (const width of [390, 768]) {
