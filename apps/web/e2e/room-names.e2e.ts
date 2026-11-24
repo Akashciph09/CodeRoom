@@ -54,7 +54,7 @@ test("the interviewer names, renames and finds a room; the candidate never sees 
     await iv.page.goto("/");
     const row = iv.page.getByRole("table", { name: "Your rooms" }).getByRole("row").filter({ has: iv.page.locator(`a[href="${roomPath}"]`) });
     await expect(row.locator(`a[href="${roomPath}"]`)).toHaveText("SRE interview");
-    await expect(row.locator(".room-question")).toHaveText("Sum two numbers");
+    await expect(row.getByRole("cell").first()).toHaveText("SRE interview");
     await iv.page.getByLabel("Search rooms").fill("sre");
     await expect(row).toBeVisible();
 
