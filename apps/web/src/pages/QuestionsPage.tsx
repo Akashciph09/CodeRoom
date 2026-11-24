@@ -36,15 +36,6 @@ export function QuestionsPage() {
     }
   }
 
-  async function startInterview(questionId: string) {
-    try {
-      const { roomId } = await api.createRoom([questionId]);
-      navigate(`/rooms/${roomId}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
   return (
     <>
       <TopBar />
@@ -63,17 +54,14 @@ export function QuestionsPage() {
           ) : questions.length === 0 ? (
             <p className="muted">No questions yet. Create one to use it in your interviews.</p>
           ) : (
-            <ul className="room-list" aria-label="My questions">
+            <ul className="question-list" role="list" aria-label="My questions">
               {questions.map((q) => (
                 <li key={q.id}>
-                  <Link to={`/questions/${q.id}`}>{q.title}</Link>
-                  <QuestionStatus q={q} />
-                  <span className="muted">{new Date(q.updatedAt).toLocaleString()}</span>
-                  {q.status === "ready" && (
-                    <button className="ghost" onClick={() => startInterview(q.id)}>
-                      Start interview
-                    </button>
-                  )}
+                  <h2><Link to={`/questions/${q.id}`}>{q.title}</Link></h2>
+                  <div className="question-list-meta">
+                    <QuestionStatus q={q} />
+                    <time className="muted" dateTime={q.updatedAt}>{new Date(q.updatedAt).toLocaleString()}</time>
+                  </div>
                 </li>
               ))}
             </ul>
