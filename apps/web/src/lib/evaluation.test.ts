@@ -29,11 +29,13 @@ describe("evaluation form", () => {
     const start = { baseline: view(1), form: formOf(view(1)) };
     // Untouched form → replaced by the newer version.
     expect(applyServerView(start, view(2)).form.summary).toBe("rev 2");
-    // Edited form → kept; the baseline still moves forward.
+    // The edited form retains the revision it was based on.
     const edited = { ...start, form: { ...start.form, summary: "typing…" } };
     const next = applyServerView(edited, view(2));
     expect(next.form.summary).toBe("typing…");
-    expect(next.baseline?.revision).toBe(2);
+    expect(toInput(next.form, next.baseline?.revision ?? 0).baseRevision).toBe(1);
+    const unsaved = { baseline: null, form: { ...formOf(null), summary: "new draft" } };
+    expect(applyServerView(unsaved, view(1))).toBe(unsaved);
   });
 
   it("never goes back to an older revision (a slow refresh arriving after a save)", () => {

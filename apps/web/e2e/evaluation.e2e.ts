@@ -90,8 +90,23 @@ test("draft during the interview, submit after it ends, then locked; separate fr
       await rate(iv, "Communication", "3");
       await card(iv).getByRole("group", { name: "Overall recommendation" }).getByRole("radio", { name: "Hire", exact: true }).check();
       await expect(missing).toHaveCount(0);
-      iv.once("dialog", (d) => d.accept()); // "It will be locked"
-      await card(iv).getByRole("button", { name: "Submit evaluation" }).click(); // saves the unsaved changes first
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const submitRoute = /\/rooms\/[^/]+\/evaluations\/[^/]+\/submit$/;
+      await iv.route(submitRoute, async (route) => {
+        await held;
+        await route.continue();
+      });
+      try {
+        const pending = iv.waitForRequest((request) => request.method() === "POST" && submitRoute.test(request.url()));
+        iv.once("dialog", (d) => d.accept());
+        await card(iv).getByRole("button", { name: "Submit evaluation" }).click();
+        await pending; // The draft save has completed and the final submit is in flight.
+        await expect(card(iv).getByLabel("Evaluation summary")).toBeDisabled();
+        await expect(dimension(iv, "Problem solving").getByRole("radio", { name: /^3/ })).toBeDisabled();
+      } finally {
+        release();
+      }
 
       await expect(badge(iv)).toHaveText("Submitted");
       await expect(card(iv)).toContainText("Submitted by Iris Interviewer");
@@ -163,4 +178,3 @@ test("a slow draft save keeps what was typed meanwhile", async ({ browser }) => 
     await close();
   }
 });
-

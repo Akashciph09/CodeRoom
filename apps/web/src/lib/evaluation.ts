@@ -25,8 +25,8 @@ export function applyServerView(
   incoming: EvaluationView | null,
 ): { baseline: EvaluationView | null; form: EvaluationForm } {
   if (!incoming || (state.baseline && incoming.revision <= state.baseline.revision)) return state;
-  const untouched = sameForm(state.form, formOf(state.baseline));
-  return { baseline: incoming, form: untouched ? formOf(incoming) : state.form };
+  if (!sameForm(state.form, formOf(state.baseline))) return state;
+  return { baseline: incoming, form: formOf(incoming) };
 }
 
 /** Change one dimension. */

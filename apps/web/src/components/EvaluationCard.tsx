@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   evaluationProblems,
   MAX_EXPLANATION_CHARS,
@@ -58,9 +58,8 @@ export function EvaluationCard({
 }) {
   const [state, setState] = useState(() => ({ baseline: evaluation, form: formOf(evaluation) }));
   const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string; reload?: boolean } | null>(null);
-  const latestForm = useRef(state.form);
-  latestForm.current = state.form;
 
   // Refreshes bring newer server versions; never over unsaved edits, never backwards.
   useEffect(() => {
@@ -107,21 +106,17 @@ export function EvaluationCard({
       )
     )
       return;
-    const current = dirty ? await save() : baseline;
-    if (!current) return;
-    if (!sameForm(latestForm.current, formOf(current))) {
-      setMessage({ kind: "info", text: "You changed something while it was saving — check it and submit again." });
-      return;
-    }
-    setBusy(true);
+    setSubmitting(true);
     setMessage(null);
     try {
+      const current = dirty ? await save() : baseline;
+      if (!current) return;
       const submitted = await api.submitEvaluation(roomId, candidateId, current.revision);
       setState({ baseline: submitted, form: formOf(submitted) });
     } catch (err) {
       failed(err);
     } finally {
-      setBusy(false);
+      setSubmitting(false);
     }
   }
 
@@ -152,7 +147,7 @@ export function EvaluationCard({
       {locked && baseline ? (
         <LockedEvaluation view={baseline} evidenceLabel={evidenceLabel} evidenceHref={evidenceHref} />
       ) : (
-        <>
+        <fieldset className="evaluation-form" disabled={submitting}>
           {RUBRIC.map((r) => (
             <DimensionField
               key={r.dimension}
@@ -215,7 +210,7 @@ export function EvaluationCard({
               </ul>
             </div>
           )}
-        </>
+        </fieldset>
       )}
       {message && (
         <p className={`${message.kind === "error" ? "error" : "muted"} small`} role={message.kind === "error" ? "alert" : "status"}>

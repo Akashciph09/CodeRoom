@@ -92,7 +92,11 @@ async function checkEvidence(roomId: string, candidateId: string, dims: Dimensio
 
 /** The evaluator's evaluations in this room, by candidate id. */
 export async function evaluationsBy(roomId: string, evaluatorId: string): Promise<Map<string, EvaluationView>> {
-  const rows = await db
+  return db.transaction((tx) => readEvaluations(tx, roomId, evaluatorId), { isolationLevel: "repeatable read", accessMode: "read only" });
+}
+
+async function readEvaluations(tx: Tx, roomId: string, evaluatorId: string): Promise<Map<string, EvaluationView>> {
+  const rows = await tx
     .select({
       e: evaluations,
       submitterName: sql<string | null>`(select coalesce(nullif(trim(u.raw_user_meta_data->>'name'), ''), split_part(u.email, '@', 1)) from auth.users u where u.id = ${evaluations.submittedBy})`,
@@ -103,8 +107,8 @@ export async function evaluationsBy(roomId: string, evaluatorId: string): Promis
   if (rows.length === 0) return out;
   const ids = rows.map((r) => r.e.id);
   const [scores, evidence] = await Promise.all([
-    db.select().from(evaluationScores).where(inArray(evaluationScores.evaluationId, ids)),
-    db.select().from(evaluationEvidence).where(inArray(evaluationEvidence.evaluationId, ids)).orderBy(asc(evaluationEvidence.position)),
+    tx.select().from(evaluationScores).where(inArray(evaluationScores.evaluationId, ids)),
+    tx.select().from(evaluationEvidence).where(inArray(evaluationEvidence.evaluationId, ids)).orderBy(asc(evaluationEvidence.position)),
   ]);
   for (const { e, submitterName } of rows) {
     const dimensions: DimensionScore[] = RUBRIC.map((r) => {
@@ -135,8 +139,8 @@ export async function evaluationsBy(roomId: string, evaluatorId: string): Promis
   return out;
 }
 
-async function viewOf(roomId: string, candidateId: string, evaluatorId: string): Promise<EvaluationView> {
-  const view = (await evaluationsBy(roomId, evaluatorId)).get(candidateId);
+async function viewOf(tx: Tx, roomId: string, candidateId: string, evaluatorId: string): Promise<EvaluationView> {
+  const view = (await readEvaluations(tx, roomId, evaluatorId)).get(candidateId);
   if (!view) throw new NotFound("Evaluation not found");
   return view;
 }
@@ -180,7 +184,7 @@ export async function saveEvaluationDraft(
 ): Promise<EvaluationView> {
   await requireCandidate(roomId, candidateId);
   await checkEvidence(roomId, candidateId, input.dimensions);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [current] = await tx
       .select({ id: evaluations.id, status: evaluations.status, revision: evaluations.revision })
       .from(evaluations)
@@ -212,8 +216,8 @@ export async function saveEvaluationDraft(
         .where(eq(evaluations.id, id));
     }
     await writeParts(tx, id, roomId, candidateId, input.dimensions);
+    return viewOf(tx, roomId, candidateId, evaluatorId);
   });
-  return viewOf(roomId, candidateId, evaluatorId);
 }
 
 /**
@@ -222,7 +226,7 @@ export async function saveEvaluationDraft(
  */
 export async function submitEvaluation(roomId: string, candidateId: string, evaluatorId: string, revision: number): Promise<EvaluationView> {
   await requireCandidate(roomId, candidateId);
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     // "closed" is final, so checking it here can't race with the room reopening.
     const [room] = await tx.select({ status: rooms.status }).from(rooms).where(eq(rooms.id, roomId));
     if (room?.status !== "closed") throw new RoomStillOpen();
@@ -250,8 +254,8 @@ export async function submitEvaluation(roomId: string, candidateId: string, eval
         updatedAt: sql`now()`,
       })
       .where(eq(evaluations.id, current.id));
+    return viewOf(tx, roomId, candidateId, evaluatorId);
   });
-  return viewOf(roomId, candidateId, evaluatorId);
 }
 
 /** Notes cited by a submitted evaluation are part of its evidence: no edits, no deletes. */
