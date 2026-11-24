@@ -7,6 +7,7 @@ import type {
   EvaluationDraftInput,
   EvaluationView,
   InterviewerSubmissionView,
+  InterviewSummary,
   JoinRoomResponse,
   MyQuestionSummary,
   NoteRequest,
@@ -91,6 +92,7 @@ export const api = {
   submitEvaluation: (roomId: string, candidateId: string, revision: number) =>
     request<EvaluationView>("POST", `/rooms/${roomId}/evaluations/${candidateId}/submit`, { revision }),
   /** Interviewer-only post-interview review (ADR 0011). */
+  draftInterviewSummary: (roomId: string) => request<InterviewSummary>("POST", `/rooms/${roomId}/review/summary`),
   review: (roomId: string) => request<RoomReview>("GET", `/rooms/${roomId}/review`),
   revealQuestion: (roomId: string, roomQuestionId: string) =>
     request<{ roomQuestionId: string; revealed: true }>("POST", `/rooms/${roomId}/questions/${roomQuestionId}/reveal`),

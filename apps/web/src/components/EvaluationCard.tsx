@@ -261,7 +261,7 @@ function DimensionField({
   const full = value.evidence.length >= MAX_EVIDENCE_PER_DIMENSION;
 
   return (
-    <fieldset className="rubric-dim">
+    <fieldset className="rubric-dim" id={`rubric-${name}`}>
       <legend>{rubric.title}</legend>
       <p className="muted small">{rubric.question}</p>
       <div className="rubric-levels">
@@ -369,7 +369,7 @@ function LockedEvaluation({
         {RUBRIC.map((r) => {
           const d = view.dimensions.find((x) => x.dimension === r.dimension)!;
           return (
-            <div key={r.dimension} className="rubric-result-row" aria-label={r.title}>
+            <div key={r.dimension} id={`rubric-${view.candidateId}-${r.dimension}`} className="rubric-result-row" aria-label={r.title}>
               <dt>{r.title}</dt>
               <dd>
                 <strong>{d.notObserved ? "Not observed" : d.rating !== null ? `${d.rating} / 4` : "—"}</strong>

@@ -22,3 +22,4 @@ Rule for this repo: a technology goes in only if it has a "why" and a "why not t
 | [0015](0015-ci-github-actions.md) | CI on GitHub Actions: fast checks, then the real stack | Accepted |
 | [0016](0016-interviewer-notes.md) | Private interviewer notes, stored outside the shared document | Accepted |
 | [0017](0017-evaluation-rubric.md) | Structured evaluation rubric, locked on submit | Accepted |
+| [0018](0018-ai-interview-summary.md) | AI drafts an evidence-linked interview summary | Accepted |

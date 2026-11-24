@@ -4,11 +4,21 @@
 
 **A live technical-interview platform where candidate code runs in isolated sandboxes and AI assists the interviewer — without ever deciding who gets hired.**
 
-Interviewer and candidate share a room. The candidate writes code; every run goes through a queue to a disposable, locked-down Docker container and comes back with per-test verdicts. Hidden test cases never leave the server. An AI copilot (in progress) helps the interviewer prepare questions, ask follow-ups and summarize evidence against a rubric.
+Interviewer and candidate share a room. The candidate writes code; every run goes through a queue to a disposable, locked-down Docker container and comes back with per-test verdicts. Hidden test cases never leave the server. The AI copilot drafts a cited summary for the interviewer using review evidence.
 
-> **Status:** a working interview product end to end — sign in, create a room, share an invite link, edit code together in real time, run/submit against sandboxed tests and see role-aware results live. Tested across multiple API instances. AI copilot, rubric and replay are next — see [Roadmap](#roadmap).
+> **Status:** a working interview product end to end — sign in, create a room, share an invite link, edit code together in real time, run/submit against sandboxed tests and see role-aware results live. Tested across multiple API instances. Private notes, a human rubric, and AI summary drafts are available. Editor replay is planned — see [Roadmap](#roadmap).
 
 ---
+
+## AI interview summary
+
+Set `ANTHROPIC_API_KEY` in the server's `.env` to use Claude. For a free-tier demo, set
+`AI_SUMMARY_PROVIDER=groq` and `GROQ_API_KEY` using a key from the [GroqCloud Console](https://console.groq.com/keys).
+Restart the API after changing those values. On the interviewer review,
+click **Draft a summary** to generate editable observations and follow-up questions with links
+back to the evidence. The draft lives in the current page. The selected provider receives question titles,
+run results, notes, and saved rubric dimensions. See [ADR 0018](docs/decisions/0018-ai-interview-summary.md)
+for the provider and data boundaries. The smoke suite uses an injected fake model.
 
 ## Screenshots
 
@@ -395,7 +405,8 @@ docs/decisions/ Architecture Decision Records
 - [x] Structured evaluation rubric: four dimensions, evidence links, recommendation, locked on submit
 - [ ] Interviewer hints (revealed by the interviewer, recorded as evidence)
 - [ ] Submission history and editor replay (Supabase Storage)
-- [ ] AI copilot: JD → assessment blueprint, question drafts with human review, follow-up suggestions, failure explanations, rubric-mapped summaries
+- [x] AI-drafted review summaries with evidence citations
+- [ ] AI copilot: assessment blueprints, question drafts with human review, and live interviewer assistance
 - [ ] Sandbox attack suite (fork bomb, filesystem writes) and 1,000-submission stress test
 - [ ] Stronger isolation option (gVisor `runsc`)
 

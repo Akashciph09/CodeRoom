@@ -6,11 +6,13 @@ import { config } from "./config.js";
 import { db } from "./db.js";
 import { errorMiddleware } from "./errors.js";
 import { redis } from "./queue.js";
+import { interviewSummaryRouter } from "./routes/interviewSummary.js";
+import type { SummaryModel } from "./services/ai.js";
 import { questionsRouter } from "./routes/questions.js";
 import { roomsRouter } from "./routes/rooms.js";
 import { submissionsRouter } from "./routes/submissions.js";
 
-export function createApp(): Express {
+export function createApp(summaryModel?: SummaryModel): Express {
   const app = express();
   app.disable("x-powered-by");
   app.use(cors({ origin: config.CORS_ORIGIN }));
@@ -27,7 +29,7 @@ export function createApp(): Express {
   });
 
   app.use("/questions", authenticate, questionsRouter);
-  app.use("/rooms", authenticate, roomsRouter);
+  app.use("/rooms", authenticate, roomsRouter, interviewSummaryRouter(summaryModel));
   app.use("/submissions", authenticate, submissionsRouter);
 
   app.use(errorMiddleware);
