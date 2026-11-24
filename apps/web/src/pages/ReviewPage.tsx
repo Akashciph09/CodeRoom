@@ -8,6 +8,7 @@ import { connectRoomEvents } from "../lib/realtime";
 import { formatElapsed } from "../lib/timer";
 import { VERDICT_LABEL } from "../lib/verdicts";
 import { offsetLabel, submissionLabel, wasEdited } from "../lib/notes";
+import { InterviewSummaryCard } from "../components/InterviewSummaryCard";
 import { EvaluationCard } from "../components/EvaluationCard";
 
 /** While any submission is still being graded, re-fetch this often. */
@@ -176,6 +177,7 @@ export function ReviewPage() {
           </p>
         </section>
 
+        <InterviewSummaryCard key={review.roomId} roomId={review.roomId} />
         <ReviewNotes review={review} />
 
         {review.candidates.length === 0 && <p className="muted">No candidate joined this interview.</p>}

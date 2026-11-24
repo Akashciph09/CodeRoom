@@ -405,3 +405,7 @@ a.note-jump { font-size: 12px; }
 .rubric-result-row dd { margin: 0; min-width: 0; }
 .rubric-result .evidence-list { margin-top: 6px; padding-left: 0; }
 @media (max-width: 600px) { .rubric-result-row { grid-template-columns: 1fr; gap: 4px; } .rubric-levels { grid-template-columns: 1fr; } }
+
+.interview-summary ul { list-style: none; padding: 0; display: grid; gap: 12px; }
+.interview-summary textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.summary-citations { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; }
