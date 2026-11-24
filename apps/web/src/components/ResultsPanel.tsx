@@ -2,16 +2,7 @@ import { useState } from "react";
 import type { RoomQuestionView, Verdict } from "@coderoom/shared";
 import { isInterviewerView } from "../lib/api";
 import { questionOf, type SubmissionEntry } from "../lib/submissions";
-
-const VERDICT_LABEL: Record<Verdict, string> = {
-  accepted: "Accepted",
-  wrong_answer: "Wrong answer",
-  time_limit_exceeded: "Time limit exceeded",
-  memory_limit_exceeded: "Memory limit exceeded",
-  runtime_error: "Runtime error",
-  compile_error: "Compile error",
-  internal_error: "Internal error",
-};
+import { VERDICT_LABEL } from "../lib/verdicts";
 
 function VerdictBadge({ verdict }: { verdict?: Verdict }) {
   if (!verdict) return <span className="verdict pending">Running…</span>;

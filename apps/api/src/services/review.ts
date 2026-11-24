@@ -14,6 +14,7 @@ import {
 import type { RoomCandidate, RoomReview } from "@coderoom/shared";
 import { db } from "../db.js";
 import { NotFound } from "../errors.js";
+import { listNotes } from "./notes.js";
 import { revealWindows, scoreCandidate } from "./scoring.js";
 
 /** Candidates of these rooms with display name and email (Supabase keeps the name in user metadata). */
@@ -67,7 +68,7 @@ export async function roomCandidates(roomIds: string[]): Promise<Map<string, Roo
  * pinned questions with reveal times, each candidate's runs/submissions with per-test counts and code,
  * and the test score. Interviewer only — the caller must check the role.
  */
-export async function roomReview(roomId: string): Promise<RoomReview> {
+export async function roomReview(roomId: string, viewerId: string): Promise<RoomReview> {
   const [room] = await db
     .select({ status: rooms.status, name: rooms.name, createdAt: rooms.createdAt, closedAt: rooms.closedAt })
     .from(rooms)
@@ -99,7 +100,7 @@ export async function roomReview(roomId: string): Promise<RoomReview> {
     .where(eq(submissions.roomId, roomId))
     .orderBy(asc(submissions.createdAt));
 
-  const countOf = await passCounts(subs.map((s) => s.id));
+  const [countOf, notes] = await Promise.all([passCounts(subs.map((s) => s.id)), listNotes(roomId, viewerId)]);
 
   return {
     roomId,
@@ -164,5 +165,6 @@ export async function roomReview(roomId: string): Promise<RoomReview> {
         })),
       };
     }),
+    notes,
   };
 }
