@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { authorQuestion, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
+import { addInterviewQuestion, authorQuestion, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
 
 /*
  * Private interviewer notes (ADR 0016): a Notes tab for the interviewer only, linked to a question
@@ -152,6 +152,7 @@ test("a slow save never discards text typed while it was saving", async ({ brows
   try {
     await page.goto("/");
     await signUp(page, iv.name);
+    await addInterviewQuestion(page);
     await page.getByRole("button", { name: "Create room" }).click();
     await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     await testsPane(page).getByRole("tab", { name: "Notes" }).click();
@@ -209,8 +210,8 @@ test("after saving a draft kept from another question, the next note is about th
     await authorQuestion(page, "Multiply two numbers", "# multiply\n", "2 3", "6");
     await page.goto("/");
     const picked = page.getByLabel("Interview questions").getByRole("listitem");
-    await expect(picked).toHaveCount(1);
-    await page.getByRole("button", { name: "Add question" }).click();
+    await addInterviewQuestion(page);
+    await addInterviewQuestion(page, "Multiply two numbers");
     await expect(picked).toHaveCount(2);
     await page.getByRole("button", { name: "Create room" }).click();
     await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);

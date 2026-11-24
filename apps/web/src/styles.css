@@ -157,11 +157,13 @@ label input, label select { color: var(--text); font-size: 14px; }
 }
 .picked { display: flex; flex-direction: column; gap: 8px; }
 .picked-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.picked-list:empty { display: none; }
 .picked-list li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
 .picked-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .small-btn { padding: 2px 8px; }
-.picked-add { display: flex; gap: 8px; }
-.picked-add select { flex: 1; min-width: 0; }
+.add-question { align-self: flex-start; }
+.question-picker { list-style: none; margin: 0; padding: 6px; display: grid; gap: 4px; max-height: 15rem; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.question-picker button { width: 100%; text-align: left; overflow-wrap: anywhere; }
 
 /* Room */
 .room-page { display: flex; flex-direction: column; height: 100%; }

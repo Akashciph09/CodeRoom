@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openAs, signUp } from "./helpers";
+import { addInterviewQuestion, openAs, signUp } from "./helpers";
 
 /** Room names (ADR 0014): set when creating, renamed in the room, shown to the interviewer only. */
 test("the interviewer names, renames and finds a room; the candidate never sees the name", async ({ browser }) => {
@@ -9,6 +9,7 @@ test("the interviewer names, renames and finds a room; the candidate never sees 
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await iv.page.getByLabel("Room name").fill("Backend interview");
+    await addInterviewQuestion(iv.page);
     await iv.page.getByRole("button", { name: "Create room" }).click();
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const roomPath = new URL(iv.page.url()).pathname;
@@ -81,6 +82,7 @@ test("a rename that's still saving can't be cancelled or edited", async ({ brows
   try {
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
+    await addInterviewQuestion(iv.page);
     await iv.page.getByRole("button", { name: "Create room" }).click();
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     const topbar = iv.page.locator(".topbar");
@@ -125,6 +127,7 @@ test("a long unbroken room name wraps on the review page", async ({ browser }) =
     await iv.page.goto("/");
     await signUp(iv.page, iv.name);
     await iv.page.getByLabel("Room name").fill(LONG);
+    await addInterviewQuestion(iv.page);
     await iv.page.getByRole("button", { name: "Create room" }).click();
     await expect(iv.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
     await iv.page.goto(`${iv.page.url()}/review`);

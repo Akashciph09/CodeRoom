@@ -75,6 +75,12 @@ export async function openAs(browser: Browser, name: string): Promise<Participan
   return { name, page, realtime, close: () => context.close() };
 }
 
+/** Pick a question by title in the room creation form. */
+export async function addInterviewQuestion(page: Page, title = "Sum two numbers") {
+  await page.getByRole("button", { name: "Add question", exact: true }).click();
+  await page.getByRole("list", { name: "Available questions" }).getByRole("button", { name: `${title} ·` }).click();
+}
+
 /** Interviewer creates a room, candidate joins via the invite link; both are in the live room. */
 export async function startInterview(browser: Browser) {
   const interviewer = await openAs(browser, "Iris Interviewer");
@@ -82,6 +88,7 @@ export async function startInterview(browser: Browser) {
 
   await interviewer.page.goto("/");
   await signUp(interviewer.page, interviewer.name);
+  await addInterviewQuestion(interviewer.page);
   await interviewer.page.getByRole("button", { name: "Create room" }).click();
   await expect(interviewer.page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
   await interviewer.page.getByRole("button", { name: "Copy invite link" }).click();
