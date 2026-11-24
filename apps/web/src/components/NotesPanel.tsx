@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { MAX_NOTE_CHARS, noteLength, type InterviewerSubmissionView, type NoteView } from "@coderoom/shared";
 import { api } from "../lib/api";
 import { offsetLabel, removeNote, submissionLabel, upsertNote, wasEdited } from "../lib/notes";
@@ -36,9 +36,15 @@ export function NotesPanel({
   const [about, setAbout] = useState<string>(activeQuestionId);
   const [linked, setLinked] = useState("");
   const [busy, setBusy] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formMessage, setFormMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
-  const [itemError, setItemError] = useState<{ id: string; text: string } | null>(null);
+  const [itemMessage, setItemMessage] = useState<{ id: string; kind: "error" | "info"; text: string } | null>(null);
+  /*
+   * The fields stay editable while a save is in flight (PR #15 review), so a response must only
+   * clear what was actually sent: compare with the latest values, never the ones captured at send.
+   */
+  const latest = useRef({ draft, about, linked, activeQuestionId, editing });
+  latest.current = { draft, about, linked, activeQuestionId, editing };
 
   // Loaded once; every change after that applies the server's response, so nothing to re-fetch.
   const [attempt, setAttempt] = useState(0);
@@ -69,19 +75,28 @@ export function NotesPanel({
   async function add(e?: FormEvent) {
     e?.preventDefault();
     if (busy || !notes || !draft.trim() || tooLong) return;
+    const sent = { draft, about, linked };
     setBusy(true);
-    setFormError(null);
+    setFormMessage(null);
     try {
       const note = await api.addNote(roomId, {
-        body: draft,
-        roomQuestionId: about === GENERAL ? null : about,
-        submissionId: linked || null,
+        body: sent.draft,
+        roomQuestionId: sent.about === GENERAL ? null : sent.about,
+        submissionId: sent.linked || null,
       });
       setNotes((list) => upsertNote(list ?? [], note));
-      setDraft("");
-      setLinked("");
+      const now = latest.current;
+      if (now.draft === sent.draft && now.about === sent.about && now.linked === sent.linked) {
+        // Nothing changed while saving: start the next note fresh, about the question being viewed
+        // now (the saved note keeps the question it was written about).
+        setDraft("");
+        setLinked("");
+        setAbout(now.activeQuestionId);
+      } else {
+        setFormMessage({ kind: "info", text: "Saved the earlier text. What you changed while it was saving is still here — it isn't saved yet." });
+      }
     } catch (err) {
-      setFormError(`Couldn't save the note: ${err instanceof Error ? err.message : String(err)}. Your text is kept.`);
+      setFormMessage({ kind: "error", text: `Couldn't save the note: ${err instanceof Error ? err.message : String(err)}. Your text is kept.` });
     } finally {
       setBusy(false);
     }
@@ -90,19 +105,26 @@ export function NotesPanel({
   async function saveEdit(note: NoteView) {
     if (!editing || busy) return;
     if (!editing.text.trim() || noteLength(editing.text.trim()) > MAX_NOTE_CHARS) return;
+    const sentText = editing.text;
     setBusy(true);
-    setItemError(null);
+    setItemMessage(null);
     try {
       // The links stay as they were; only the text changes here.
       const saved = await api.editNote(roomId, note.id, {
-        body: editing.text,
+        body: sentText,
         roomQuestionId: note.roomQuestionId,
         submissionId: note.submissionId,
       });
       setNotes((list) => upsertNote(list ?? [], saved));
-      setEditing(null);
+      const now = latest.current.editing;
+      if (now?.id === note.id && now.text === sentText) {
+        setEditing(null);
+      } else if (now?.id === note.id) {
+        // Changed while saving: keep the editor open with the newer text.
+        setItemMessage({ id: note.id, kind: "info", text: "Saved the earlier text. Save again to keep your latest changes." });
+      }
     } catch (err) {
-      setItemError({ id: note.id, text: `Couldn't save: ${err instanceof Error ? err.message : String(err)}` });
+      setItemMessage({ id: note.id, kind: "error", text: `Couldn't save: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
       setBusy(false);
     }
@@ -111,12 +133,12 @@ export function NotesPanel({
   async function remove(note: NoteView) {
     if (busy || !window.confirm("Delete this note? This can't be undone.")) return;
     setBusy(true);
-    setItemError(null);
+    setItemMessage(null);
     try {
       await api.deleteNote(roomId, note.id);
       setNotes((list) => removeNote(list ?? [], note.id));
     } catch (err) {
-      setItemError({ id: note.id, text: `Couldn't delete: ${err instanceof Error ? err.message : String(err)}` });
+      setItemMessage({ id: note.id, kind: "error", text: `Couldn't delete: ${err instanceof Error ? err.message : String(err)}` });
     } finally {
       setBusy(false);
     }
@@ -189,9 +211,9 @@ export function NotesPanel({
             Add note
           </button>
         </div>
-        {formError && (
-          <p className="error small" role="alert">
-            {formError}
+        {formMessage && (
+          <p className={`${formMessage.kind === "error" ? "error" : "muted"} small`} role={formMessage.kind === "error" ? "alert" : "status"}>
+            {formMessage.text}
           </p>
         )}
       </form>
@@ -269,7 +291,14 @@ export function NotesPanel({
                       >
                         Save
                       </button>
-                      <button className="ghost" onClick={() => setEditing(null)} disabled={busy}>
+                      <button
+                        className="ghost"
+                        onClick={() => {
+                          setEditing(null);
+                          setItemMessage(null);
+                        }}
+                        disabled={busy}
+                      >
                         Cancel
                       </button>
                     </div>
@@ -277,9 +306,9 @@ export function NotesPanel({
                 ) : (
                   <p className="note-body">{n.body}</p>
                 )}
-                {itemError?.id === n.id && (
-                  <p className="error small" role="alert">
-                    {itemError.text}
+                {itemMessage?.id === n.id && (
+                  <p className={`${itemMessage.kind === "error" ? "error" : "muted"} small`} role={itemMessage.kind === "error" ? "alert" : "status"}>
+                    {itemMessage.text}
                   </p>
                 )}
               </li>

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { replaceCode, results, startInterview } from "./helpers";
+import { authorQuestion, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
 
 /*
  * Private interviewer notes (ADR 0016): a Notes tab for the interviewer only, linked to a question
@@ -127,5 +127,113 @@ test("interviewer notes: private tab, links, edit/delete, after the end, on the 
     });
   } finally {
     await close();
+  }
+});
+
+/** Hold matching requests until `release()` — a slow network, controlled by the test. */
+async function holdRequests(page: Page, method: string, url: RegExp) {
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  await page.route(url, async (route) => {
+    if (route.request().method() !== method) return route.continue();
+    await held;
+    await route.continue();
+  });
+  return { release, stop: () => page.unroute(url) };
+}
+
+/**
+ * Regression (PR #15 review): the fields stay editable while a save is in flight. The response must
+ * only clear what was sent — text typed meanwhile is kept, for a new note and for an edit.
+ */
+test("a slow save never discards text typed while it was saving", async ({ browser }) => {
+  const iv = await openAs(browser, "Iris Interviewer");
+  const page = iv.page;
+  try {
+    await page.goto("/");
+    await signUp(page, iv.name);
+    await page.getByRole("button", { name: "Create room" }).click();
+    await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+    await testsPane(page).getByRole("tab", { name: "Notes" }).click();
+    const composer = page.getByLabel("New note", { exact: true });
+
+    // New note: A is sent; B is typed before the response arrives.
+    const post = await holdRequests(page, "POST", /\/rooms\/[^/]+\/notes$/);
+    await composer.fill("A: first thought");
+    await page.getByRole("button", { name: "Add note" }).click();
+    await expect(page.getByRole("button", { name: "Add note" })).toBeDisabled(); // saving
+    await composer.fill("A: first thought — B: and a second one");
+    post.release();
+    await expect(notesList(page).getByRole("listitem")).toHaveCount(1);
+    await expect(notesList(page).getByRole("listitem").first().locator(".note-body")).toHaveText("A: first thought");
+    await expect(composer).toHaveValue("A: first thought — B: and a second one"); // not wiped
+    await expect(page.getByRole("status").filter({ hasText: "isn't saved yet" })).toBeVisible();
+    await post.stop();
+    await composer.fill("B on its own");
+    await page.getByRole("button", { name: "Add note" }).click();
+    await expect(notesList(page).getByRole("listitem")).toHaveCount(2);
+    await expect(composer).toHaveValue(""); // nothing changed during this save → cleared
+
+    // Edit: A1 is sent; A2 is typed before the response arrives.
+    // By position (newest first → A is second): its text leaves the DOM while the edit box is open.
+    const note = notesList(page).getByRole("listitem").nth(1);
+    await expect(note.locator(".note-body")).toHaveText("A: first thought");
+    const patch = await holdRequests(page, "PATCH", /\/rooms\/[^/]+\/notes\/[0-9a-f-]{36}$/);
+    await note.getByRole("button", { name: "Edit" }).click();
+    await note.getByLabel("Edit note").fill("A1");
+    await note.getByRole("button", { name: "Save" }).click();
+    await expect(note.getByRole("button", { name: "Save" })).toBeDisabled(); // saving
+    await note.getByLabel("Edit note").fill("A2, the better wording");
+    patch.release();
+    await expect(note.getByRole("status")).toHaveText(/Save again/);
+    await expect(note.getByLabel("Edit note")).toHaveValue("A2, the better wording"); // still open, not wiped
+    await patch.stop();
+    await note.getByRole("button", { name: "Save" }).click();
+    await expect(note.locator(".note-body")).toHaveText("A2, the better wording");
+    await expect(note.getByLabel("Edit note")).toHaveCount(0); // closed once what's shown was saved
+  } finally {
+    await iv.close();
+  }
+});
+
+/**
+ * Regression (PR #15 review): a draft started on Q1 stays about Q1 when the interviewer moves to Q2;
+ * once it's saved, the next note is about the question being viewed (Q2), with Q2's runs.
+ */
+test("after saving a draft kept from another question, the next note is about the viewed one", async ({ browser }) => {
+  const iv = await openAs(browser, "Iris Interviewer");
+  const page = iv.page;
+  try {
+    await page.goto("/");
+    await signUp(page, iv.name);
+    await authorQuestion(page, "Multiply two numbers", "# multiply\n", "2 3", "6");
+    await page.goto("/");
+    const picked = page.getByLabel("Interview questions").getByRole("listitem");
+    await expect(picked).toHaveCount(1);
+    await page.getByRole("button", { name: "Add question" }).click();
+    await expect(picked).toHaveCount(2);
+    await page.getByRole("button", { name: "Create room" }).click();
+    await expect(page).toHaveURL(/\/rooms\/[0-9a-f-]{36}$/);
+
+    const about = page.getByLabel("Note is about");
+    const aboutLabel = () => about.locator("option:checked");
+    await testsPane(page).getByRole("tab", { name: "Notes" }).click();
+    await expect(aboutLabel()).toHaveText(/^Q1 · /);
+    await page.getByLabel("New note", { exact: true }).fill("Q1: started with brute force");
+
+    // Move to Q2 mid-draft: the draft stays about Q1.
+    await page.getByRole("navigation", { name: "Questions" }).getByRole("button", { name: /^Q2:/ }).click();
+    await expect(aboutLabel()).toHaveText(/^Q1 · /);
+    await page.getByRole("button", { name: "Add note" }).click();
+    await expect(notesList(page).getByRole("listitem").first().locator(".badge")).toHaveText("Q1"); // saved about Q1
+
+    // The next note follows the viewed question.
+    await expect(aboutLabel()).toHaveText(/^Q2 · /);
+    await page.getByLabel("New note", { exact: true }).fill("Q2: asked about overflow");
+    await page.getByRole("button", { name: "Add note" }).click();
+    await expect(notesList(page).getByRole("listitem")).toHaveCount(2);
+    await expect(notesList(page).getByRole("listitem").first().locator(".badge")).toHaveText("Q2");
+  } finally {
+    await iv.close();
   }
 });
