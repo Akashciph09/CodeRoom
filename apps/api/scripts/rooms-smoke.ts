@@ -6,10 +6,12 @@
  *  - the candidate never receives an unrevealed question (content or count) and can't submit to one;
  *  - questions are revealed only by the interviewer, strictly in order, idempotently — also under races;
  *  - every submission is graded against its own question's pinned version, enforced by the database;
- *  - interviewer notes stay private and can only link the same room's questions/submissions (ADR 0016).
+ *  - interviewer notes stay private and can only link the same room's questions/submissions (ADR 0016);
+ *  - evaluations: drafts any time, submit only after the end and only when complete, then locked (ADR 0017).
  */
 import { randomUUID } from "node:crypto";
-import { and, createDb, eq, interviewNotes, roomParticipants, roomQuestions, rooms, sql, submissions } from "@coderoom/db";
+import { and, createDb, eq, evaluations, evaluationScores, interviewNotes, roomParticipants, roomQuestions, rooms, sql, submissions } from "@coderoom/db";
+import { emptyDimensions } from "@coderoom/shared";
 import { call, check, finish, QUESTION_ID, readyQuestion, roomQuestionIds, signUp, sleep, userIdOf } from "./lib.js";
 
 const SUM = "a, b = map(int, input().split())\nprint(a + b)";
@@ -636,6 +638,127 @@ async function main() {
         !reviewNotes.some((n) => n.body === "other room"),
       `(${reviewNotes.map((n) => n.body.slice(0, 12)).join(" | ")})`,
     );
+  }
+
+  // --- Structured evaluation (ADR 0017) ---------------------------------------------------------------
+  {
+    const eRoom = await create(interviewer, [QUESTION_ID]);
+    const eId = eRoom.json.roomId as string;
+    const eCandidate = await signUp("eval-candidate");
+    await call("POST", "/rooms/join", eCandidate, { inviteCode: eRoom.json.inviteCode });
+    const candidateId = userIdOf(eCandidate);
+    const [eq1] = (await roomQuestionIds(eId, interviewer)) as [string];
+    const run = await call("POST", "/submissions", eCandidate, { roomId: eId, roomQuestionId: eq1, language: "python", mode: "submit", code: SUM });
+    await waitFor(run.json.submissionId, eCandidate);
+    const note = await call("POST", `/rooms/${eId}/notes`, interviewer, { body: "Asked good clarifying questions" });
+    const scoreBefore = (await call("GET", `/rooms/${eId}/review`, interviewer)).json.candidates[0].score;
+
+    const path = `/rooms/${eId}/evaluations/${candidateId}`;
+    const save = (token: string, body: unknown, who = candidateId) => call("PUT", `/rooms/${eId}/evaluations/${who}`, token, body);
+    const submit = (token: string, revision: number) => call("POST", `${path}/submit`, token, { revision });
+    const dims = (fill: (d: ReturnType<typeof emptyDimensions>[number], i: number) => object) => emptyDimensions().map((d, i) => ({ ...d, ...fill(d, i) }));
+
+    // Drafting during the interview.
+    const partial = { baseRevision: 0, recommendation: null, summary: "", dimensions: dims((_, i) => (i === 0 ? { rating: 3, evidence: [{ noteId: note.json.id }] } : {})) };
+    const first = await save(interviewer, partial);
+    check(
+      "the interviewer saves a partial draft during the interview",
+      first.status === 200 && first.json.status === "draft" && first.json.revision === 1 && first.json.dimensions[0].rating === 3 &&
+        first.json.dimensions[0].evidence[0]?.noteId === note.json.id,
+      `(${first.status} ${JSON.stringify(first.json).slice(0, 120)})`,
+    );
+    check("a stale tab (old revision) → 409 evaluation_changed", (await save(interviewer, partial)).json?.conflict === "evaluation_changed");
+    check("submitting while the interview is open → 409 room_open", (await submit(interviewer, 1)).json?.conflict === "room_open");
+
+    // Privacy and scope.
+    for (const [who, token] of [["candidate", eCandidate], ["outsider", outsider]] as const) {
+      const statuses = [(await save(token, { ...partial, baseRevision: 1 })).status, (await submit(token, 1)).status];
+      check(`the ${who} can't save or submit an evaluation → 403`, statuses.every((st) => st === 403), `(${statuses.join(",")})`);
+    }
+    check("evaluating someone who isn't this room's candidate → 404", (await save(interviewer, { ...partial, baseRevision: 1 }, userIdOf(interviewer))).status === 404);
+    const otherNote = await call("POST", `/rooms/${roomId}/notes`, interviewer, { body: "from another room" });
+    check("evidence: another room's note → 404", (await save(interviewer, { ...partial, baseRevision: 1, dimensions: dims((_, i) => (i === 0 ? { evidence: [{ noteId: otherNote.json.id }] } : {})) })).status === 404);
+    const othersRun = (await call("GET", `/rooms/${roomId}/submissions`, interviewer)).json[0]?.submissionId as string;
+    check("evidence: a run from another room → 404", (await save(interviewer, { ...partial, baseRevision: 1, dimensions: dims((_, i) => (i === 0 ? { evidence: [{ submissionId: othersRun }] } : {})) })).status === 404);
+    check("a score of 5 / a score plus Not observed → 400", (await save(interviewer, { ...partial, baseRevision: 1, dimensions: dims((_, i) => (i === 0 ? { rating: 5 } : {})) })).status === 400 &&
+      (await save(interviewer, { ...partial, baseRevision: 1, dimensions: dims((_, i) => (i === 0 ? { rating: 2, notObserved: true } : {})) })).status === 400);
+    const candidateSees = JSON.stringify([(await call("GET", `/rooms/${eId}`, eCandidate)).json, (await call("GET", "/rooms", eCandidate)).json]);
+    check("the candidate's views never contain the evaluation", !candidateSees.includes("evaluation") && !candidateSees.includes("recommendation"));
+
+    // After the interview: incomplete → 400 with problems; complete → submitted and locked.
+    await call("POST", `/rooms/${eId}/close`, interviewer);
+    const incomplete = await submit(interviewer, 1);
+    check("submitting an incomplete evaluation → 400 with what's missing", incomplete.status === 400 && incomplete.json?.problems?.length === 4, `(${JSON.stringify(incomplete.json?.problems)})`);
+    const complete = {
+      baseRevision: 1,
+      recommendation: "hire",
+      summary: "Solid problem solver; tested well.",
+      dimensions: dims((_, i) =>
+        [
+          { rating: 3, explanation: "Found the approach quickly", evidence: [{ noteId: note.json.id }] },
+          { rating: 4, evidence: [{ submissionId: run.json.submissionId }] },
+          { notObserved: true },
+          { rating: 3 },
+        ][i]!,
+      ),
+    };
+    const saved = await save(interviewer, complete);
+    check("drafts can still be saved after the interview ended", saved.status === 200 && saved.json.revision === 2);
+    const submitted = await submit(interviewer, 2);
+    check(
+      "submit after the end: locked, with who and when",
+      submitted.status === 200 && submitted.json.status === "submitted" && submitted.json.submittedBy?.id === userIdOf(interviewer) &&
+        typeof submitted.json.submittedAt === "string" && submitted.json.recommendation === "hire",
+      `(${submitted.status} ${JSON.stringify(submitted.json).slice(0, 140)})`,
+    );
+    check("…then saving → 409 evaluation_submitted; submitting again → 409", (await save(interviewer, { ...complete, baseRevision: 3 })).json?.conflict === "evaluation_submitted" &&
+      (await submit(interviewer, 3)).json?.conflict === "evaluation_submitted");
+    check("a note cited by the submitted evaluation can't be edited or deleted → 409 note_cited",
+      (await call("PATCH", `/rooms/${eId}/notes/${note.json.id}`, interviewer, { body: "rewritten" })).json?.conflict === "note_cited" &&
+        (await call("DELETE", `/rooms/${eId}/notes/${note.json.id}`, interviewer)).json?.conflict === "note_cited");
+    const review = await call("GET", `/rooms/${eId}/review`, interviewer);
+    const reviewed = review.json.candidates[0];
+    check("the review carries the evaluation; the test score is unchanged by it",
+      reviewed.evaluation?.status === "submitted" && reviewed.evaluation.dimensions[1].evidence[0]?.submissionId === run.json.submissionId && reviewed.score === scoreBefore,
+      `(score ${scoreBefore} → ${reviewed.score})`);
+
+    // The database enforces the lock and completeness itself.
+    const { db: evDb, close: closeEvDb } = createDb(process.env.DATABASE_URL!, { max: 1 });
+    const refused = async (op: () => Promise<unknown>) => {
+      try {
+        await op();
+        return "";
+      } catch (e) {
+        return dbError(e as Error & { cause?: { message?: string } });
+      }
+    };
+    const evId = submitted.json.id as string;
+    const lockedUpdate = await refused(() => evDb.update(evaluations).set({ summary: "changed" }).where(eq(evaluations.id, evId)));
+    const lockedScore = await refused(() => evDb.update(evaluationScores).set({ rating: 1 }).where(eq(evaluationScores.evaluationId, evId)));
+    const lockedDelete = await refused(() => evDb.delete(evaluations).where(eq(evaluations.id, evId)));
+    const lockedNote = await refused(() => evDb.delete(interviewNotes).where(eq(interviewNotes.id, note.json.id)));
+    check("the database refuses changing a submitted evaluation, its scores, deleting it, or deleting a cited note",
+      [lockedUpdate, lockedScore, lockedDelete, lockedNote].every((m) => m.includes("submitted and locked") || m.includes("cited by a submitted")),
+      `(${[lockedUpdate, lockedScore, lockedDelete, lockedNote].map((m) => m.slice(0, 30)).join(" | ")})`);
+
+    // …and refuses submitting an incomplete one, or one in an open room, even without the API.
+    const r2 = await create(interviewer, [QUESTION_ID]);
+    const c2 = await signUp("eval-db");
+    await call("POST", "/rooms/join", c2, { inviteCode: r2.json.inviteCode });
+    const draft2 = await call("PUT", `/rooms/${r2.json.roomId}/evaluations/${userIdOf(c2)}`, interviewer, { baseRevision: 0, recommendation: "hire", summary: "", dimensions: dims(() => ({ rating: 2 })) });
+    const forceSubmit = () => evDb.update(evaluations).set({ status: "submitted", submittedAt: new Date(), submittedBy: userIdOf(interviewer) }).where(eq(evaluations.id, draft2.json.id));
+    const whileOpen = await refused(forceSubmit);
+    await call("POST", `/rooms/${r2.json.roomId}/close`, interviewer);
+    await evDb.update(evaluationScores).set({ rating: null }).where(and(eq(evaluationScores.evaluationId, draft2.json.id), eq(evaluationScores.dimension, "code_quality")));
+    const whenIncomplete = await refused(forceSubmit);
+    check("the database refuses a submit while the room is open, and an incomplete submit",
+      whileOpen.includes("after the interview ended") && whenIncomplete.includes("incomplete"), `(${whileOpen.slice(0, 50)} | ${whenIncomplete.slice(0, 50)})`);
+
+    // Deleting the candidate's account still works: the locked evaluation goes with it (cascade).
+    const accountDelete = await refused(() => evDb.execute(sql`delete from auth.users where id = ${candidateId}`));
+    const [left] = await evDb.select({ id: evaluations.id }).from(evaluations).where(eq(evaluations.id, evId));
+    await closeEvDb();
+    check("deleting the candidate's account removes their submitted evaluation (cascade isn't blocked)", accountDelete === "" && left === undefined, `(${accountDelete.slice(0, 80)})`);
   }
 
   // --- After the session ends --------------------------------------------------------------------
