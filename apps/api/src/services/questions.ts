@@ -308,7 +308,8 @@ export async function saveDraft(questionId: string, input: QuestionDraftInput): 
       starterCode: input.starterCode,
     };
     let draft = await draftOf(questionId, tx);
-    const previousTests = draft ? await testsOf(draft.id, tx) : [];
+    const previousVersion = draft ?? await latestPublished(questionId, tx);
+    const previousTests = previousVersion ? await testsOf(previousVersion.id, tx) : [];
     if (draft) {
       await tx.update(questionVersions).set(content).where(eq(questionVersions.id, draft.id));
     } else {

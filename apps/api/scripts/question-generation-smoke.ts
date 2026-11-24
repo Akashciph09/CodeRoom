@@ -67,6 +67,21 @@ try {
     edited.draft?.tests[0]?.referenceVerdict === "accepted" && !edited.draft?.tests[1]?.referenceVerdict);
   const ready = await call("POST", `${path}/publish`, owner, { revision: edited.revision }, base);
   check("only explicit approval publishes the question", ready.status === 200 && ready.json.latest?.status === "published");
+  const published = QuestionDetail.parse(ready.json);
+  if (!published.latest) throw new Error("Published version missing");
+  const { title, constraints, starterCode, tests } = published.latest;
+  const titleEdit = await call("PUT", `${path}/draft`, owner, {
+    baseRevision: published.revision,
+    title: `${title} (revised)`,
+    statement,
+    constraints,
+    starterCode,
+    tests: tests.map(({ input, expectedOutput, isHidden }) => ({ input, expectedOutput, isHidden })),
+  }, base);
+  const newDraft = QuestionDetail.parse(titleEdit.json).draft;
+  check("a title-only edit of a ready question keeps its unchanged reference check",
+    titleEdit.status === 200 && newDraft?.tests[0]?.referenceVerdict === "accepted"
+    && !newDraft?.tests[1]?.referenceVerdict);
 } finally {
   server.close();
 }
