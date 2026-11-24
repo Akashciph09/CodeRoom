@@ -105,8 +105,11 @@ label input, label select { color: var(--text); font-size: 14px; }
 /* Home */
 .home { max-width: 960px; margin: 0 auto; padding: 24px 16px; display: flex; flex-direction: column; gap: 16px; }
 .home-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
-.room-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
-.room-list li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+.question-list { list-style: none; padding: 0; margin: 0; }
+.question-list li { display: grid; gap: 6px; padding: 12px 0; }
+.question-list li + li { border-top: 1px solid var(--border); }
+.question-list h2 { margin: 0; overflow-wrap: anywhere; }
+.question-list-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
 .room-search { width: min(320px, 100%); }
 
 /*
