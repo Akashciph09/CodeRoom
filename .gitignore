@@ -37,3 +37,6 @@ CLAUDE.local.md
 apps/web/test-results/
 apps/web/playwright-report/
 apps/web/blob-report/
+
+# CI integration logs (scripts/ci/integration.sh)
+.ci-logs/

@@ -109,3 +109,40 @@ test("a stale window gets a conflict instead of overwriting the draft", async ({
     await two.close();
   }
 });
+
+/**
+ * Regression (found by the CI integration run): a load response that arrives late (an earlier,
+ * superseded request — e.g. React StrictMode runs the load effect twice in development) must not
+ * overwrite what the author typed after the page had loaded.
+ */
+test("a late load response doesn't overwrite edits typed after the page loaded", async ({ browser }) => {
+  const author = await openAs(browser, "Ada Author");
+  const { page } = author;
+  try {
+    await page.goto("/");
+    await signUp(page, author.name);
+    const questionUrl = await newQuestion(page);
+    await field(page, "Title").fill("Saved title");
+    await page.getByRole("button", { name: "Save draft" }).click();
+    await expect(page.getByText("Draft saved.")).toBeVisible();
+
+    // Delay the first load of the question by 2 s; later loads answer normally.
+    const questionId = questionUrl.split("/").pop()!;
+    let loads = 0;
+    await page.route(`**/questions/${questionId}`, async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      loads++;
+      if (loads === 1) await new Promise((r) => setTimeout(r, 2000));
+      return route.continue();
+    });
+    await page.goto(questionUrl);
+    await expect(field(page, "Title")).toHaveValue("Saved title"); // loaded (by whichever answered first)
+    await field(page, "Title").fill("Typed after load");
+    // Give the delayed response time to arrive; the typing must survive it.
+    await page.waitForTimeout(2500);
+    await expect(field(page, "Title")).toHaveValue("Typed after load");
+    await expect(page.getByRole("button", { name: "Save draft" })).toBeEnabled(); // still unsaved
+  } finally {
+    await author.close();
+  }
+});
