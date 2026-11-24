@@ -253,11 +253,6 @@ function RoomsTable({ rooms }: { rooms: RoomSummary[] }) {
                 <Link to={`/rooms/${r.roomId}`} className="truncate" title={r.name ?? r.questionTitle}>
                   {r.name ?? r.questionTitle}
                 </Link>
-                {r.name && (
-                  <span className="truncate muted small room-question" title={r.questionTitle}>
-                    {r.questionTitle}
-                  </span>
-                )}
               </td>
               <td role="cell" className="cell-candidate">
                 {r.role === "candidate" ? (
