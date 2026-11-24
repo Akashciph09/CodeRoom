@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { MyQuestionSummary } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
@@ -20,6 +20,24 @@ export function QuestionsPage() {
   const [questions, setQuestions] = useState<MyQuestionSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
+  const [brief, setBrief] = useState("");
+  const [generating, setGenerating] = useState(false);
+
+  async function generateQuestion(event: FormEvent) {
+    event.preventDefault();
+    if (generating || brief.trim().length < 5) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const question = await api.generateQuestion(brief.trim());
+      navigate(`/questions/${question.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   useEffect(() => {
     api.myQuestions().then(setQuestions, (err: Error) => setError(err.message));
@@ -42,11 +60,37 @@ export function QuestionsPage() {
       <main className="home">
         <div className="page-head">
           <h1>My questions</h1>
-          <button className="primary" onClick={createQuestion} disabled={busy}>
-            Create question
-          </button>
+          <div className="actions">
+            <button onClick={() => setShowGenerator((show) => !show)} aria-expanded={showGenerator} disabled={busy || generating}>
+              Draft with AI
+            </button>
+            <button className="primary" onClick={createQuestion} disabled={busy || generating}>
+              Create question
+            </button>
+          </div>
         </div>
-        {error && <p className="error">{error}</p>}
+        {error && <p className="error" role="alert">{error}</p>}
+        {showGenerator && (
+          <form className="card" onSubmit={generateQuestion}>
+            <label>
+              Interview brief
+              <textarea
+                aria-label="Interview brief"
+                rows={4}
+                value={brief}
+                minLength={5}
+                maxLength={3000}
+                onChange={(event) => setBrief(event.target.value)}
+                placeholder="Backend intern, arrays and hash maps, 30 minutes"
+                required
+                disabled={generating}
+              />
+            </label>
+            <p className="muted small">The brief is sent to the configured AI provider. Use role requirements and topics.</p>
+            <button className="primary" disabled={generating || brief.trim().length < 5}>Generate draft</button>
+            {generating && <p className="muted small" role="status">Drafting the question and checking its tests…</p>}
+          </form>
+        )}
 
         <section className="card">
           {questions === null ? (

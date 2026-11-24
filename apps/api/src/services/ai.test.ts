@@ -40,6 +40,17 @@ describe("configured summary model", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("retries a Groq structured output failure once", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>()
+      .mockResolvedValueOnce(Response.json({ error: { code: "json_validate_failed" } }, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({
+        choices: [{ finish_reason: "stop", message: { content: '{"items":[]}' } }],
+      }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(configuredSummaryModel("{}")).resolves.toEqual({ items: [] });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("preserves Claude as a configured option", async () => {
     config.AI_SUMMARY_PROVIDER = "claude";
     const fetch = vi.fn().mockResolvedValue(Response.json({

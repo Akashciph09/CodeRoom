@@ -105,6 +105,7 @@ export const testCases = pgTable(
     position: integer("position").notNull(),
     input: text("input").notNull(),
     expectedOutput: text("expected_output").notNull(),
+    referenceVerdict: verdictEnum("reference_verdict"),
     isHidden: boolean("is_hidden").notNull().default(false),
   },
   (t) => [index("test_cases_version_idx").on(t.versionId, t.position)],

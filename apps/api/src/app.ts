@@ -7,12 +7,13 @@ import { db } from "./db.js";
 import { errorMiddleware } from "./errors.js";
 import { redis } from "./queue.js";
 import { interviewSummaryRouter } from "./routes/interviewSummary.js";
-import type { SummaryModel } from "./services/ai.js";
+import { questionGenerationRouter } from "./routes/questionGeneration.js";
+import type { QuestionModel, SummaryModel } from "./services/ai.js";
 import { questionsRouter } from "./routes/questions.js";
 import { roomsRouter } from "./routes/rooms.js";
 import { submissionsRouter } from "./routes/submissions.js";
 
-export function createApp(summaryModel?: SummaryModel): Express {
+export function createApp(summaryModel?: SummaryModel, questionModel?: QuestionModel): Express {
   const app = express();
   app.disable("x-powered-by");
   app.use(cors({ origin: config.CORS_ORIGIN }));
@@ -28,7 +29,7 @@ export function createApp(summaryModel?: SummaryModel): Express {
     res.status(postgres && redisOk ? 200 : 503).json({ ok: postgres && redisOk, postgres, redis: redisOk });
   });
 
-  app.use("/questions", authenticate, questionsRouter);
+  app.use("/questions", authenticate, questionGenerationRouter(questionModel), questionsRouter);
   app.use("/rooms", authenticate, roomsRouter, interviewSummaryRouter(summaryModel));
   app.use("/submissions", authenticate, submissionsRouter);
 

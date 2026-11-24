@@ -106,6 +106,7 @@ export const api = {
   // Question authoring (owner-only except `questions`)
   myQuestions: () => request<MyQuestionSummary[]>("GET", "/questions/mine"),
   question: (id: string) => request<QuestionDetail>("GET", `/questions/${id}`),
+  generateQuestion: (brief: string) => request<QuestionDetail>("POST", "/questions/generate", { brief }),
   createQuestion: (title?: string) => request<QuestionDetail>("POST", "/questions", title ? { title } : {}),
   saveDraft: (id: string, draft: QuestionDraftInput) => request<QuestionDetail>("PUT", `/questions/${id}/draft`, draft),
   discardDraft: (id: string, revision: number) =>

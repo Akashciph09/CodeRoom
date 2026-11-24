@@ -21,6 +21,7 @@ import type {
   QuestionSummary,
   QuestionVersionView,
   StarterCode,
+  Verdict,
 } from "@coderoom/shared";
 import { db } from "../db.js";
 import { HttpError, NotFound } from "../errors.js";
@@ -96,6 +97,7 @@ async function versionView(v: Version, conn: Db | Tx = db): Promise<QuestionVers
       input: t.input,
       expectedOutput: t.expectedOutput,
       isHidden: t.isHidden,
+      referenceVerdict: t.referenceVerdict ?? undefined,
     })),
     publishedAt: v.publishedAt?.toISOString() ?? null,
     updatedAt: v.updatedAt.toISOString(),
@@ -254,24 +256,36 @@ async function claimRevision(tx: Tx, questionId: string, expected: number) {
     .where(eq(questions.id, questionId));
 }
 
-async function replaceTests(tx: Tx, versionId: string, tests: QuestionDraftInput["tests"]) {
+async function replaceTests(
+  tx: Tx,
+  versionId: string,
+  tests: (QuestionDraftInput["tests"][number] & { referenceVerdict?: Verdict | null })[],
+) {
   await tx.delete(testCases).where(eq(testCases.versionId, versionId));
   if (tests.length === 0) return;
-  await tx.insert(testCases).values(
-    tests.map((t, i) => ({
-      versionId,
-      position: i + 1,
-      input: t.input,
-      expectedOutput: t.expectedOutput,
-      isHidden: t.isHidden,
-    })),
-  );
+  await tx.insert(testCases).values(tests.map((test, i) => ({
+    versionId,
+    position: i + 1,
+    ...test,
+  })));
 }
 
-export async function createQuestion(userId: string, title: string): Promise<QuestionDetail> {
+export async function createQuestion(
+  userId: string,
+  title: string,
+  generated?: { content: Omit<QuestionDraftInput, "baseRevision" | "title" | "tests">; tests: QuestionDraftInput["tests"]; verdicts: Verdict[] },
+): Promise<QuestionDetail> {
   return db.transaction(async (tx) => {
     const [q] = await tx.insert(questions).values({ createdBy: userId }).returning({ id: questions.id });
-    await tx.insert(questionVersions).values({ questionId: q!.id, status: "draft", title, statement: "" });
+    const [version] = await tx.insert(questionVersions)
+      .values({ questionId: q!.id, status: "draft", title, statement: "", ...generated?.content })
+      .returning({ id: questionVersions.id });
+    if (generated) {
+      await replaceTests(tx, version!.id, generated.tests.map((test, index) => ({
+        ...test,
+        referenceVerdict: generated.verdicts[index],
+      })));
+    }
     return questionDetail(q!.id, tx);
   });
 }
@@ -294,6 +308,7 @@ export async function saveDraft(questionId: string, input: QuestionDraftInput): 
       starterCode: input.starterCode,
     };
     let draft = await draftOf(questionId, tx);
+    const previousTests = draft ? await testsOf(draft.id, tx) : [];
     if (draft) {
       await tx.update(questionVersions).set(content).where(eq(questionVersions.id, draft.id));
     } else {
@@ -303,7 +318,10 @@ export async function saveDraft(questionId: string, input: QuestionDraftInput): 
         .returning();
       draft = created!;
     }
-    await replaceTests(tx, draft.id, input.tests);
+    await replaceTests(tx, draft.id, input.tests.map((test) => ({
+      ...test,
+      referenceVerdict: previousTests.find((old) => old.input === test.input && old.expectedOutput === test.expectedOutput)?.referenceVerdict,
+    })));
     return questionDetail(questionId, tx);
   });
 }
