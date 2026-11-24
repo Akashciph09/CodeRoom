@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MAX_ROOM_NAME, MAX_ROOM_QUESTIONS, type QuestionSummary, type RoomSummary } from "@coderoom/shared";
+import { MAX_ROOM_NAME, MAX_ROOM_QUESTIONS, ROOM_POINTS_TOTAL, type QuestionSummary, type RoomSummary } from "@coderoom/shared";
 import { TopBar } from "../components/TopBar";
 import { api } from "../lib/api";
 import { candidateCell, formatRoomDate, roleLabel, roomMatches, roomStatusLabel } from "../lib/roomList";
@@ -13,7 +13,7 @@ export function HomePage() {
   const [selected, setSelected] = useState<string[]>([]);
   /** Optional weights for the test score (ADR 0011); off = equal weights. */
   const [weighted, setWeighted] = useState(false);
-  const [points, setPoints] = useState<Record<string, number>>({});
+  const [points, setPoints] = useState<Record<string, string>>({});
   const [questionSearch, setQuestionSearch] = useState("");
   const questionPicker = useRef<HTMLDialogElement>(null);
   const questionSearchInput = useRef<HTMLInputElement>(null);
@@ -36,10 +36,10 @@ export function HomePage() {
   async function createRoom(e: FormEvent) {
     e.preventDefault();
     const name = roomName.trim();
-    if (busy || selected.length === 0 || !name) return;
+    if (!canCreate) return;
     setBusy(true);
     try {
-      const { roomId } = await api.createRoom(selected, weighted ? selected.map((id) => pointsOf(id)) : undefined, name);
+      const { roomId } = await api.createRoom(selected, weighted ? questionPoints : undefined, name);
       navigate(`/rooms/${roomId}`);
     } catch (err) {
       fail(err);
@@ -57,11 +57,16 @@ export function HomePage() {
   /** Equal split of 100 by default (e.g. 33/33/34), until the interviewer edits a value. */
   const equalShare = (id: string) => {
     const i = selected.indexOf(id);
-    const base = Math.floor(100 / Math.max(selected.length, 1));
-    return i === selected.length - 1 ? 100 - base * (selected.length - 1) : base;
+    const base = Math.floor(ROOM_POINTS_TOTAL / Math.max(selected.length, 1));
+    return i === selected.length - 1 ? ROOM_POINTS_TOTAL - base * (selected.length - 1) : base;
   };
   const pointsOf = (id: string) => points[id] ?? equalShare(id);
-  const pointsTotal = selected.reduce((sum, id) => sum + pointsOf(id), 0);
+  const questionPoints = selected.map((id) => Number(pointsOf(id)));
+  const validPoints = (value: number) => Number.isInteger(value) && value >= 1 && value <= ROOM_POINTS_TOTAL;
+  const invalidWeights = weighted && questionPoints.some((value) => !validPoints(value));
+  const pointsTotal = questionPoints.reduce((sum, value) => sum + value, 0);
+  const validTotal = pointsTotal === ROOM_POINTS_TOTAL;
+  const canCreate = !busy && selected.length > 0 && Boolean(roomName.trim()) && (!weighted || (!invalidWeights && validTotal));
 
   function move(index: number, by: -1 | 1) {
     setSelected((list) => {
@@ -111,12 +116,17 @@ export function HomePage() {
                           type="number"
                           className="points-input"
                           aria-label={`Q${i + 1} points`}
+                          aria-invalid={!validPoints(Number(pointsOf(id)))}
+                          aria-describedby="question-points-help"
                           min={1}
-                          max={100}
+                          max={ROOM_POINTS_TOTAL}
+                          step={1}
+                          required
                           value={pointsOf(id)}
-                          onChange={(e) =>
-                            setPoints((p) => ({ ...p, [id]: Math.min(100, Math.max(1, Math.round(Number(e.target.value) || 1))) }))
-                          }
+                          onChange={(e) => {
+                            const value = e.currentTarget.value;
+                            setPoints((p) => ({ ...p, [id]: value }));
+                          }}
                         />
                       )}
                       <button type="button" className="ghost small-btn" aria-label={`Move Q${i + 1} up`} disabled={i === 0} onClick={() => move(i, -1)}>
@@ -160,10 +170,15 @@ export function HomePage() {
                 <label className="inline small">
                   <input type="checkbox" checked={weighted} onChange={(e) => setWeighted(e.target.checked)} />
                   Set points per question for the test score
-                  {weighted
-                    ? ` (total ${pointsTotal}; scores are scaled to 100)`
-                    : " (otherwise every question counts equally)"}
+                  {!weighted && " (otherwise every question counts equally)"}
                 </label>
+              )}
+              {weighted && selected.length > 0 && (
+                <p id="question-points-help" className={invalidWeights || !validTotal ? "error small" : "muted small"}>
+                  {invalidWeights
+                    ? `Enter a whole number from 1 to ${ROOM_POINTS_TOTAL} for each question.`
+                    : `Total: ${pointsTotal} / ${ROOM_POINTS_TOTAL} points. Custom points must add up to ${ROOM_POINTS_TOTAL}.`}
+                </p>
               )}
             </div>
             <label>
@@ -178,7 +193,7 @@ export function HomePage() {
                 onChange={(e) => setRoomName(e.target.value)}
               />
             </label>
-            <button className="primary" disabled={busy || selected.length === 0 || !roomName.trim()}>
+            <button className="primary" disabled={!canCreate}>
               Create room
             </button>
           </form>

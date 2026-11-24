@@ -4,6 +4,7 @@ import { Role } from "./roles.js";
 
 /** Most questions one interview can hold (ADR 0009). */
 export const MAX_ROOM_QUESTIONS = 5;
+export const ROOM_POINTS_TOTAL = 100;
 
 /** Longest room name (ADR 0014). */
 export const MAX_ROOM_NAME = 80;
@@ -31,13 +32,17 @@ export const CreateRoomRequest = z
       .min(1, "Pick at least one question")
       .max(MAX_ROOM_QUESTIONS, `At most ${MAX_ROOM_QUESTIONS} questions per room`)
       .refine((ids) => new Set(ids).size === ids.length, "Each question can only be used once per room"),
-    /** Optional weight per question for the test score (ADR 0011), same order as `questionIds`. Default: equal. */
-    questionPoints: z.array(z.number().int().min(1).max(100)).optional(),
+    /** Optional custom weights for the test score (ADR 0011), in question order. Default: equal. */
+    questionPoints: z.array(z.number().int().min(1).max(ROOM_POINTS_TOTAL)).optional(),
     /** Optional label, e.g. "Backend interview" (ADR 0014). Interviewer-only. */
     name: RoomName.optional(),
   })
   .refine((b) => !b.questionPoints || b.questionPoints.length === b.questionIds.length, {
     message: "Give points for every question, or for none",
+    path: ["questionPoints"],
+  })
+  .refine((b) => !b.questionPoints || b.questionPoints.reduce((total, points) => total + points, 0) === ROOM_POINTS_TOTAL, {
+    message: `Question points must add up to ${ROOM_POINTS_TOTAL}`,
     path: ["questionPoints"],
   });
 export type CreateRoomRequest = z.input<typeof CreateRoomRequest>;

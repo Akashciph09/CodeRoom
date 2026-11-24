@@ -291,6 +291,11 @@ async function main() {
   {
     check("points must match the questions → 400", (await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, product], questionPoints: [50] })).status === 400);
     check("points outside 1–100 → 400", (await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID], questionPoints: [0] })).status === 400);
+    for (const questionPoints of [[40, 50], [60, 50]]) {
+      const rejected = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, product], questionPoints });
+      check(`custom points totaling ${questionPoints[0]! + questionPoints[1]!} are rejected → 400`,
+        rejected.status === 400 && rejected.json?.issues?.some((issue: { message: string }) => issue.message === "Question points must add up to 100"));
+    }
 
     const rv = await call("POST", "/rooms", interviewer, { questionIds: [QUESTION_ID, product, difference], questionPoints: [20, 30, 50] });
     const rvId = rv.json.roomId as string;
