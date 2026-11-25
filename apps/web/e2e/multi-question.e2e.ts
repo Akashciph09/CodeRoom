@@ -120,13 +120,13 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await replaceCode(cd, PRODUCT);
       await cd.getByRole("button", { name: "Submit" }).click();
       // The results panel follows the question: only Q2's run, with Q2's single example as its test rows.
-      await expect(resultsHeading(cd)).toHaveText("Results · Q2");
+      await expect(resultsHeading(cd)).toHaveText("Public results · Q2");
       await expect(results(cd)).toHaveCount(1);
       await expect(results(cd).first()).toContainText("Accepted"); // graded on Q2's tests
       await expect(testRows(cd)).toHaveCount(1);
       await expect(testRows(cd)).toContainText(["Example 1"]);
       await expect.poll(() => editorText(iv)).toBe(PRODUCT); // interviewer is on Q2 too: same buffer
-      await expect(resultsHeading(iv)).toHaveText("Results · Q2");
+      await expect(resultsHeading(iv)).toHaveText("Public results · Q2");
       await expect(results(iv)).toHaveCount(1); // the interviewer's panel follows their own question
     });
 
@@ -136,12 +136,12 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expectUnchanged(() => editorText(iv), PRODUCT, 800); // the interviewer's Q2 view is unaffected
 
       // …and its own results: back on Q1, only Q1's run with Q1's two examples.
-      await expect(resultsHeading(cd)).toHaveText("Results · Q1");
+      await expect(resultsHeading(cd)).toHaveText("Public results · Q1");
       await expect(results(cd)).toHaveCount(1);
       await expect(results(cd).first()).toContainText("Accepted");
       await expect(testRows(cd)).toHaveCount(2);
       await expect(results(iv)).toHaveCount(1); // the interviewer, still on Q2, still sees only Q2's run
-      await expect(resultsHeading(iv)).toHaveText("Results · Q2");
+      await expect(resultsHeading(iv)).toHaveText("Public results · Q2");
     });
 
     await test.step("switching between questions with history keeps the Testcase tab", async () => {
@@ -171,7 +171,7 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expect.poll(() => editorText(cd)).toBe("# subtract");
       await replaceCode(cd, DIFFERENCE);
       await cd.getByRole("button", { name: "Run" }).click();
-      await expect(resultsHeading(cd)).toHaveText("Results · Q3");
+      await expect(resultsHeading(cd)).toHaveText("Public results · Q3");
       await expect(results(cd)).toHaveCount(1);
       await expect(results(cd).first()).toContainText("Accepted");
     });

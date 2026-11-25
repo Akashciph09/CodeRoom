@@ -199,6 +199,7 @@ export async function expectUnchanged(read: () => Promise<string>, expected: str
 }
 
 export const results = (page: Page) => page.locator(".results-panel .submission");
+export const submissionCards = (page: Page) => page.getByRole("region", { name: "Submission results" }).locator(".submission");
 export const avatars = (page: Page) => page.locator(".presence .avatar");
 
 /** Author and publish a question with one public test, through the UI. */

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { editorText, openAs, replaceCode, results, signUp } from "./helpers";
+import { editorText, openAs, replaceCode, results, signUp, submissionCards } from "./helpers";
 
 const TITLE = "Add two numbers (e2e)";
 const STATEMENT = "Read two integers a and b from one line and print a + b.";
@@ -114,7 +114,9 @@ test("author a question, interview with it, and keep the version pinned", async 
       await candidate.page.getByRole("button", { name: "Submit" }).click();
       const card = results(candidate.page).first();
       await expect(card).toContainText("Accepted");
-      await expect(card).toContainText("hidden tests 1/1");
+      await candidate.page.getByRole("button", { name: "Submission results (Accepted)", exact: true }).click();
+      await expect(submissionCards(candidate.page).first()).toContainText("1/1 hidden tests passed");
+      await candidate.page.getByRole("button", { name: "Back to code" }).click();
     });
 
     await test.step("author publishes v2 with a different expected output", async () => {

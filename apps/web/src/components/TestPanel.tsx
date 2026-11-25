@@ -22,7 +22,7 @@ type CaseItem =
  *  - "Testcase": the question's public examples, then custom cases either participant added (shared
  *    through the room doc, ADR 0010), one case at a time, plus "+" to add one. Hidden tests are never
  *    listed — only their count.
- *  - "Test Result": the runs for this question.
+ *  - "Test Result": public and custom case results for this question.
  *  - "Notes": the interviewer's private notes — only when `notes` is given (never for the candidate).
  *    Kept mounted while another tab shows, so a half-written note survives switching tabs.
  * Switches to Test Result when a run for this question starts — except from Notes, so the candidate

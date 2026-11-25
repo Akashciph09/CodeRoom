@@ -207,6 +207,12 @@ label input, label select { color: var(--text); font-size: 14px; }
 .pane-foot { flex: none; display: flex; justify-content: space-between; padding: 6px 14px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
 .pane-body { flex: 1; min-height: 0; overflow: auto; }
 .pane-body > .panel { padding: 12px 16px; background: transparent; overflow: visible; }
+.code-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.code-content[hidden] { display: none; }
+.code-results-toggle { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.submission-results h2 { margin: 0; }
+.submission-results { display: flex; flex-direction: column; gap: 10px; }
+.passed-hidden-tests { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 8px 0 0; list-style: none; }
 .cases { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .case-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .case-tab { background: transparent; border-color: transparent; color: var(--muted); padding: 6px 14px; }

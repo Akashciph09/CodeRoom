@@ -10,6 +10,7 @@ import {
   replaceCode,
   results,
   signUp,
+  submissionCards,
   type Participant,
 } from "./helpers";
 
@@ -90,15 +91,20 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
 
       const mine = results(candidate.page).first();
       await expect(mine).toContainText("Accepted");
-      await expect(mine).toContainText("hidden tests 2/2");
-      await expect(mine.locator(".badge.hidden")).toHaveCount(0); // hidden tests never shown
-      await expect(mine.getByRole("button", { name: /submitted code/ })).toHaveCount(0);
+      await expect(mine).not.toContainText("hidden tests");
+      await candidate.page.getByRole("button", { name: "Submission results (Accepted)", exact: true }).click();
+      const candidateSubmission = submissionCards(candidate.page).first();
+      await expect(candidateSubmission).toContainText("2/2 hidden tests passed");
+      await expect(candidateSubmission.getByRole("button", { name: /submitted code/ })).toHaveCount(0);
 
-      const theirs = results(interviewer.page).first();
+      await interviewer.page.getByRole("button", { name: "Submission results (Accepted)", exact: true }).click();
+      const theirs = submissionCards(interviewer.page).first();
       await expect(theirs).toContainText("Accepted");
-      await expect(theirs.locator(".badge.hidden")).toHaveCount(2); // interviewer sees hidden tests
+      await expect(theirs.getByRole("table", { name: "Hidden test results" }).getByRole("row")).toHaveCount(2);
       await theirs.getByRole("button", { name: "Show submitted code" }).click();
       await expect(theirs.locator(".code-snapshot")).toContainText("print(a + b)");
+      await candidate.page.getByRole("button", { name: "Back to code" }).click();
+      await interviewer.page.getByRole("button", { name: "Back to code" }).click();
     });
 
     await test.step("language change syncs to the other participant", async () => {

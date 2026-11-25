@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { appendLine, editorText, liveStatus, replaceCode, results, startInterview } from "./helpers";
+import { appendLine, editorText, liveStatus, replaceCode, results, startInterview, submissionCards } from "./helpers";
 
 // Sleeps so the run reliably finishes while the candidate is disconnected, then prints the right answer.
 const SLOW_SOLUTION = "import time\ntime.sleep(1.2)\na, b = map(int, input().split())\nprint(a + b)";
@@ -46,7 +46,9 @@ test("candidate recovers code and results after a dropped connection", async ({ 
       // Missed result recovered from history on reconnect.
       const card = results(candidate.page).first();
       await expect(card).toContainText("Accepted");
-      await expect(card).toContainText("hidden tests 2/2");
+      await candidate.page.getByRole("button", { name: "Submission results (Accepted)", exact: true }).click();
+      await expect(submissionCards(candidate.page).first()).toContainText("2/2 hidden tests passed");
+      await candidate.page.getByRole("button", { name: "Back to code" }).click();
       await expect(results(candidate.page)).toHaveCount(1); // no duplicate card
 
       // Both edits made during the gap reach both sides, and the documents converge.

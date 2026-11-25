@@ -9,11 +9,13 @@ import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { RoomColumns, useRoomLayout } from "../components/RoomLayout";
 import { RoomTests } from "../components/RoomTests";
+import { SubmissionResults } from "../components/ResultsPanel";
 import { TestPanel } from "../components/TestPanel";
 import { NotesPanel } from "../components/NotesPanel";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError, isInterviewerView, isRetryable, submitWithRetry } from "../lib/api";
 import { mergeHistory, upsertEntry, type SubmissionEntry } from "../lib/submissions";
+import { VERDICT_LABEL } from "../lib/verdicts";
 import { displayName, useSession } from "../lib/auth";
 import {
   colorFor,
@@ -48,6 +50,7 @@ export function RoomPage() {
   const [eventStatus, setEventStatus] = useState<ConnectionStatus>("connecting");
   /** The question this participant is looking at (local — each side navigates on their own). */
   const [activePosition, setActivePosition] = useState(1);
+  const [submissionResultsQuestion, setSubmissionResultsQuestion] = useState<string>();
   const [language, setLanguage] = useState<Language>("python");
   const [entries, setEntries] = useState<SubmissionEntry[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -323,6 +326,12 @@ export function RoomPage() {
   const closed = room.status !== "open";
   const canReveal = !closed && !isCandidate && nextToReveal(room)?.id === active.id;
   const multi = room.questions.length > 1;
+  const submissions = entries.flatMap((entry) =>
+    !entry.pending && entry.view.mode === "submit" && entry.view.roomQuestionId === active.id ? [entry.view] : [],
+  );
+  const showSubmissionResults = submissionResultsQuestion === active.id;
+  const latestSubmit = submissions[0];
+  const verdict = latestSubmit?.status === "failed" ? "internal_error" : latestSubmit?.overall;
 
   return (
     <div className="room-page">
@@ -393,8 +402,19 @@ export function RoomPage() {
                   Q{active.position}
                 </span>
               )}
+              <span className="pane-sep" aria-hidden="true" />
+              <button
+                type="button"
+                className={`pane-tab code-results-toggle ${showSubmissionResults ? "active" : ""}`}
+                aria-expanded={showSubmissionResults}
+                aria-controls="room-submission-results"
+                aria-label={showSubmissionResults ? "Back to code" : verdict ? `Submission results (${VERDICT_LABEL[verdict]})` : "Submission results"}
+                onClick={() => setSubmissionResultsQuestion(showSubmissionResults ? undefined : active.id)}
+              >
+                {showSubmissionResults ? "Back to code" : verdict ? VERDICT_LABEL[verdict] : "Submissions"}
+              </button>
               <div className="spacer" />
-              {isCandidate ? (
+              {isCandidate && (
                 <>
                   <button onClick={() => submit("run")} disabled={submitting || !roomDoc || closed}>
                     Run
@@ -403,48 +423,50 @@ export function RoomPage() {
                     Submit
                   </button>
                 </>
+              )}
+            </div>
+            <div className="code-content" hidden={showSubmissionResults}>
+              <div className="pane-toolbar">
+                <select
+                  className="bare-select"
+                  aria-label="Language"
+                  value={language}
+                  onChange={(e) => changeLanguage(e.target.value as Language)}
+                  disabled={!roomDoc || !active.revealed || closed}
+                >
+                  <option value="python">Python</option>
+                  <option value="javascript">JavaScript</option>
+                </select>
+                {notice && <span className="error small">{notice}</span>}
+                {isCandidate && !closed && (active.testRevision ?? 0) > 0 && !entries.some((entry) =>
+                  !entry.pending && entry.view.roomQuestionId === active.id && entry.view.mode === "submit"
+                  && entry.view.status === "completed" && entry.view.roomTestRevision === active.testRevision
+                ) && (
+                  <span className="small" role="status">The interviewer added additional tests. Please resubmit.</span>
+                )}
+              </div>
+              {roomDoc && activeText ? (
+                <CollaborativeEditor
+                  text={activeText}
+                  awareness={roomDoc.provider.awareness}
+                  language={language}
+                  // Unrevealed questions are read-only for the interviewer too: nothing is typed into a buffer
+                  // the candidate can't see yet.
+                  readOnly={closed || !active.revealed}
+                  onCursor={(line, column) => setCursor({ line, column })}
+                />
               ) : (
-                <span className="muted small">Only the candidate can run code</span>
+                <div className="editor center muted">Connecting…</div>
               )}
+              <div className="pane-foot">
+                <span>{closed ? "Read-only" : docStatus === "connected" ? "Synced" : "Reconnecting…"}</span>
+                <span>
+                  Ln {cursor.line}, Col {cursor.column}
+                </span>
+              </div>
             </div>
-            <div className="pane-toolbar">
-              <select
-                className="bare-select"
-                aria-label="Language"
-                value={language}
-                onChange={(e) => changeLanguage(e.target.value as Language)}
-                disabled={!roomDoc || !active.revealed || closed}
-              >
-                <option value="python">Python</option>
-                <option value="javascript">JavaScript</option>
-              </select>
-              {notice && <span className="error small">{notice}</span>}
-              {isCandidate && !closed && (active.testRevision ?? 0) > 0 && !entries.some((entry) =>
-                !entry.pending && entry.view.roomQuestionId === active.id && entry.view.mode === "submit"
-                && entry.view.status === "completed" && entry.view.roomTestRevision === active.testRevision
-              ) && (
-                <span className="small" role="status">The interviewer added additional tests. Please resubmit.</span>
-              )}
-              {!isCandidate && <span className="muted small">You see every test, including hidden ones.</span>}
-            </div>
-            {roomDoc && activeText ? (
-              <CollaborativeEditor
-                text={activeText}
-                awareness={roomDoc.provider.awareness}
-                language={language}
-                // Unrevealed questions are read-only for the interviewer too: nothing is typed into a buffer
-                // the candidate can't see yet.
-                readOnly={closed || !active.revealed}
-                onCursor={(line, column) => setCursor({ line, column })}
-              />
-            ) : (
-              <div className="editor center muted">Connecting…</div>
-            )}
-            <div className="pane-foot">
-              <span>{closed ? "Read-only" : docStatus === "connected" ? "Synced" : "Reconnecting…"}</span>
-              <span>
-                Ln {cursor.line}, Col {cursor.column}
-              </span>
+            <div id="room-submission-results" className="pane-body" hidden={!showSubmissionResults}>
+              {showSubmissionResults && <SubmissionResults submissions={submissions} />}
             </div>
           </section>
         }

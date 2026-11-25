@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { RoomQuestionView, Verdict } from "@coderoom/shared";
-import { isInterviewerView } from "../lib/api";
+import { isInterviewerView, type SubmissionView } from "../lib/api";
 import { questionOf, type SubmissionEntry } from "../lib/submissions";
 import { VERDICT_LABEL } from "../lib/verdicts";
 
@@ -31,7 +31,7 @@ export function ResultsPanel({
     : entries;
   return (
     <section className="panel results-panel">
-      <h2>Results{question && <span className="muted"> · Q{question.position}</span>}</h2>
+      <h2>Public results{question && <span className="muted"> · Q{question.position}</span>}</h2>
       {shown.length === 0 && <p className="muted">{question ? `No runs for Q${question.position} yet.` : "No runs yet."}</p>}
       {shown.map((e) => (
         <SubmissionCard key={e.submissionId} entry={e} />
@@ -40,14 +40,7 @@ export function ResultsPanel({
   );
 }
 
-/** Public tests are numbered to match the "Example n" list; hidden tests get no number. */
-function numbered<T extends { testId: string; hidden?: boolean }>(results: T[]) {
-  let n = 0;
-  return results.map((r) => ({ r, label: r.hidden ? null : ++n }));
-}
-
 function SubmissionCard({ entry }: { entry: SubmissionEntry }) {
-  const [showCode, setShowCode] = useState(false);
   if (entry.pending) {
     return (
       <div className="submission">
@@ -61,29 +54,21 @@ function SubmissionCard({ entry }: { entry: SubmissionEntry }) {
 
   const v = entry.view;
   const done = v.status === "completed" || v.status === "failed";
+  const publicResults = isInterviewerView(v) ? v.results.filter((r) => !r.hidden) : v.publicResults;
+  const publicVerdict = publicResults.find((r) => r.verdict !== "accepted")?.verdict ?? "accepted";
   return (
     <div className="submission">
       <div className="submission-head">
-        <VerdictBadge verdict={done ? (v.overall ?? "internal_error") : undefined} />
+        {done && publicResults.length === 0 ? <span className="muted">No public results</span> :
+          <VerdictBadge verdict={done ? publicVerdict : undefined} />}
         <span className="badge">{v.mode}</span>
-        {isInterviewerView(v) && (
-          <>
-            <span className="badge">{v.language}</span>
-            <span className="muted">{new Date(v.createdAt).toLocaleTimeString()}</span>
-          </>
-        )}
-        {!isInterviewerView(v) && v.hiddenTotal !== undefined && (
-          <span className="muted">
-            hidden tests {v.hiddenPassed}/{v.hiddenTotal}
-          </span>
-        )}
       </div>
 
       <table className="tests">
         <tbody>
-          {numbered(isInterviewerView(v) ? v.results : v.publicResults).map(({ r, label }) => (
+          {publicResults.map((r, index) => (
             <tr key={r.testId}>
-              <td>{label === null ? <span className="badge hidden">hidden</span> : `Example ${label}`}</td>
+              <td>Example {index + 1}</td>
               <td>
                 <VerdictBadge verdict={r.verdict} />
               </td>
@@ -133,14 +118,63 @@ function SubmissionCard({ entry }: { entry: SubmissionEntry }) {
         </>
       )}
 
-      {isInterviewerView(v) && (
-        <>
-          <button className="link" onClick={() => setShowCode((s) => !s)}>
-            {showCode ? "Hide" : "Show"} submitted code
-          </button>
-          {showCode && <pre className="code-snapshot">{v.code}</pre>}
-        </>
-      )}
+      {isInterviewerView(v) && v.mode === "run" && <SubmittedCode code={v.code} />}
     </div>
+  );
+}
+
+function SubmittedCode({ code }: { code: string }) {
+  const [showCode, setShowCode] = useState(false);
+  return (
+    <>
+      <button className="link" onClick={() => setShowCode((s) => !s)}>
+        {showCode ? "Hide" : "Show"} submitted code
+      </button>
+      {showCode && <pre className="code-snapshot">{code}</pre>}
+    </>
+  );
+}
+
+export function SubmissionResults({ submissions }: { submissions: SubmissionView[] }) {
+  return (
+    <section className="panel submission-results" aria-label="Submission results">
+      <h2>Submission results</h2>
+      {submissions.length === 0 && <p className="muted">No submissions for this question yet.</p>}
+      {submissions.map((view) => (
+        <div className="submission" key={view.submissionId}>
+          <div className="submission-head">
+            <VerdictBadge verdict={view.status === "failed" ? "internal_error" : view.overall} />
+            {isInterviewerView(view) && <time className="muted" dateTime={view.createdAt}>{new Date(view.createdAt).toLocaleTimeString()}</time>}
+          </div>
+          {isInterviewerView(view) ? (
+            <>
+              <table className="tests" aria-label="Hidden test results">
+                <tbody>
+                  {view.results.filter((result) => result.hidden).map((result, index) => (
+                    <tr key={result.testId}>
+                      <td>Hidden case {index + 1}</td>
+                      <td><VerdictBadge verdict={result.verdict} /></td>
+                      <td className="muted">{result.timeMs} ms</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <SubmittedCode code={view.code} />
+            </>
+          ) : view.hiddenTotal !== undefined && view.hiddenPassed !== undefined && (
+            <>
+              <p className="muted small">{view.hiddenPassed}/{view.hiddenTotal} hidden tests passed</p>
+              {view.hiddenPassed > 0 && (
+                <ul className="passed-hidden-tests" aria-label="Passed hidden tests">
+                  {Array.from({ length: view.hiddenPassed }, (_, index) => (
+                    <li key={index} className="badge"><span className="verdict ok">✓</span> Passed case {index + 1}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      ))}
+    </section>
   );
 }

@@ -70,7 +70,7 @@ test("both participants add test cases, see each other's, and the candidate runs
 
       await cd.getByRole("button", { name: "Submit" }).click();
       await expect(results(cd)).toHaveCount(2);
-      await expect(results(cd).first()).toContainText("hidden tests 2/2");
+      await expect(cd.getByRole("button", { name: "Submission results (Accepted)", exact: true })).toBeVisible();
       await expect(results(cd).first().locator("table.custom-results")).toHaveCount(0);
     });
 
