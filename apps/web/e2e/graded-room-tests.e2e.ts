@@ -5,6 +5,7 @@ test("reviewed room tests update candidate grading without exposing hidden input
   const { interviewer, candidate, close } = await startInterview(browser);
   const iv = interviewer.page;
   const cd = candidate.page;
+  const roomUrl = iv.url();
   const candidateTests = cd.getByRole("region", { name: "Tests" });
   const interviewerTests = iv.getByRole("group", { name: "Graded room tests" });
   const notice = cd.getByText("The interviewer added additional tests. Please resubmit.");
@@ -51,6 +52,11 @@ test("reviewed room tests update candidate grading without exposing hidden input
     await expect(interviewerTests.getByLabel("Room test input")).toHaveCount(0);
     await expect(interviewerTests.getByText("Room additions (2)")).toBeVisible();
 
+    await iv.goto(`${roomUrl}/review`);
+    await expect(iv.getByText("Needs resubmit", { exact: true })).toBeVisible();
+    await expect(iv.getByLabel("Test score")).toHaveText("0 / 100");
+    await iv.goto(roomUrl);
+
     await candidateTests.getByRole("tab", { name: "Testcase" }).click();
     await candidateTests.getByRole("button", { name: "Case 3", exact: true }).click();
     await expect(candidateTests.getByLabel("Case input")).toHaveText("-101 101");
@@ -94,6 +100,9 @@ test("reviewed room tests update candidate grading without exposing hidden input
 
     await editorTab(cd, "Code").click();
     await expect(notice).toHaveCount(0);
+    await iv.goto(`${roomUrl}/review`);
+    await expect(iv.getByLabel("Test score")).toHaveText("83.3 / 100");
+    await expect(iv.getByText("Needs resubmit", { exact: true })).toHaveCount(0);
   } finally {
     await close();
   }

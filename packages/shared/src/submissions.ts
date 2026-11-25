@@ -106,3 +106,12 @@ export const InterviewerSubmissionView = z.object({
   createdAt: z.string(),
 });
 export type InterviewerSubmissionView = z.infer<typeof InterviewerSubmissionView>;
+
+export const QuestionSubmissionHistory = z.object({
+  latestRun: z.union([InterviewerSubmissionView, CandidateSubmissionView]).optional(),
+  submissions: z.array(z.object({
+    attemptNumber: z.number().int().positive(),
+    view: z.union([InterviewerSubmissionView, CandidateSubmissionView]),
+  })),
+});
+export type QuestionSubmissionHistory = z.infer<typeof QuestionSubmissionHistory>;

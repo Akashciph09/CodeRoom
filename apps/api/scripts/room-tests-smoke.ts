@@ -3,7 +3,9 @@ import type { AddressInfo } from "node:net";
 import { submissions } from "@coderoom/db";
 import { createApp } from "../src/app.js";
 import { db } from "../src/db.js";
-import { enqueueExecution } from "../src/queue.js";
+import { config } from "../src/config.js";
+import { enqueueExecution, executionQueue, redis } from "../src/queue.js";
+import { QUESTION_VALIDATION_JOB } from "@coderoom/shared";
 import { call, check, finish, QUESTION_ID, signUp, sleep, userIdOf } from "./lib.js";
 
 const code = "a, b = map(int, input().split())\nprint(a + b)";
@@ -54,6 +56,9 @@ try {
   }
 
   const old = await run("submit");
+  const reviewPath = `${roomPath}/review`;
+  const readReview = async () => (await call("GET", reviewPath, interviewer, undefined, base)).json;
+  check("the original perfect Submit scores 100", (await readReview()).candidates[0].score === 100);
   // Model an enqueue delay: the submission snapshot exists before the additions, but reaches the worker after.
   const [delayed] = await db.insert(submissions).values({
     roomId: room.roomId, roomQuestionId: original.id, questionVersionId: original.question.versionId,
@@ -68,6 +73,13 @@ try {
   const mismatch = await add({ ...hidden, expectedOutput: "42", referencePython: code });
   check("worker rejects an incorrect expected output before adding it", mismatch.status === 400 && mismatch.json.error.includes("wrong_answer"));
   check("reference check allows adding the exact hidden case", (await add({ ...hidden, referencePython: code })).status === 204);
+  const provisional = (await readReview()).candidates[0];
+  check("a new suite requires a resubmit and preserves the earlier perfect result",
+    provisional.score === 0 && provisional.questions[0].needsResubmit && provisional.submissions[0].passed === initialPublic + initialHidden);
+  const missed = await run("submit", `${code.split("\n")[0]}\nprint(0 if a == 876543 else a + b)`);
+  const rescored = (await readReview()).candidates[0];
+  check("the current 4/5 Submit replaces the old 4/4 for scoring",
+    rescored.score === 80 && rescored.questions[0].best.submissionId === missed.result.submissionId && !rescored.questions[0].needsResubmit);
   const suggestion = await call("POST", `${path}/suggest`, interviewer, undefined, base);
   check("AI proposes exactly three explained cases without seeing existing hidden inputs",
     suggestion.status === 200 && suggestion.json.tests.length === 3
@@ -123,6 +135,44 @@ try {
     (entry: { submissionId: string; total: number }) => entry.submissionId === laterSubmit.submissionId
       && entry.total === initialPublic + initialHidden + 2,
   ));
+  const window = Math.floor(Date.now() / 60_000);
+  const rateKey = (n: number) => `rl:submit:${userIdOf(interviewer)}:${n}`;
+  await redis.set(rateKey(window), config.SUBMIT_RATE_LIMIT_PER_MIN, "EX", 120);
+  await redis.set(rateKey(window + 1), config.SUBMIT_RATE_LIMIT_PER_MIN, "EX", 120);
+  let validations = 0;
+  const onQueued = (job: { name: string }) => { if (job.name === QUESTION_VALIDATION_JOB) validations++; };
+  executionQueue.on("waiting", onQueued);
+  try {
+    const limited = await add({ input: "101 100", expectedOutput: "201", isHidden: false, referencePython: code });
+    check("a rate-limited reference check returns 429 before enqueueing",
+      limited.status === 429 && validations === 0);
+  } finally {
+    executionQueue.off("waiting", onQueued);
+  }
+
+  await call("POST", "/rooms/join", candidate, { inviteCode: otherRoom.inviteCode }, base);
+  const otherQuestion = other.json.questions[0];
+  const historyPath = `/rooms/${otherRoom.roomId}/questions/${otherQuestion.id}/submissions`;
+  const fixture = {
+    roomId: otherRoom.roomId, roomQuestionId: otherQuestion.id, questionVersionId: otherQuestion.question.versionId,
+    userId: userIdOf(candidate), language: "python" as const, code, status: "completed" as const, overall: "accepted" as const,
+  };
+  await db.insert(submissions).values(Array.from({ length: 51 }, (_, i) => ({
+    ...fixture, mode: "submit" as const, createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i)),
+  })));
+  await db.insert(submissions).values({ ...fixture, mode: "run" });
+  const firstPage = (await call("GET", historyPath, candidate, undefined, base)).json;
+  const cursor = firstPage.submissions.at(-1).view.submissionId;
+  await db.insert(submissions).values({ ...fixture, mode: "submit" });
+  const olderPage = (await call("GET", `${historyPath}?before=${cursor}`, candidate, undefined, base)).json;
+  const refreshed = (await call("GET", historyPath, candidate, undefined, base)).json;
+  check("older history is reachable with stable attempt numbers after a newer Submit",
+    firstPage.submissions.length === 50 && firstPage.submissions[0].attemptNumber === 51
+    && firstPage.latestRun.mode === "run" && olderPage.latestRun === undefined
+    && olderPage.submissions.length === 1 && olderPage.submissions[0].attemptNumber === 1
+    && refreshed.submissions[0].attemptNumber === 52 && refreshed.submissions[1].attemptNumber === 51
+    && refreshed.submissions[1].view.submissionId === firstPage.submissions[0].view.submissionId);
+
   await call("POST", `${roomPath}/close`, interviewer, undefined, base);
   check("ended rooms refuse additional tests", (await add({ ...publicCase, input: "101 100" })).status === 400);
 } finally {

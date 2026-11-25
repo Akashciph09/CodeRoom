@@ -14,6 +14,7 @@ import {
   type JoinRoomResponse,
   type RoomSummary,
   type RoomView,
+  type QuestionSubmissionHistory,
 } from "@coderoom/shared";
 import { redis } from "../queue.js";
 import { latestPublished } from "../services/questions.js";
@@ -291,32 +292,54 @@ roomsRouter.get(
     const userId = req.user!.userId;
     const role = await requireRoomRole(roomId, userId);
 
-    const questionId = UuidParam.optional().parse(req.query.questionId);
-    const scope = and(
-      eq(submissions.roomId, roomId),
-      role === "candidate" ? eq(submissions.userId, userId) : undefined,
-      questionId ? eq(submissions.roomQuestionId, questionId) : undefined,
-    );
-    const recent = (limit: number, mode?: "run" | "submit") => db.select().from(submissions)
-      .where(and(scope, mode ? eq(submissions.mode, mode) : undefined))
+    const rows = await db.select().from(submissions)
+      .where(and(eq(submissions.roomId, roomId), role === "candidate" ? eq(submissions.userId, userId) : undefined))
       .orderBy(desc(submissions.createdAt), desc(submissions.id))
-      .limit(limit);
-    // A busy question's Runs must never push another question's latest Run or Submit out of the room UI.
-    const rows = questionId ? (await Promise.all([recent(50, "run"), recent(50, "submit")])).flat()
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id)) : await recent(50);
+      .limit(50);
+    res.json(await submissionHistoryViews(role, rows));
+  }),
+);
 
-    const ids = rows.map((r) => r.id);
-    const [results, custom] = await Promise.all([resultsFor(ids), customResultsFor(ids)]);
+async function submissionHistoryViews(role: Awaited<ReturnType<typeof requireRoomRole>>, rows: (typeof submissions.$inferSelect)[]) {
+  const ids = rows.map((r) => r.id);
+  const [results, custom] = await Promise.all([resultsFor(ids), customResultsFor(ids)]);
+  return rows.map((submission) => viewFor(role, {
+    submission,
+    results: results.filter((r) => r.submissionId === submission.id),
+    custom: custom.filter((r) => r.submissionId === submission.id),
+  }));
+}
 
-    res.json(
-      rows.map((submission) =>
-        viewFor(role, {
-          submission,
-          results: results.filter((r) => r.submissionId === submission.id),
-          custom: custom.filter((r) => r.submissionId === submission.id),
-        }),
-      ),
-    );
+roomsRouter.get(
+  "/:id/questions/:questionId/submissions",
+  asyncHandler(async (req, res) => {
+    const roomId = UuidParam.parse(req.params.id);
+    const questionId = UuidParam.parse(req.params.questionId);
+    const before = UuidParam.optional().parse(req.query.before);
+    const userId = req.user!.userId;
+    const role = await requireRoomRole(roomId, userId);
+    const scope = and(eq(submissions.roomId, roomId), eq(submissions.roomQuestionId, questionId),
+      role === "candidate" ? eq(submissions.userId, userId) : undefined);
+    // Rank in storage, so loading a page or inserting a newer Submit never renumbers older attempts.
+    const ranked = db.$with("ranked_submissions").as(db.select({
+      id: submissions.id,
+      attemptNumber: sql<number>`(row_number() over (order by ${submissions.createdAt}, ${submissions.id}))::int`.as("attempt_number"),
+    }).from(submissions).where(and(scope, eq(submissions.mode, "submit"))));
+    const cursor = before ? db.select({ number: ranked.attemptNumber }).from(ranked).where(eq(ranked.id, before)) : undefined;
+    const [page, runs] = await Promise.all([
+      db.with(ranked).select({ submission: submissions, attemptNumber: ranked.attemptNumber })
+        .from(ranked).innerJoin(submissions, eq(submissions.id, ranked.id))
+        .where(cursor ? sql`${ranked.attemptNumber} < (${cursor})` : undefined)
+        .orderBy(desc(ranked.attemptNumber)).limit(50),
+      before ? [] : db.select().from(submissions).where(and(scope, eq(submissions.mode, "run")))
+        .orderBy(desc(submissions.createdAt), desc(submissions.id)).limit(1),
+    ]);
+    const views = await submissionHistoryViews(role, [...page.map(({ submission }) => submission), ...runs]);
+    const response: QuestionSubmissionHistory = {
+      submissions: page.map(({ attemptNumber }, index) => ({ attemptNumber, view: views[index]! })),
+      ...(runs.length ? { latestRun: views[page.length]! } : {}),
+    };
+    res.json(response);
   }),
 );
 

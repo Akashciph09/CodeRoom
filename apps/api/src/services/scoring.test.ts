@@ -8,6 +8,7 @@ const sub = (roomQuestionId: string, passed: number, total: number, over: Partia
   roomQuestionId,
   mode: "submit",
   status: "completed",
+  roomTestRevision: 0,
   passed,
   total,
   createdAt: at(n),
@@ -15,7 +16,19 @@ const sub = (roomQuestionId: string, passed: number, total: number, over: Partia
 });
 
 describe("test score", () => {
-  const q = (id: string, points = 1, revealed = true) => ({ id, points, revealed });
+  const q = (id: string, points = 1, revealed = true, testRevision = 0) => ({ id, points, revealed, testRevision });
+
+  it("keeps older perfect attempts out of the current score and flags a missing resubmit", () => {
+    const perfect = sub("a", 4, 4);
+    expect(scoreCandidate([q("a")], [perfect]).score).toBe(100);
+    const revised = q("a", 1, true, 1);
+    expect(scoreCandidate([revised], [perfect]).questions[0]).toMatchObject({ needsResubmit: true, earned: 0 });
+    const current = sub("a", 4, 5, { roomTestRevision: 1 });
+    const result = scoreCandidate([revised], [perfect, current]);
+    expect(result.score).toBe(80);
+    expect(result.questions[0]?.best?.submissionId).toBe(current.id);
+    expect(result.questions[0]?.needsResubmit).toBeUndefined();
+  });
 
   it("scores each question by its pass rate, then combines (the example from the design: 20/30/50)", () => {
     const { score, questions } = scoreCandidate(

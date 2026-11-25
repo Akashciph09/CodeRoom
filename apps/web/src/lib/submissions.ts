@@ -21,6 +21,16 @@ export const questionOf = (e: SubmissionEntry) => (e.pending ? e.roomQuestionId 
 
 export const attemptMetadata = (entry: SubmissionEntry) => entry.pending ? entry : entry.view;
 
+export function numberedHistory(entries: SubmissionEntry[], numbers: Readonly<Record<string, number>>) {
+  const sorted = entries.flatMap((entry) => {
+    const attemptNumber = numbers[entry.submissionId];
+    return attemptNumber === undefined ? [] : [{ entry, attemptNumber }];
+  }).sort((a, b) => b.attemptNumber - a.attemptNumber);
+  // After a long disconnect the new page may not overlap the cached pages. Stop at the first gap.
+  const gap = sorted.findIndex((row, index) => index > 0 && sorted[index - 1]!.attemptNumber - row.attemptNumber > 1);
+  return gap < 0 ? sorted : sorted.slice(0, gap);
+}
+
 /** Acceptance time orders attempts even when the first event we receive is a late result. */
 export function attemptsFor(entries: SubmissionEntry[], questionId: string, mode: SubmissionMode) {
   return entries.filter((entry) => questionOf(entry) === questionId && attemptMetadata(entry).mode === mode)

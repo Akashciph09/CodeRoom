@@ -7,6 +7,7 @@ import { asyncHandler, BadRequest, Conflict, HttpError, NotFound, TooManyRequest
 import { redis, validateGeneratedTests } from "../queue.js";
 import { configuredRoomTestModel, suggestRoomTests, type RoomTestModel } from "../services/ai.js";
 import { roomQuestionsFor } from "../services/roomQuestions.js";
+import { enforceSubmitRateLimit } from "../services/submitGuards.js";
 import { UuidParam } from "./params.js";
 
 const scope = (roomId: string, questionId: string) => and(
@@ -47,7 +48,8 @@ export function roomTestsRouter(model: RoomTestModel = configuredRoomTestModel):
   router.post(path, asyncHandler(async (req, res) => {
     const roomId = UuidParam.parse(req.params.id);
     const questionId = UuidParam.parse(req.params.questionId);
-    await requireRoomRole(roomId, req.user!.userId, "interviewer");
+    const userId = req.user!.userId;
+    await requireRoomRole(roomId, userId, "interviewer");
     const { input, expectedOutput, isHidden, referencePython } = AddRoomTestRequest.parse(req.body);
     const [target] = await db.select({ status: rooms.status, revision: roomQuestions.testRevision })
       .from(roomQuestions).innerJoin(rooms, eq(rooms.id, roomQuestions.roomId)).where(scope(roomId, questionId));
@@ -55,6 +57,7 @@ export function roomTestsRouter(model: RoomTestModel = configuredRoomTestModel):
     if (target.status !== "open") throw new BadRequest("Room is closed.");
     if (target.revision >= MAX_ROOM_TEST_CASES) throw new BadRequest("This room question has reached the test limit.");
     if (referencePython) {
+      await enforceSubmitRateLimit(userId, "sandbox requests");
       const [verdict] = await validateGeneratedTests(referencePython, [{ input, expectedOutput, isHidden }]).catch(() => {
         throw new HttpError(503, "The worker could not check this test. Try again.");
       });

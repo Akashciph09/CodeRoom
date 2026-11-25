@@ -1,5 +1,37 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { editorTab, editorText, expectUnchanged, replaceCode, results, selectedSubmission, startInterview, submissionHistory, testResultTab } from "./helpers";
+
+test("submission history loads older attempts and keeps their numbers after reload", async ({ browser }) => {
+  const { candidate, close } = await startInterview(browser);
+  const page = candidate.page;
+  const ids: string[] = Array.from({ length: 51 }, () => randomUUID());
+  try {
+    await page.route(/\/questions\/[^/]+\/submissions(?:\?|$)/, (route) => {
+      const url = new URL(route.request().url());
+      const roomQuestionId = url.pathname.split("/").at(-2)!;
+      const before = url.searchParams.get("before");
+      const pageIds = before ? ids.slice(0, ids.indexOf(before)) : ids.slice(-50);
+      return route.fulfill({ json: { submissions: [...pageIds].reverse().map((submissionId) => ({
+        attemptNumber: ids.indexOf(submissionId) + 1,
+        view: { submissionId, roomQuestionId, mode: "submit", status: "completed", overall: "accepted", publicResults: [], customResults: [] },
+      })) } });
+    });
+    for (let visit = 0; visit < 2; visit++) {
+      await page.reload();
+      await editorTab(page, "Submissions").click();
+      await expect(submissionHistory(page)).toHaveCount(50);
+      await expect(submissionHistory(page).first()).toHaveAccessibleName(/^Submission 51 /);
+      await expect(submissionHistory(page).last()).toHaveAccessibleName(/^Submission 2 /);
+      await page.getByRole("button", { name: "Load older submissions" }).click();
+      await expect(submissionHistory(page)).toHaveCount(51);
+      await expect(submissionHistory(page).last()).toHaveAccessibleName(/^Submission 1 /);
+      await expect(page.getByRole("button", { name: "Load older submissions" })).toHaveCount(0);
+    }
+  } finally {
+    await close();
+  }
+});
 
 test("only the newest Run is shown, even if the first result arrives late", async ({ browser }) => {
   const { interviewer, candidate, close } = await startInterview(browser);

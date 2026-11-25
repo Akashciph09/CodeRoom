@@ -96,6 +96,7 @@ export async function roomReview(roomId: string, viewerId: string): Promise<Room
       id: roomQuestions.id,
       position: roomQuestions.position,
       points: roomQuestions.points,
+      testRevision: roomQuestions.testRevision,
       revealedAt: roomQuestions.revealedAt,
       title: questionVersions.title,
       version: questionVersions.version,
@@ -133,6 +134,7 @@ export async function roomReview(roomId: string, viewerId: string): Promise<Room
       title: q.title,
       version: q.version,
       points: q.points,
+      testRevision: q.testRevision,
       ...(q.revealedAt ? { revealedAt: q.revealedAt.toISOString() } : {}),
       ...(windows.has(q.id) ? { revealWindowMs: windows.get(q.id)! } : {}),
     })),
@@ -150,10 +152,11 @@ export async function roomReview(roomId: string, viewerId: string): Promise<Room
           };
         });
       const scored = scoreCandidate(
-        qs.map((q) => ({ id: q.id, points: q.points, revealed: q.revealedAt !== null })),
+        qs.map((q) => ({ id: q.id, points: q.points, revealed: q.revealedAt !== null, testRevision: q.testRevision })),
         mine.map((m) => ({
           id: m.submission.id,
           roomQuestionId: m.submission.roomQuestionId,
+          roomTestRevision: m.submission.roomTestRevision,
           mode: m.submission.mode,
           status: m.submission.status,
           passed: m.passed,
@@ -171,6 +174,7 @@ export async function roomReview(roomId: string, viewerId: string): Promise<Room
         submissions: mine.map((m) => ({
           submissionId: m.submission.id,
           roomQuestionId: m.submission.roomQuestionId,
+          roomTestRevision: m.submission.roomTestRevision,
           mode: m.submission.mode,
           status: m.submission.status,
           ...(m.submission.overall ? { overall: m.submission.overall } : {}),

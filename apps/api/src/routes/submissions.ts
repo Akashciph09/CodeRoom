@@ -12,7 +12,7 @@ import { db } from "../db.js";
 import { asyncHandler, HttpError, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
 import { enqueueExecution, redis, replayHiddenCase } from "../queue.js";
 import { submittableQuestion } from "../services/roomQuestions.js";
-import { enforceReplayRateLimit, enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
+import { enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
 import { loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
 import { UuidParam } from "./params.js";
 
@@ -159,7 +159,7 @@ submissionsRouter.post(
   asyncHandler(async (req, res) => {
     const userId = req.user!.userId;
     const { id, testId } = await inspectableHiddenCase(req.params, userId);
-    await enforceReplayRateLimit(userId);
+    await enforceSubmitRateLimit(userId, "sandbox requests");
     const result = await replayHiddenCase(id, testId);
     if (!result) throw new HttpError(503, "Replay unavailable. Try again.");
     res.setHeader("Cache-Control", "private, no-store").json(result);

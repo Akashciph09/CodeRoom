@@ -104,10 +104,13 @@ function AttemptMetadata({ entry }: { entry: SubmissionEntry }) {
   );
 }
 
-export function SubmissionResults({ submissions, selected, onSelect }: {
-  submissions: SubmissionEntry[];
+export function SubmissionResults({ submissions, selected, onSelect, onLoadOlder, loadingOlder, historyError }: {
+  submissions: { entry: SubmissionEntry; attemptNumber: number }[];
   selected?: SubmissionEntry;
   onSelect: (id?: string) => void;
+  onLoadOlder?: () => void;
+  loadingOlder: boolean;
+  historyError?: string;
 }) {
   return (
     <section className="panel submission-results" aria-label="Submission results">
@@ -128,10 +131,10 @@ export function SubmissionResults({ submissions, selected, onSelect }: {
           <h2>Submission history</h2>
           {submissions.length === 0 ? <p className="muted">No submissions for this question yet.</p> : (
             <ol reversed className="submission-history" aria-label="Submission history">
-              {submissions.map((entry, index) => (
+              {submissions.map(({ entry, attemptNumber }) => (
                 <li key={entry.submissionId}>
                   <button type="button" onClick={() => onSelect(entry.submissionId)}>
-                    <span className="submission-number muted"><span className="sr-only">Submission </span>{submissions.length - index}</span>
+                    <span className="submission-number muted"><span className="sr-only">Submission </span>{attemptNumber}</span>
                     <AttemptStatus entry={entry} />
                     <AttemptMetadata entry={entry} />
                   </button>
@@ -139,6 +142,10 @@ export function SubmissionResults({ submissions, selected, onSelect }: {
               ))}
             </ol>
           )}
+          {onLoadOlder && <button type="button" className="link submission-back" onClick={onLoadOlder} disabled={loadingOlder}>
+            {loadingOlder ? "Loading older submissions…" : "Load older submissions"}
+          </button>}
+          {historyError && <p role="alert" className="error small">{historyError}</p>}
         </>
       )}
     </section>

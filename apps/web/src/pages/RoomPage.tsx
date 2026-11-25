@@ -14,7 +14,7 @@ import { TestPanel } from "../components/TestPanel";
 import { NotesPanel } from "../components/NotesPanel";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError, isInterviewerView, isRetryable, submitWithRetry } from "../lib/api";
-import { attemptsFor, mergeHistory, progress, upsertEntry, type SubmissionEntry } from "../lib/submissions";
+import { attemptsFor, mergeHistory, numberedHistory, progress, upsertEntry, type SubmissionEntry } from "../lib/submissions";
 import { displayName, useSession } from "../lib/auth";
 import {
   colorFor,
@@ -58,6 +58,9 @@ function InterviewRoom({ roomId }: { roomId: string }) {
   const [sending, setSending] = useState<Extract<SubmissionEntry, { pending: true }>>();
   const [language, setLanguage] = useState<Language>("python");
   const [entries, setEntries] = useState<SubmissionEntry[]>([]);
+  const [attemptNumbers, setAttemptNumbers] = useState<Record<string, number>>({});
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [historyError, setHistoryError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -97,15 +100,16 @@ function InterviewRoom({ roomId }: { roomId: string }) {
    * Re-fetch history (on every events (re)connect). Merged, not replaced: a result event that arrived
    * while this request was in flight is further along than the snapshot and must not be rolled back.
    */
-  const refreshHistory = useCallback(() => {
-    const questionId = activeQuestionId.current;
-    if (!questionId) return;
-    api
-      .roomSubmissions(roomId, questionId)
-      .then((list) => setEntries((prev) => mergeHistory(prev, list)))
-      .catch(() => {});
+  const loadHistoryPage = useCallback(async (questionId: string, before?: string) => {
+    const page = await api.questionSubmissions(roomId, questionId, before);
+    const list = page.submissions.map(({ view }) => view);
+    setAttemptNumbers((prev) => ({ ...prev, ...Object.fromEntries(page.submissions.map(({ view, attemptNumber }) => [view.submissionId, attemptNumber])) }));
+    setEntries((prev) => mergeHistory(prev, page.latestRun ? [page.latestRun, ...list] : list));
   }, [roomId]);
-  useEffect(() => { refreshHistory(); }, [active?.id, refreshHistory]);
+  const refreshHistory = useCallback((questionId = activeQuestionId.current) => {
+    if (questionId) void loadHistoryPage(questionId).catch(() => {});
+  }, [loadHistoryPage]);
+  useEffect(() => { refreshHistory(); setHistoryError(undefined); }, [active?.id, refreshHistory]);
 
   // Shared editor (Yjs) — one doc per room, one Y.Text per question inside it.
   useEffect(() => {
@@ -185,10 +189,11 @@ function InterviewRoom({ roomId }: { roomId: string }) {
         setEntries((prev) =>
           upsertEntry(prev, { ...attempt, pending: true }),
         );
-        if (!attempt.mode || !attempt.createdAt) refreshHistory();
+        if (attempt.mode !== "run" || !attempt.createdAt) refreshHistory(attempt.roomQuestionId);
       } else if (event.type === "submission:result") {
         const view = event.result;
         setEntries((prev) => upsertEntry(prev, { submissionId: view.submissionId, pending: false, view }));
+        if (view.mode === "submit") refreshHistory(view.roomQuestionId);
       }
     };
     const onOpen = () => {
@@ -290,7 +295,7 @@ function InterviewRoom({ roomId }: { roomId: string }) {
           ...attempt, submissionId, ...(createdAt && { createdAt }), ...(roomTestRevision !== undefined && { roomTestRevision }),
         }));
         setSubmissionNavigation((current) => current?.selectedId === attempt.submissionId ? { ...current, selectedId: submissionId } : current);
-        if (status !== "queued" || !createdAt) refreshHistory();
+        if (mode === "submit" || status !== "queued" || !createdAt) refreshHistory(body.roomQuestionId);
       } catch (err) {
         if (!isRetryable(err)) pendingAttempt.current = null; // 4xx is final: the next click is a new action
         setSubmissionNavigation((current) => current?.selectedId === attempt.submissionId ? { questionId: current.questionId } : current);
@@ -336,6 +341,22 @@ function InterviewRoom({ roomId }: { roomId: string }) {
   }
 
   const submissions = active ? attemptsFor(entries, active.id, "submit") : [];
+  const history = numberedHistory(submissions, attemptNumbers);
+  const oldest = history.at(-1);
+  const before = oldest && oldest.attemptNumber > 1 ? oldest.entry.submissionId : undefined;
+
+  async function loadOlder() {
+    if (!active || !before || loadingOlder) return;
+    setLoadingOlder(true);
+    setHistoryError(undefined);
+    try {
+      await loadHistoryPage(active.id, before);
+    } catch {
+      if (activeQuestionId.current === active.id) setHistoryError("Couldn’t load older submissions. Try again.");
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
   const showSubmissionResults = !!active && submissionNavigation?.questionId === active.id;
   const selectedId = showSubmissionResults ? submissionNavigation?.selectedId : undefined;
   const selected = selectedId === sending?.submissionId ? sending : submissions.find((entry) => entry.submissionId === selectedId);
@@ -518,7 +539,8 @@ function InterviewRoom({ roomId }: { roomId: string }) {
               </div>
             </div>
             <div id="room-submission-results" className="pane-body" role="tabpanel" aria-labelledby="editor-submissions-tab" hidden={!showSubmissionResults}>
-              {showSubmissionResults && <SubmissionResults submissions={submissions} selected={selected} onSelect={selectSubmission} />}
+              {showSubmissionResults && <SubmissionResults submissions={history} selected={selected} onSelect={selectSubmission}
+                onLoadOlder={before ? loadOlder : undefined} loadingOlder={loadingOlder} historyError={historyError} />}
             </div>
           </section>
         }

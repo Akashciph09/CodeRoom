@@ -20,6 +20,7 @@ import type {
   QuestionDetail,
   QuestionDraftInput,
   QuestionSummary,
+  QuestionSubmissionHistory,
   RoomSummary,
   RoomReview,
   RoomView,
@@ -111,8 +112,9 @@ export const api = {
   addRoomTest: (roomId: string, questionId: string, test: AddRoomTestRequest) =>
     request<void>("POST", `/rooms/${roomId}/questions/${questionId}/tests`, test),
   room: (roomId: string) => request<RoomView>("GET", `/rooms/${roomId}`),
-  roomSubmissions: (roomId: string, questionId?: string) =>
-    request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions${questionId ? `?questionId=${encodeURIComponent(questionId)}` : ""}`),
+  roomSubmissions: (roomId: string) => request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions`),
+  questionSubmissions: (roomId: string, questionId: string, before?: string) =>
+    request<QuestionSubmissionHistory>("GET", `/rooms/${roomId}/questions/${questionId}/submissions${before ? `?before=${encodeURIComponent(before)}` : ""}`),
   submission: (submissionId: string) => request<SubmissionView>("GET", `/submissions/${submissionId}`),
   failedHiddenCase: (submissionId: string, testId: string) =>
     request<{ input: string; expectedOutput: string }>("GET", `/submissions/${submissionId}/hidden-tests/${testId}`),
