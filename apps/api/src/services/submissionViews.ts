@@ -5,6 +5,8 @@ import {
   getTableColumns,
   inArray,
   submissions,
+  roomTestCases,
+  roomTestResults,
   testCases,
   testResults,
   type CustomCaseResultRow,
@@ -31,12 +33,19 @@ export async function customResultsFor(submissionIds: string[]): Promise<CustomC
 /** Test results for the given submissions, in the question's test order (test_cases.position). */
 export async function resultsFor(submissionIds: string[]): Promise<TestResultRow[]> {
   if (submissionIds.length === 0) return [];
-  return db
-    .select(getTableColumns(testResults))
-    .from(testResults)
-    .innerJoin(testCases, eq(testCases.id, testResults.testCaseId))
-    .where(inArray(testResults.submissionId, submissionIds))
-    .orderBy(asc(testCases.position));
+  const [bank, room] = await Promise.all([
+    db.select(getTableColumns(testResults))
+      .from(testResults)
+      .innerJoin(testCases, eq(testCases.id, testResults.testCaseId))
+      .where(inArray(testResults.submissionId, submissionIds))
+      .orderBy(asc(testCases.position)),
+    db.select(getTableColumns(roomTestResults))
+      .from(roomTestResults)
+      .innerJoin(roomTestCases, eq(roomTestCases.id, roomTestResults.testCaseId))
+      .where(inArray(roomTestResults.submissionId, submissionIds))
+      .orderBy(asc(roomTestCases.revision)),
+  ]);
+  return [...bank, ...room.map((row) => ({ ...row, memoryKb: null }))];
 }
 
 export async function loadSubmissionWithResults(id: string): Promise<SubmissionWithResults | null> {

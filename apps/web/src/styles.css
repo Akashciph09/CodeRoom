@@ -412,3 +412,10 @@ a.note-jump { font-size: 12px; }
 .interview-summary ul { list-style: none; padding: 0; display: grid; gap: 12px; }
 .interview-summary textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .summary-citations { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+
+.room-test-tools, .room-test-edit { display: grid; gap: 8px; }
+.room-test-edit { min-width: 0; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.room-test-edit label, .room-test-edit details { min-width: 0; }
+.room-test-tools .io > div { min-width: 0; }
+.room-test-tools .code-snapshot { max-height: 10rem; overflow: auto; }
+.room-test-tools p { margin: 0; }

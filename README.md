@@ -28,6 +28,13 @@ The worker checks each case against the generated Python reference in Docker. Th
 those verdicts so you can review and correct the draft before clicking **Mark ready**.
 See [ADR 0019](docs/decisions/0019-ai-question-drafts.md).
 
+## Graded tests during a live interview
+
+On a revealed question, the interviewer can add a room test manually or review three AI suggestions
+in the Testcase tab. Confirm the expected output or supply a trusted Python reference for the worker
+to check. Public additions count on Run and Submit. Hidden additions count on Submit.
+Each submission keeps the test suite it was queued with. See [ADR 0021](docs/decisions/0021-room-test-cases.md).
+
 ## Screenshots
 
 **Interviewer view during a live interview:** the question, the shared editor with the candidate's named cursor, and every test result, hidden ones included. Run/Submit belong to the candidate; the interviewer reveals the next question (Q2 🔒) when ready.

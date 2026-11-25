@@ -46,6 +46,7 @@ export function toCandidateView(s: Submission, results: ResultRow[], custom: Cus
   return {
     submissionId: s.id,
     roomQuestionId: s.roomQuestionId,
+    roomTestRevision: s.roomTestRevision,
     status: s.status,
     mode: s.mode,
     ...(s.overall ? { overall: s.overall } : {}),
@@ -64,6 +65,7 @@ export function toInterviewerView(s: Submission, results: ResultRow[], custom: C
   return {
     submissionId: s.id,
     roomQuestionId: s.roomQuestionId,
+    roomTestRevision: s.roomTestRevision,
     userId: s.userId,
     status: s.status,
     mode: s.mode,

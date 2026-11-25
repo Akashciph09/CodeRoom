@@ -10,6 +10,7 @@ import {
   sql,
   submissions,
   testResults,
+  roomTestResults,
 } from "@coderoom/db";
 import type { RoomCandidate, RoomReview } from "@coderoom/shared";
 import { db } from "../db.js";
@@ -37,18 +38,30 @@ async function candidatesOf(roomIds: string[]) {
 /** Per-submission test counts (hidden included — interviewer-only callers). */
 async function passCounts(submissionIds: string[]) {
   if (submissionIds.length === 0) return new Map<string, { passed: number; total: number; hiddenPassed: number; hiddenTotal: number }>();
-  const rows = await db
+  const count = (table: typeof testResults | typeof roomTestResults) => db
     .select({
-      submissionId: testResults.submissionId,
-      passed: sql<number>`count(*) filter (where ${testResults.verdict} = 'accepted')::int`,
+      submissionId: table.submissionId,
+      passed: sql<number>`count(*) filter (where ${table.verdict} = 'accepted')::int`,
       total: sql<number>`count(*)::int`,
-      hiddenPassed: sql<number>`count(*) filter (where ${testResults.isHidden} and ${testResults.verdict} = 'accepted')::int`,
-      hiddenTotal: sql<number>`count(*) filter (where ${testResults.isHidden})::int`,
+      hiddenPassed: sql<number>`count(*) filter (where ${table.isHidden} and ${table.verdict} = 'accepted')::int`,
+      hiddenTotal: sql<number>`count(*) filter (where ${table.isHidden})::int`,
     })
-    .from(testResults)
-    .where(inArray(testResults.submissionId, submissionIds))
-    .groupBy(testResults.submissionId);
-  return new Map(rows.map((r) => [r.submissionId, r]));
+    .from(table)
+    .where(inArray(table.submissionId, submissionIds))
+    .groupBy(table.submissionId);
+  const [bank, room] = await Promise.all([count(testResults), count(roomTestResults)]);
+  const combined = new Map(bank.map((row) => [row.submissionId, row]));
+  for (const row of room) {
+    const prev = combined.get(row.submissionId);
+    combined.set(row.submissionId, {
+      submissionId: row.submissionId,
+      passed: (prev?.passed ?? 0) + row.passed,
+      total: (prev?.total ?? 0) + row.total,
+      hiddenPassed: (prev?.hiddenPassed ?? 0) + row.hiddenPassed,
+      hiddenTotal: (prev?.hiddenTotal ?? 0) + row.hiddenTotal,
+    });
+  }
+  return combined;
 }
 
 /**

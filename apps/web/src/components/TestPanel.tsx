@@ -38,6 +38,7 @@ export function TestPanel({
   onAddCase,
   onRemoveCase,
   notes,
+  roomTests,
 }: {
   question: CandidateQuestionView;
   /** The room question being viewed — only in multi-question rooms (scopes the results). */
@@ -53,6 +54,7 @@ export function TestPanel({
   onRemoveCase: (id: string) => void;
   /** The interviewer's notes panel. Omitted for candidates: no tab, nothing rendered. */
   notes?: ReactNode;
+  roomTests?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>(ended ? "result" : "cases");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -132,8 +134,9 @@ export function TestPanel({
         )}
       </div>
 
-      {tab === "cases" ? (
-        <div className="pane-body cases">
+      {(tab === "cases" || roomTests) && (
+        <div className="pane-body cases" hidden={tab !== "cases"}>
+          {roomTests}
           <div className="case-tabs" role="group" aria-label="Cases">
             {items.map((item, i) => {
               const selected = !showForm && current?.key === item.key;
@@ -224,11 +227,12 @@ export function TestPanel({
             </p>
           )}
         </div>
-      ) : tab === "result" ? (
+      )}
+      {tab === "result" && (
         <div className="pane-body">
           <ResultsPanel entries={entries} question={roomQuestion} />
         </div>
-      ) : null}
+      )}
       {notes && (
         <div className="pane-body" hidden={tab !== "notes"}>
           {notes}

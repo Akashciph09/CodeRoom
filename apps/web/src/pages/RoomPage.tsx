@@ -8,6 +8,7 @@ import { Presence, RemoteCursorStyles } from "../components/Presence";
 import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { RoomColumns, useRoomLayout } from "../components/RoomLayout";
+import { RoomTests } from "../components/RoomTests";
 import { TestPanel } from "../components/TestPanel";
 import { NotesPanel } from "../components/NotesPanel";
 import { TopBar } from "../components/TopBar";
@@ -163,7 +164,7 @@ export function RoomPage() {
         // Also re-fetch: a reveal whose notification was lost may have landed just before the close, and
         // gateways stop reconciling reveals for ended rooms — this is the last chance to pick it up.
         refreshRoom();
-      } else if (event.type === "room:question_revealed") {
+      } else if (event.type === "room:question_revealed" || event.type === "room:tests_added") {
         refreshRoom();
       } else if (event.type === "submission:queued") {
         setEntries((prev) =>
@@ -418,6 +419,12 @@ export function RoomPage() {
                 <option value="javascript">JavaScript</option>
               </select>
               {notice && <span className="error small">{notice}</span>}
+              {isCandidate && !closed && (active.testRevision ?? 0) > 0 && !entries.some((entry) =>
+                !entry.pending && entry.view.roomQuestionId === active.id && entry.view.mode === "submit"
+                && entry.view.status === "completed" && entry.view.roomTestRevision === active.testRevision
+              ) && (
+                <span className="small" role="status">The interviewer added additional tests. Please resubmit.</span>
+              )}
               {!isCandidate && <span className="muted small">You see every test, including hidden ones.</span>}
             </div>
             {roomDoc && activeText ? (
@@ -472,6 +479,9 @@ export function RoomPage() {
               const index = cases.toArray().findIndex((c) => (c as { id?: unknown })?.id === id);
               if (index >= 0) cases.delete(index, 1);
             }}
+            roomTests={room.role === "interviewer" && !closed && active.revealed ? (
+              <RoomTests key={active.id} roomId={room.roomId} questionId={active.id} tests={active.addedTests ?? []} onAdded={refreshRoom} />
+            ) : undefined}
             notes={
               room.role === "interviewer" ? (
                 <NotesPanel

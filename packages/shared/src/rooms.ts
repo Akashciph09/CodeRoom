@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CandidateQuestionView } from "./questions.js";
+import { RoomTestCase } from "./roomTests.js";
 import { Role } from "./roles.js";
 
 /** Most questions one interview can hold (ADR 0009). */
@@ -104,6 +105,9 @@ export const RoomQuestionView = z.object({
   position: z.number().int().min(1),
   revealed: z.boolean(),
   question: CandidateQuestionView,
+  testRevision: z.number().int().nonnegative().optional(),
+  /** Interviewer only. Public additions are also included in question.publicTests. */
+  addedTests: z.array(RoomTestCase).optional(),
 });
 export type RoomQuestionView = z.infer<typeof RoomQuestionView>;
 

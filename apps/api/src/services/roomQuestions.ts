@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, roomQuestions, rooms, sql, type Db } from "@coderoom/db";
+import { and, asc, eq, isNotNull, lte, roomQuestions, roomTestCases, rooms, sql, type Db } from "@coderoom/db";
 import type { Role, RoomQuestionView } from "@coderoom/shared";
 import { db } from "../db.js";
 import { BadRequest, Conflict, NotFound } from "../errors.js";
@@ -17,6 +17,7 @@ export async function roomQuestionsFor(roomId: string, role: Role): Promise<Room
       position: roomQuestions.position,
       versionId: roomQuestions.questionVersionId,
       revealedAt: roomQuestions.revealedAt,
+      testRevision: roomQuestions.testRevision,
     })
     .from(roomQuestions)
     .where(
@@ -26,12 +27,31 @@ export async function roomQuestionsFor(roomId: string, role: Role): Promise<Room
     )
     .orderBy(asc(roomQuestions.position));
   return Promise.all(
-    rows.map(async (r) => ({
-      id: r.id,
-      position: r.position,
-      revealed: r.revealedAt !== null,
-      question: await candidateView(r.versionId),
-    })),
+    rows.map(async (r) => {
+      const [question, additions] = await Promise.all([
+        candidateView(r.versionId),
+        db.select({ id: roomTestCases.id, input: roomTestCases.input, expectedOutput: roomTestCases.expectedOutput, isHidden: roomTestCases.isHidden })
+          .from(roomTestCases)
+          .where(and(
+            eq(roomTestCases.roomQuestionId, r.id),
+            lte(roomTestCases.revision, r.testRevision),
+            role === "candidate" ? eq(roomTestCases.isHidden, false) : undefined,
+          ))
+          .orderBy(asc(roomTestCases.revision)),
+      ]);
+      const publicTests = [...question.publicTests, ...additions.filter((case_) => !case_.isHidden)
+        .map(({ id, input, expectedOutput }) => ({ id, input, expectedOutput }))];
+      // Revision counts all additions. Candidates need only the aggregate hidden count.
+      const publicAdditions = publicTests.length - question.publicTests.length;
+      return {
+        id: r.id,
+        position: r.position,
+        revealed: r.revealedAt !== null,
+        testRevision: r.testRevision,
+        question: { ...question, publicTests, hiddenTestCount: question.hiddenTestCount + r.testRevision - publicAdditions },
+        ...(role === "interviewer" ? { addedTests: additions } : {}),
+      };
+    }),
   );
 }
 
@@ -96,16 +116,16 @@ export async function revealQuestion(
  * or waits for the close and is then refused — never accepted into an ended room.
  */
 export async function submittableQuestion(tx: Tx, roomId: string, roomQuestionId: string) {
+  // Lock first, then take a fresh statement snapshot of the suite revision after any writer commits.
+  const [room] = await tx.select({ status: rooms.status }).from(rooms).where(eq(rooms.id, roomId)).for("share");
   const [row] = await tx
-    .select({ versionId: roomQuestions.questionVersionId, status: rooms.status })
+    .select({ versionId: roomQuestions.questionVersionId, testRevision: roomQuestions.testRevision })
     .from(roomQuestions)
-    .innerJoin(rooms, eq(rooms.id, roomQuestions.roomId))
     .where(
       and(eq(roomQuestions.id, roomQuestionId), eq(roomQuestions.roomId, roomId), isNotNull(roomQuestions.revealedAt)),
     )
-    .limit(1)
-    .for("share", { of: rooms });
-  if (!row) throw new NotFound("Question not found in this room");
-  if (row.status !== "open") throw new BadRequest("Room is closed");
+    .limit(1);
+  if (!row || !room) throw new NotFound("Question not found in this room");
+  if (room.status !== "open") throw new BadRequest("Room is closed");
   return row;
 }

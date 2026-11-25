@@ -87,6 +87,7 @@ submissionsRouter.post(
         .values({
           roomId: body.roomId,
           roomQuestionId: body.roomQuestionId,
+          roomTestRevision: target.testRevision,
           questionVersionId: target.versionId, // graded against that question's pinned version
           userId,
           language: body.language,

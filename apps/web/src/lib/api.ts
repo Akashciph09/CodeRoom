@@ -1,4 +1,6 @@
 import type {
+  AddRoomTestRequest,
+  RoomTestSuggestions,
   CandidateQuestionView,
   CandidateSubmissionView,
   CreateRoomResponse,
@@ -103,6 +105,10 @@ export const api = {
   revealQuestion: (roomId: string, roomQuestionId: string) =>
     request<{ roomQuestionId: string; revealed: true }>("POST", `/rooms/${roomId}/questions/${roomQuestionId}/reveal`),
   joinRoom: (inviteCode: string) => request<JoinRoomResponse>("POST", "/rooms/join", { inviteCode }),
+  suggestRoomTests: (roomId: string, questionId: string) =>
+    request<RoomTestSuggestions>("POST", `/rooms/${roomId}/questions/${questionId}/tests/suggest`),
+  addRoomTest: (roomId: string, questionId: string, test: AddRoomTestRequest) =>
+    request<void>("POST", `/rooms/${roomId}/questions/${questionId}/tests`, test),
   room: (roomId: string) => request<RoomView>("GET", `/rooms/${roomId}`),
   roomSubmissions: (roomId: string) => request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions`),
   closeRoom: (roomId: string) => request<{ roomId: string; status: "closed" }>("POST", `/rooms/${roomId}/close`),

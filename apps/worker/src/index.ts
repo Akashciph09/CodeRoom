@@ -1,6 +1,6 @@
 import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
-import { asc, createDb, customCaseResults, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
+import { and, asc, lte, roomTestCases, roomTestResults, createDb, customCaseResults, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
 import { EXECUTION_QUEUE, ExecutionJob, QUESTION_VALIDATION_JOB, QuestionValidationJob, roomEventsChannel, type RoomBusEvent } from "@coderoom/shared";
 import { config } from "./config.js";
 import { startOutboxSweeper } from "./outbox.js";
@@ -49,9 +49,14 @@ async function processJob(job: Job) {
     .from(testCases)
     .where(eq(testCases.versionId, submission.questionVersionId)) // the exact version the room pinned
     .orderBy(asc(testCases.position));
-  const selected = tests.filter((t) => submission.mode === "submit" || !t.isHidden);
+  const additions = submission.roomTestRevision === 0 ? [] : await db.select().from(roomTestCases)
+    .where(and(eq(roomTestCases.roomQuestionId, submission.roomQuestionId), lte(roomTestCases.revision, submission.roomTestRevision)))
+    .orderBy(asc(roomTestCases.revision));
+  const included = (test: { isHidden: boolean }) => submission.mode === "submit" || !test.isHidden;
+  const selected = tests.filter(included);
+  const roomSelected = additions.filter(included);
 
-  if (selected.length === 0) {
+  if (selected.length === 0 && roomSelected.length === 0) {
     await db
       .update(submissions)
       .set({ status: "failed", overall: "internal_error" })
@@ -72,20 +77,23 @@ async function processJob(job: Job) {
       cpus: config.SANDBOX_CPUS,
     });
 
-  const results: NewTestResult[] = [];
-  for (const test of selected) {
+  async function grade(test: { id: string; isHidden: boolean; input: string; expectedOutput: string }): Promise<NewTestResult> {
     const out = await run(test.input);
-    results.push({
+    return {
       submissionId,
       testCaseId: test.id,
       isHidden: test.isHidden,
       verdict: judge(out, test.expectedOutput),
       timeMs: out.timeMs,
-      // Never store output for hidden tests (also enforced by a CHECK constraint).
       stdout: test.isHidden ? null : out.stdout,
       stderr: test.isHidden ? null : out.stderr,
-    });
+    };
   }
+
+  const results: NewTestResult[] = [];
+  const roomResults: NewTestResult[] = [];
+  for (const test of selected) results.push(await grade(test));
+  for (const test of roomSelected) roomResults.push(await grade(test));
 
   // Participant-written cases (Run only, ADR 0010): same sandbox, separate results, never in `overall`.
   const customCases = submission.mode === "run" ? (submission.customCases ?? []) : [];
@@ -105,13 +113,15 @@ async function processJob(job: Job) {
   // One transaction: results + final status land together. Delete first so a BullMQ retry is idempotent.
   await db.transaction(async (tx) => {
     await tx.delete(testResults).where(eq(testResults.submissionId, submissionId));
+    await tx.delete(roomTestResults).where(eq(roomTestResults.submissionId, submissionId));
     await tx.delete(customCaseResults).where(eq(customCaseResults.submissionId, submissionId));
-    await tx.insert(testResults).values(results);
+    if (results.length > 0) await tx.insert(testResults).values(results);
+    if (roomResults.length > 0) await tx.insert(roomTestResults).values(roomResults);
     if (customResults.length > 0) await tx.insert(customCaseResults).values(customResults);
     await tx
       .update(submissions)
       // Graded on the question's tests only — custom cases never change the verdict.
-      .set({ status: "completed", overall: overallVerdict(results.map((r) => r.verdict)) })
+      .set({ status: "completed", overall: overallVerdict([...results, ...roomResults].map((r) => r.verdict)) })
       .where(eq(submissions.id, submissionId));
   });
   await finish(submission.roomId, submissionId, "completed");

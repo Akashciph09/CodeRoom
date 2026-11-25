@@ -47,10 +47,11 @@ describe("reveal notifications", () => {
   });
 
   it("the reconciler reports revealed counts from the database for rooms being served", async () => {
-    const counts = [{ roomId: "room-1", revealed: 2 }];
+    const counts = [{ roomId: "room-1", revealed: 2, totalRevision: 3 }];
     const chain = { from: () => chain, where: () => chain, groupBy: async () => counts };
     const db = { select: () => chain } as unknown as Parameters<typeof startRoomStatusReconciler>[0]["db"];
     const onRevealed = vi.fn();
+    const onTestsAdded = vi.fn();
     const reconciler = startRoomStatusReconciler({
       db,
       intervalMs: 60_000,
@@ -58,9 +59,26 @@ describe("reveal notifications", () => {
       onClosed: () => {},
       revealCandidates: () => ["room-1"],
       onRevealed,
+      onTestsAdded,
     });
     await reconciler.tick();
     reconciler.stop();
     expect(onRevealed).toHaveBeenCalledWith("room-1", 2);
+    expect(onTestsAdded).toHaveBeenCalledWith("room-1", 3);
+  });
+
+  it("announces room test updates once without forwarding any case content", async () => {
+    const { sub, publish } = fakeSub();
+    const hub = new RoomEventHub(sub, { onRoomClosed: () => {} });
+    const ws = fakeSocket();
+    hub.add("room-1", ws as unknown as WebSocket, "candidate");
+    publish({ type: "room:tests_added", roomId: "room-1", totalRevision: 1 });
+    await flush();
+    hub.markTestsAdded("room-1", 1);
+    hub.markTestsAdded("room-1", 2); // the reconciler learns of a missed publish
+    expect(ws.sent.filter((event) => event.type === "room:tests_added")).toEqual([
+      { type: "room:tests_added", roomId: "room-1" },
+      { type: "room:tests_added", roomId: "room-1" },
+    ]);
   });
 });

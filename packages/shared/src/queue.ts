@@ -43,6 +43,7 @@ export const RoomBusEvent = z.discriminatedUnion("type", [
    * a reveal only when the count goes up, so the fast path (this event) and the durable path (the
    * reconciler re-reading the DB) never notify a client twice for the same reveal.
    */
+  z.object({ type: z.literal("room:tests_added"), roomId: z.string(), totalRevision: z.number().int().positive() }),
   z.object({ type: z.literal("room:question_revealed"), roomId: z.string(), revealedCount: z.number().int().min(1) }),
 ]);
 export type RoomBusEvent = z.infer<typeof RoomBusEvent>;

@@ -11,3 +11,4 @@ export * from "./notes.js";
 export * from "./evaluations.js";
 export * from "./interviewSummary.js";
 export * from "./questionGeneration.js";
+export * from "./roomTests.js";

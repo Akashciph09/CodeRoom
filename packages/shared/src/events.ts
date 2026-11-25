@@ -32,6 +32,7 @@ export const ServerEvent = z.discriminatedUnion("type", [
     result: z.union([InterviewerSubmissionView, CandidateSubmissionView]),
   }),
   /** The interviewer revealed another question: re-fetch the room (each role gets its own view). */
+  z.object({ type: z.literal("room:tests_added"), roomId: z.string() }),
   z.object({ type: z.literal("room:question_revealed"), roomId: z.string() }),
   /** The interviewer ended the session: the editor is now read-only and no more submissions are accepted. */
   z.object({ type: z.literal("room:closed"), roomId: z.string() }),

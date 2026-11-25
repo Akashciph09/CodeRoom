@@ -73,6 +73,7 @@ export type CreateSubmissionResponse = z.infer<typeof CreateSubmissionResponse>;
 
 /** What a candidate is allowed to see about a submission. No hidden-test detail. */
 export const CandidateSubmissionView = z.object({
+  roomTestRevision: z.number().int().nonnegative().optional(),
   submissionId: z.string(),
   roomQuestionId: z.string(),
   status: SubmissionStatus,
@@ -87,6 +88,7 @@ export type CandidateSubmissionView = z.infer<typeof CandidateSubmissionView>;
 
 /** Interviewer view: every test result, flagged hidden or not. */
 export const InterviewerSubmissionView = z.object({
+  roomTestRevision: z.number().int().nonnegative().optional(),
   submissionId: z.string(),
   roomQuestionId: z.string(),
   userId: z.string(),
