@@ -42,6 +42,12 @@ test("reviewed room tests update candidate grading without exposing hidden input
     await interviewerTests.getByLabel("Room test expected output").fill("0");
     await interviewerTests.getByRole("checkbox", { name: "I confirm the expected output is correct." }).check();
     await interviewerTests.getByRole("button", { name: "Add as public" }).click();
+    await expect(suggestions.getByRole("listitem")).toHaveCount(2);
+    await suggestions.getByRole("button", { name: "Review suggestion 1" }).click();
+    await interviewerTests.getByRole("button", { name: "Discard remaining suggestions" }).click();
+    await expect(suggestions).toHaveCount(0);
+    await expect(interviewerTests.getByLabel("Room test input")).toHaveCount(0);
+    await expect(interviewerTests.getByText("Room additions (2)")).toBeVisible();
 
     await candidateTests.getByRole("tab", { name: "Testcase" }).click();
     await candidateTests.getByRole("button", { name: "Case 3", exact: true }).click();

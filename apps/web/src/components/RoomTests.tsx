@@ -34,6 +34,14 @@ export function RoomTests({ roomId, questionId, tests, onAdded }: {
     setMessage(undefined);
   }
 
+  function discardSuggestions() {
+    setSuggestions([]);
+    if (editing?.suggestionIndex !== undefined) {
+      setEditing(undefined);
+      setConfirmed(false);
+    }
+  }
+
   async function add(isHidden: boolean) {
     if (!editing || busy || full || !editing.expectedOutput.trim() || (!confirmed && !referencePython.trim())) return;
     setBusy("add");
@@ -65,6 +73,11 @@ export function RoomTests({ roomId, questionId, tests, onAdded }: {
         <button type="button" disabled={Boolean(busy) || full || Boolean(editing)} onClick={() => void suggest()}>
           {busy === "suggest" ? "Generating…" : "Suggest test cases"}
         </button>
+        {suggestions.length > 0 && (
+          <button type="button" disabled={Boolean(busy)} onClick={discardSuggestions}>
+            Discard remaining suggestions
+          </button>
+        )}
       </div>
       {full && <p className="muted small">This room question has reached its test limit.</p>}
       {suggestions.length > 0 && (
