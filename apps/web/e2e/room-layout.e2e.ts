@@ -39,6 +39,10 @@ test("panels resize by mouse and keyboard, the editor follows, and the layout is
     await markEditor(page);
     expect(await valueOf(page, "question")).toBe(420);
     expect(await valueOf(page, "test")).toBe(300);
+    // Measure only once the header has its final content: the other participant's avatar arrives over
+    // awareness, and on narrower fonts (Linux CI) it wraps the header onto a second row, which would
+    // shrink the editor by a row after `before` was taken.
+    await expect(page.locator(".presence .avatar")).toHaveCount(2);
     const before = await monacoBox(page);
 
     // Question divider 120 px right: question wider, Monaco narrower by the same amount.
