@@ -16,7 +16,7 @@ Set `ANTHROPIC_API_KEY` in the server's `.env` to use Claude. For a free-tier de
 `AI_SUMMARY_PROVIDER=groq` and `GROQ_API_KEY` using a key from the [GroqCloud Console](https://console.groq.com/keys).
 Restart the API after changing those values. On the interviewer review,
 click **Draft a summary** to generate editable observations and follow-up questions with links
-back to the evidence. The draft lives in the current page. The selected provider receives question titles,
+back to the evidence. Generated drafts are saved privately until discarded. Click **Save edits** to keep wording changes. The selected provider receives question titles,
 run results, notes, and saved rubric dimensions. See [ADR 0018](docs/decisions/0018-ai-interview-summary.md)
 for the provider and data boundaries. The smoke suite uses an injected fake model.
 
