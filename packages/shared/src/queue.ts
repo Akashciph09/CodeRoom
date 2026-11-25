@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Language } from "./languages.js";
 import { SubmissionMode } from "./submissions.js";
+import { Verdict } from "./verdicts.js";
 
 export const EXECUTION_QUEUE = "execution";
 
@@ -9,6 +10,23 @@ export const ExecutionJob = z.object({
   submissionId: z.string().min(1),
 });
 export type ExecutionJob = z.infer<typeof ExecutionJob>;
+
+export const HIDDEN_CASE_REPLAY_JOB = "hidden-case-replay";
+export const HiddenCaseReplayJob = z.object({
+  submissionId: z.string().uuid(),
+  testId: z.string().uuid(),
+  requestId: z.string().uuid(),
+  expiresAt: z.number().int().positive(),
+});
+export type HiddenCaseReplayJob = z.infer<typeof HiddenCaseReplayJob>;
+export const hiddenCaseReplayChannel = (requestId: string) => `replay:hidden-case:${requestId}`;
+
+export const HiddenCaseReplayResult = z.object({
+  stdout: z.string(),
+  stderr: z.string(),
+  verdict: Verdict,
+});
+export type HiddenCaseReplayResult = z.infer<typeof HiddenCaseReplayResult>;
 
 /** Job options used by every producer (API and the worker's outbox sweeper). */
 export const EXECUTION_JOB_OPTIONS = {

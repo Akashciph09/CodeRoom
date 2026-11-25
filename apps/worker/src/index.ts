@@ -1,7 +1,8 @@
 import { Queue, UnrecoverableError, Worker, type Job } from "bullmq";
 import { Redis } from "ioredis";
-import { and, asc, lte, roomTestCases, roomTestResults, createDb, customCaseResults, eq, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
+import { and, asc, lte, roomTestCases, roomTestResults, createDb, customCaseResults, eq, failedHiddenCaseFor, submissions, testCases, testResults, type NewTestResult } from "@coderoom/db";
 import { EXECUTION_QUEUE, ExecutionJob, QUESTION_VALIDATION_JOB, QuestionValidationJob, roomEventsChannel, type RoomBusEvent } from "@coderoom/shared";
+import { HIDDEN_CASE_REPLAY_JOB, HiddenCaseReplayJob, hiddenCaseReplayChannel, type HiddenCaseReplayResult } from "@coderoom/shared";
 import { config } from "./config.js";
 import { startOutboxSweeper } from "./outbox.js";
 import { runInSandbox } from "./sandbox/runner.js";
@@ -37,6 +38,7 @@ async function validateQuestionDraft(data: unknown) {
 
 async function processJob(job: Job) {
   if (job.name === QUESTION_VALIDATION_JOB) return validateQuestionDraft(job.data);
+  if (job.name === HIDDEN_CASE_REPLAY_JOB) return replayHiddenCase(job.data);
   const { submissionId } = ExecutionJob.parse(job.data);
 
   const [submission] = await db.select().from(submissions).where(eq(submissions.id, submissionId)).limit(1);
@@ -127,12 +129,39 @@ async function processJob(job: Job) {
   await finish(submission.roomId, submissionId, "completed");
 }
 
+async function replayHiddenCase(data: unknown) {
+  const { submissionId, testId, requestId, expiresAt } = HiddenCaseReplayJob.parse(data);
+  if (Date.now() >= expiresAt) return;
+  const [submission] = await db.select().from(submissions).where(eq(submissions.id, submissionId));
+  if (submission?.mode !== "submit" || submission.status !== "completed") return;
+  const test = await failedHiddenCaseFor(db, submission, testId);
+  if (!test || Date.now() >= expiresAt) return;
+
+  const output = await runInSandbox({
+    language: submission.language,
+    code: submission.code,
+    stdin: test.input,
+    timeoutMs: config.SANDBOX_TIMEOUT_MS,
+    memoryMb: config.SANDBOX_MEMORY_MB,
+    cpus: config.SANDBOX_CPUS,
+  });
+  if (Date.now() < expiresAt) {
+    const replay: HiddenCaseReplayResult = { stdout: output.stdout, stderr: output.stderr, verdict: judge(output, test.expectedOutput) };
+    // Pub/sub sends output directly to the waiting API without storing it or returning it to BullMQ.
+    await publisher.publish(hiddenCaseReplayChannel(requestId), JSON.stringify(replay));
+  }
+}
+
 const worker = new Worker(EXECUTION_QUEUE, processJob, {
   connection,
   concurrency: config.WORKER_CONCURRENCY,
 });
 
 worker.on("failed", async (job, err) => {
+  if (job?.name === HIDDEN_CASE_REPLAY_JOB) {
+    console.error(`hidden case replay job ${job.id} failed`);
+    return;
+  }
   if (job?.name === QUESTION_VALIDATION_JOB) {
     console.error(`question validation job ${job.id} failed`);
     return;

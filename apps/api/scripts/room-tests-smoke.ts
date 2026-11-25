@@ -112,6 +112,12 @@ try {
     inspected.status === 200 && inspected.json.input === hiddenInput && inspected.json.expectedOutput === hidden.expectedOutput
     && !Object.hasOwn(inspected.json, "stdout") && !Object.hasOwn(inspected.json, "stderr")
     && deniedCandidate.status === 403 && deniedOutsider.status === 403 && beforeAddition.status === 404 && passed.status === 404);
+  const replay = await call("POST", `${inspection}/replay`, interviewer, undefined, base);
+  const replayDenied = await call("POST", `${inspection}/replay`, candidate, undefined, base);
+  const afterReplay = await call("GET", failed.resultPath, candidate, undefined, base);
+  check("replay runs the pinned case privately without changing the original result",
+    replay.status === 200 && replay.json.stdout.trim() === "-12345" && replay.json.verdict === "wrong_answer"
+    && replayDenied.status === 403 && JSON.stringify(afterReplay.json) === JSON.stringify(failed.result));
   const review = await call("GET", `${roomPath}/review`, interviewer, undefined, base);
   check("review counts added tests on the new submission", review.json.candidates[0].submissions.some(
     (entry: { submissionId: string; total: number }) => entry.submissionId === laterSubmit.submissionId

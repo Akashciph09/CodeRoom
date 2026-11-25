@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import type { InterviewerSubmissionView, Verdict } from "@coderoom/shared";
+import type { HiddenCaseReplayResult, InterviewerSubmissionView, Verdict } from "@coderoom/shared";
 import { api, isInterviewerView, type SubmissionView } from "../lib/api";
 import { attemptMetadata, type SubmissionEntry } from "../lib/submissions";
 import { VERDICT_LABEL } from "../lib/verdicts";
@@ -165,15 +165,23 @@ function SubmissionDetails({ view }: { view: SubmissionView }) {
 }
 
 function HiddenResults({ view }: { view: InterviewerSubmissionView }) {
-  const [expandedId, setExpandedId] = useState<string>();
+  const [expandedIds, setExpandedIds] = useState(() => new Set<string>());
   const hidden = view.results.filter((result) => result.hidden);
   if (!hidden.length) return null;
+
+  function toggleCase(testId: string) {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (!next.delete(testId)) next.add(testId);
+      return next;
+    });
+  }
 
   return (
     <table className="tests" aria-label="Hidden test results">
       <tbody>
         {hidden.map((result, index) => {
-          const expanded = expandedId === result.testId;
+          const expanded = expandedIds.has(result.testId);
           return (
             <Fragment key={result.testId}>
               <tr>
@@ -183,7 +191,7 @@ function HiddenResults({ view }: { view: InterviewerSubmissionView }) {
                 <td>{result.verdict !== "accepted" && (
                   <button type="button" className="link" aria-expanded={expanded}
                     aria-label={`${expanded ? "Hide" : "Inspect"} hidden case ${index + 1}`}
-                    onClick={() => setExpandedId(expanded ? undefined : result.testId)}>
+                    onClick={() => toggleCase(result.testId)}>
                     {expanded ? "Hide details" : "Inspect"}
                   </button>
                 )}</td>
@@ -202,6 +210,22 @@ function HiddenResults({ view }: { view: InterviewerSubmissionView }) {
 function HiddenCaseDetails({ submissionId, testId }: { submissionId: string; testId: string }) {
   const [details, setDetails] = useState<{ input: string; expectedOutput: string }>();
   const [error, setError] = useState(false);
+  const [replay, setReplay] = useState<HiddenCaseReplayResult>();
+  const [replaying, setReplaying] = useState(false);
+  const [replayError, setReplayError] = useState<string>();
+
+  async function runReplay() {
+    setReplaying(true);
+    setReplay(undefined);
+    setReplayError(undefined);
+    try {
+      setReplay(await api.replayHiddenCase(submissionId, testId));
+    } catch (error) {
+      setReplayError(error instanceof Error ? error.message : "Couldn’t replay this case.");
+    } finally {
+      setReplaying(false);
+    }
+  }
   useEffect(() => {
     let active = true;
     api.failedHiddenCase(submissionId, testId).then((test) => {
@@ -215,9 +239,20 @@ function HiddenCaseDetails({ submissionId, testId }: { submissionId: string; tes
   if (error) return <p role="alert" className="error small">Couldn’t load this case. Close it and try again.</p>;
   if (!details) return <p role="status" className="muted small">Loading case…</p>;
   return (
-    <div className="hidden-case-details">
-      <div><span className="case-label">Input</span><pre className="case-box" aria-label="Hidden case input">{details.input}</pre></div>
-      <div><span className="case-label">Expected output</span><pre className="case-box" aria-label="Hidden case expected output">{details.expectedOutput}</pre></div>
-    </div>
+    <>
+      <div className="hidden-case-details">
+        <div><span className="case-label">Input</span><pre className="case-box" aria-label="Hidden case input">{details.input}</pre></div>
+        <div><span className="case-label">Expected output</span><pre className="case-box" aria-label="Hidden case expected output">{details.expectedOutput}</pre></div>
+      </div>
+      <button type="button" className="link" onClick={runReplay} disabled={replaying}>{replaying ? "Replaying…" : "Replay case"}</button>
+      {replayError && <p role="alert" className="error small">{replayError}</p>}
+      {replay && (
+        <div className="hidden-case-details" aria-label="Sandbox replay">
+          <div><span className="case-label">Candidate output from replay</span><pre className="case-box" aria-label="Candidate output from replay">{replay.stdout || "No output"}</pre></div>
+          {replay.stderr && <div><span className="case-label">Replay error output</span><pre className="case-box">{replay.stderr}</pre></div>}
+          <div><span className="case-label">Replay verdict </span><VerdictBadge verdict={replay.verdict} /></div>
+        </div>
+      )}
+    </>
   );
 }

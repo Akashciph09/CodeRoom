@@ -22,3 +22,9 @@ The room event carries only a revision. The reconciler and reconnect fetch recov
 The candidate is asked to resubmit when a question's tests are newer than their completed Submit.
 Using Yjs for additions would disclose hidden input, and changing the pinned bank version would
 affect other interviews or invalidate their historical results.
+
+Room interviewers can replay a failed hidden case using the stored submission and its pinned
+test suite. The API authorizes and rate-limits the request before queueing it. The worker uses the
+grading sandbox and sends the replay output over a request-specific Redis channel to the waiting
+API. The replay leaves the original result intact and stores no hidden output in Postgres or the
+queue. A nondeterministic submission can produce different output on replay.

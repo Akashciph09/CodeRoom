@@ -9,6 +9,7 @@ import type {
   EvaluationDraftInput,
   EvaluationView,
   InterviewerSubmissionView,
+  HiddenCaseReplayResult,
   InterviewSummaryDraft,
   EditSummaryDraftRequest,
   JoinRoomResponse,
@@ -115,6 +116,8 @@ export const api = {
   submission: (submissionId: string) => request<SubmissionView>("GET", `/submissions/${submissionId}`),
   failedHiddenCase: (submissionId: string, testId: string) =>
     request<{ input: string; expectedOutput: string }>("GET", `/submissions/${submissionId}/hidden-tests/${testId}`),
+  replayHiddenCase: (submissionId: string, testId: string) =>
+    request<HiddenCaseReplayResult>("POST", `/submissions/${submissionId}/hidden-tests/${testId}/replay`),
   closeRoom: (roomId: string) => request<{ roomId: string; status: "closed" }>("POST", `/rooms/${roomId}/close`),
   submit: (body: CreateSubmissionRequest, idempotencyKey: string) =>
     request<CreateSubmissionResponse>("POST", "/submissions", body, { "idempotency-key": idempotencyKey }),

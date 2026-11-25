@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import { and, eq, submissions, type Submission } from "@coderoom/db";
+import { and, eq, failedHiddenCaseFor, submissions, type Submission } from "@coderoom/db";
 import {
   CreateSubmissionRequest,
   roomEventsChannel,
@@ -9,11 +9,11 @@ import {
 import { requireRoomRole } from "../auth.js";
 import { config } from "../config.js";
 import { db } from "../db.js";
-import { asyncHandler, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
-import { enqueueExecution, redis } from "../queue.js";
+import { asyncHandler, HttpError, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
+import { enqueueExecution, redis, replayHiddenCase } from "../queue.js";
 import { submittableQuestion } from "../services/roomQuestions.js";
-import { enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
-import { failedHiddenCaseFor, loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
+import { enforceReplayRateLimit, enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
+import { loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
 import { UuidParam } from "./params.js";
 
 export const submissionsRouter: Router = Router();
@@ -134,18 +134,35 @@ submissionsRouter.post(
   }),
 );
 
+async function inspectableHiddenCase(params: Record<string, string>, userId: string) {
+  const id = UuidParam.parse(params.id);
+  const testId = UuidParam.parse(params.testId);
+  const [submission] = await db.select().from(submissions).where(eq(submissions.id, id));
+  if (!submission) throw new NotFound();
+  await requireRoomRole(submission.roomId, userId, "interviewer");
+  if (submission.mode !== "submit" || submission.status !== "completed") throw new NotFound();
+  const test = await failedHiddenCaseFor(db, submission, testId);
+  if (!test) throw new NotFound();
+  return { id, testId, test };
+}
+
 submissionsRouter.get(
   "/:id/hidden-tests/:testId",
   asyncHandler(async (req, res) => {
-    const id = UuidParam.parse(req.params.id);
-    const testId = UuidParam.parse(req.params.testId);
-    const [submission] = await db.select().from(submissions).where(eq(submissions.id, id));
-    if (!submission) throw new NotFound();
-    await requireRoomRole(submission.roomId, req.user!.userId, "interviewer");
-    if (submission.mode !== "submit" || submission.status !== "completed") throw new NotFound();
-    const test = await failedHiddenCaseFor(submission, testId);
-    if (!test) throw new NotFound();
+    const { test } = await inspectableHiddenCase(req.params, req.user!.userId);
     res.setHeader("Cache-Control", "private, no-store").json(test);
+  }),
+);
+
+submissionsRouter.post(
+  "/:id/hidden-tests/:testId/replay",
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.userId;
+    const { id, testId } = await inspectableHiddenCase(req.params, userId);
+    await enforceReplayRateLimit(userId);
+    const result = await replayHiddenCase(id, testId);
+    if (!result) throw new HttpError(503, "Replay unavailable. Try again.");
+    res.setHeader("Cache-Control", "private, no-store").json(result);
   }),
 );
 

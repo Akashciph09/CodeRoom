@@ -53,7 +53,15 @@ test("history opens one snapshot and incoming Submits leave the interviewer on t
     await selectedSubmission(iv).getByRole("button", { name: "Inspect hidden case 1", exact: true }).click();
     await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveText("-5 5");
     await expect(selectedSubmission(iv).getByLabel("Hidden case expected output")).toHaveText("0");
+    await selectedSubmission(iv).getByRole("button", { name: "Inspect hidden case 2", exact: true }).click();
+    await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveCount(2);
+    await selectedSubmission(iv).getByRole("button", { name: "Replay case", exact: true }).first().click();
+    await expect(selectedSubmission(iv).getByLabel("Candidate output from replay")).toHaveText("-111");
+    await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveCount(2);
     await selectedSubmission(iv).getByRole("button", { name: "Hide hidden case 1", exact: true }).click();
+    await expect(selectedSubmission(iv).getByRole("button", { name: "Hide hidden case 2", exact: true })).toBeVisible();
+    await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveCount(1);
+    await selectedSubmission(iv).getByRole("button", { name: "Hide hidden case 2", exact: true }).click();
     await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveCount(0);
     await selectedSubmission(iv).getByText("Submitted code", { exact: true }).click();
     await expect(selectedSubmission(iv).locator(".code-snapshot")).toHaveText(original);
