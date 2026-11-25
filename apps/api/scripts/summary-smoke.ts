@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { emptyDimensions, InterviewSummary } from "@coderoom/shared";
+import { emptyDimensions, InterviewSummaryDraft } from "@coderoom/shared";
 import { createApp } from "../src/app.js";
 import { call, check, finish, QUESTION_ID, signUp, sleep, userIdOf } from "./lib.js";
 
@@ -27,7 +27,8 @@ try {
   await call("POST", "/rooms/join", candidate, { inviteCode: room.inviteCode }, base);
 
   const unauth = await call("POST", endpoint, undefined, undefined, base);
-  const denied = await Promise.all([candidate, outsider].map((token) => call("POST", endpoint, token, undefined, base)));
+  const denied = await Promise.all([candidate, outsider].flatMap((token) =>
+    ["GET", "POST", "PUT", "DELETE"].map((method) => call(method, endpoint, token, undefined, base))));
   check("summary requires authentication and the room interviewer role", unauth.status === 401 && denied.every((r) => r.status === 403) && !prompt);
   const empty = await call("POST", endpoint, interviewer, undefined, base);
   check("empty review skips model", empty.status === 422 && !prompt);
@@ -72,7 +73,7 @@ try {
     { section: "difficulties", text: "Invented source", citations: [noteRef, "note-other-room"] },
   ] };
   const result = await call("POST", endpoint, interviewer, undefined, base);
-  const parsed = InterviewSummary.safeParse(result.json);
+  const parsed = InterviewSummaryDraft.safeParse(result.json);
   check("only room-scoped cited observations are returned",
     result.status === 200 && parsed.success && parsed.data.items.length === 3
     && parsed.data.items[0]?.citations[0]?.anchor === noteRef && result.headers.get("cache-control") === "no-store");
@@ -81,7 +82,27 @@ try {
     && prompt.includes('"overall":"accepted"') && prompt.includes(rubricRef)
     && !prompt.includes(injection) && !prompt.includes("strong_hire"));
 
+  if (!parsed.success) throw new Error("Generated draft missing");
+  const { revision, items } = parsed.data;
+  const loaded = await call("GET", endpoint, interviewer, undefined, base);
+  check("saved draft is retrieved in a separate request",
+    loaded.status === 200 && JSON.stringify(loaded.json) === JSON.stringify(result.json));
+
   output = "not a summary";
+  const existing = await call("POST", endpoint, interviewer, undefined, base);
+  check("generating again returns the existing draft", existing.status === 200 && existing.json.revision === revision);
+
+  const texts = items.map((item, i) => i === 0 ? "Reviewed the input format." : item.text);
+  const edit = await call("PUT", endpoint, interviewer, { revision, texts }, base);
+  const updated = InterviewSummaryDraft.parse(edit.json);
+  check("editing saves text with the original citations",
+    edit.status === 200 && updated.items[0]?.text === texts[0] && updated.items[0]?.citations[0]?.anchor === noteRef);
+  const stale = await call("DELETE", endpoint, interviewer, { revision }, base);
+  check("a stale tab cannot discard a newer draft", stale.status === 409);
+  const discarded = await call("DELETE", endpoint, interviewer, { revision: updated.revision }, base);
+  const afterDiscard = await call("GET", endpoint, interviewer, undefined, base);
+  check("discard clears the persisted draft", discarded.status === 204 && afterDiscard.status === 200 && afterDiscard.json === null);
+
   const invalid = await call("POST", endpoint, interviewer, undefined, base);
   check("malformed model response is rejected", invalid.status === 502);
 } finally {

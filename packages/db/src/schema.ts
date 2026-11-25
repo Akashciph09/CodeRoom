@@ -16,7 +16,7 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { authUsers } from "drizzle-orm/supabase";
-import { Language, Recommendation, Role, RubricDimension, SubmissionMode, SubmissionStatus, Verdict } from "@coderoom/shared";
+import { Language, Recommendation, Role, RubricDimension, SubmissionMode, SubmissionStatus, Verdict, type InterviewSummary } from "@coderoom/shared";
 
 /*
  * Every table has RLS enabled with NO policies: Supabase's public API (anon / authenticated roles)
@@ -281,6 +281,18 @@ export const customCaseResults = pgTable(
     stderr: text("stderr"),
   },
   (t) => [primaryKey({ columns: [t.submissionId, t.position] })],
+).enableRLS();
+
+/** Private summary drafts. A null summary retains the revision after discard. */
+export const interviewSummaryDrafts = pgTable(
+  "interview_summary_drafts",
+  {
+    roomId: uuid("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id").notNull().references(() => authUsers.id, { onDelete: "cascade" }),
+    summary: jsonb("summary").$type<InterviewSummary>(),
+    revision: integer("revision").notNull().default(1),
+  },
+  (t) => [primaryKey({ columns: [t.roomId, t.authorId] })],
 ).enableRLS();
 
 /**

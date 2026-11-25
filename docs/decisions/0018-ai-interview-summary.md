@@ -22,8 +22,11 @@ or hiring recommendations.
 The service requests [structured JSON](https://platform.claude.com/docs/en/build-with-claude/structured-outputs),
 validates model output, and drops bullets with missing or unknown citations. Citation
 labels and anchors come from server-loaded evidence. A valid citation identifies a source the
-interviewer can verify. The feature stores no AI output, and interviewers can edit or discard the
-draft in the review page.
+interviewer can verify. The generated draft is saved privately per room and interviewer. The author can save edits or discard
+the draft in the review page. Edits change only the text, so citations remain server-authored.
+Revision checks prevent a stale request from overwriting edits or restoring a discarded draft.
+If evidence disappears, Review flags the affected item and disables its missing citation link.
+The saved wording remains available for the interviewer to review.
 
 Model calls happen on demand, with a per-interviewer rate limit, an input budget, and a timeout.
 Tests inject a fake model. Production keys are server-only and optional, so the rest of the app
@@ -33,5 +36,5 @@ works without an AI provider configured.
 
 - Sending raw code would add prompt-injection exposure and provider data sharing without being
   necessary for summarizing test results and interviewer observations.
-- Persisting or automatically generating summaries would retain unreviewed AI output and incur calls
-  before an interviewer requests them.
+- Browser-only drafts disappear when the page closes. Server-side drafts survive navigation and reloads.
+  Generation still requires a request from the interviewer.
