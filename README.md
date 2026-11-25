@@ -28,6 +28,11 @@ The worker checks each case against the generated Python reference in Docker. Th
 those verdicts so you can review and correct the draft before clicking **Mark ready**.
 See [ADR 0019](docs/decisions/0019-ai-question-drafts.md).
 
+For an existing question, use **Suggest missing tests** in the test editor. Supply a Python
+reference solution, review the checked suggestions, then add the passing cases you select.
+Save the draft and use **Mark ready** when it is ready for new rooms.
+See [ADR 0020](docs/decisions/0020-ai-test-suggestions.md).
+
 ## Screenshots
 
 **Interviewer view during a live interview:** the question, the shared editor with the candidate's named cursor, and every test result, hidden ones included. Run/Submit belong to the candidate; the interviewer reveals the next question (Q2 🔒) when ready.

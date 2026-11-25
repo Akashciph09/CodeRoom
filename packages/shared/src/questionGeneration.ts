@@ -33,9 +33,27 @@ export type GeneratedQuestion = z.infer<typeof GeneratedQuestion>;
 
 export const QuestionValidationJob = z.object({
   referencePython: ReferenceSolution,
-  tests: z.array(GeneratedTest).min(2).max(MAX_GENERATED_TESTS),
+  tests: z.array(GeneratedTest).min(1).max(MAX_GENERATED_TESTS),
   expiresAt: z.number().int().positive(),
 }).strict();
 export type QuestionValidationJob = z.infer<typeof QuestionValidationJob>;
 
-export const QuestionValidationResult = z.array(Verdict).min(2).max(MAX_GENERATED_TESTS);
+export const QuestionValidationResult = z.array(Verdict).min(1).max(MAX_GENERATED_TESTS);
+
+export const MAX_SUGGESTED_TESTS = 5;
+
+export const SuggestTestsRequest = z.object({
+  revision: z.number().int().positive(),
+  referencePython: ReferenceSolution,
+}).strict();
+export type SuggestTestsRequest = z.infer<typeof SuggestTestsRequest>;
+
+export const SuggestedTests = z.object({
+  tests: z.array(GeneratedTest.omit({ isHidden: true })).max(MAX_SUGGESTED_TESTS),
+}).strict();
+
+export const CheckedTestSuggestion = GeneratedTest.extend({
+  isHidden: z.literal(true),
+  verdict: Verdict,
+});
+export type CheckedTestSuggestion = z.infer<typeof CheckedTestSuggestion>;

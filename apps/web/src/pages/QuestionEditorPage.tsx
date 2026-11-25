@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { MAX_TESTS_PER_QUESTION } from "@coderoom/shared";
 import type {
   CandidateQuestionView,
   Language,
@@ -7,9 +8,11 @@ import type {
   QuestionDetail,
   QuestionDraftInput,
   QuestionVersionView,
+  TestCaseInput,
 } from "@coderoom/shared";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { VERDICT_LABEL } from "../lib/verdicts";
+import { TestSuggestions } from "../components/TestSuggestions";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError, isDraftConflict, publishProblemsOf } from "../lib/api";
 
@@ -140,6 +143,17 @@ export function QuestionEditorPage() {
       tests.splice(i + delta, 0, row!);
       return { ...f, tests };
     });
+
+  function addSuggestedTests(tests: TestCaseInput[]) {
+    setForm((current) => {
+      if (!current) return current;
+      const existing = new Set(current.tests.map((test) => test.input));
+      const extra = tests.filter((test) => !existing.has(test.input))
+        .slice(0, Math.max(0, MAX_TESTS_PER_QUESTION - current.tests.length))
+        .map((test) => ({ ...newRow(true), input: test.input, expectedOutput: test.expectedOutput }));
+      return { ...current, tests: [...current.tests, ...extra] };
+    });
+  }
 
   /** Run an action with shared busy/error handling. `lock` makes the form read-only meanwhile. */
   async function run(action: () => Promise<void>, opts: { lock?: boolean } = {}) {
@@ -476,6 +490,15 @@ export function QuestionEditorPage() {
                 <button onClick={() => update({ tests: [...form.tests, newRow(false)] })}>Add public test</button>
                 <button onClick={() => update({ tests: [...form.tests, newRow(true)] })}>Add hidden test</button>
               </div>
+              {form.tests.length < MAX_TESTS_PER_QUESTION && (
+                <TestSuggestions
+                  key={`${questionId}-${detail.revision}`}
+                  questionId={questionId}
+                  revision={detail.revision}
+                  disabled={busy || dirty || conflict || !form.statement.trim()}
+                  onAdd={addSuggestedTests}
+                />
+              )}
             </section>
 
             <section className="danger-zone">
