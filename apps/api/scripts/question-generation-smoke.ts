@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
-import { CandidateQuestionView, QuestionDetail } from "@coderoom/shared";
+import { CandidateQuestionView, CheckedTestSuggestion, QuestionDetail } from "@coderoom/shared";
 import { createApp } from "../src/app.js";
 import { call, check, finish, signUp } from "./lib.js";
 
@@ -8,6 +8,7 @@ const brief = "Entry-level arithmetic, ten minutes";
 const statement = "Read one integer and print twice its value.";
 const referencePython = "print(2 * int(input()))";
 let calls = 0;
+let suggestionEvidence = "";
 const server = createApp(undefined, async (input) => {
   calls++;
   if (input !== brief) throw new Error("Unexpected brief");
@@ -22,6 +23,15 @@ const server = createApp(undefined, async (input) => {
       { input: "-2\n", expectedOutput: "4", isHidden: true },
     ],
   };
+}, async (evidence) => {
+  suggestionEvidence = evidence;
+  return { tests: [
+    { input: "3\n", expectedOutput: "6" },
+    { input: "-2\n", expectedOutput: "-4" },
+    { input: "0\n", expectedOutput: "0" },
+    { input: "0\n", expectedOutput: "1" },
+    { input: "100\n", expectedOutput: "199" },
+  ] };
 }).listen(0, "127.0.0.1");
 await once(server, "listening");
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -78,10 +88,30 @@ try {
     starterCode,
     tests: tests.map(({ input, expectedOutput, isHidden }) => ({ input, expectedOutput, isHidden })),
   }, base);
-  const newDraft = QuestionDetail.parse(titleEdit.json).draft;
+  const revised = QuestionDetail.parse(titleEdit.json);
+  const newDraft = revised.draft;
   check("a title-only edit of a ready question keeps its unchanged reference check",
     titleEdit.status === 200 && newDraft?.tests[0]?.referenceVerdict === "accepted"
     && !newDraft?.tests[1]?.referenceVerdict);
+
+  const suggestionPath = `${path}/test-suggestions`;
+  const suggestionInput = { revision: revised.revision, referencePython };
+  const deniedSuggestions = await call("POST", suggestionPath, other, suggestionInput, base);
+  const staleSuggestions = await call("POST", suggestionPath, owner, { ...suggestionInput, revision: published.revision }, base);
+  check("only the owner on the current revision can ask for suggestions",
+    deniedSuggestions.status === 404 && staleSuggestions.status === 409 && !suggestionEvidence);
+
+  const suggestionResult = await call("POST", suggestionPath, owner, suggestionInput, base);
+  const suggestions = CheckedTestSuggestion.array().parse(suggestionResult.json.suggestions);
+  check("suggestions deduplicate public, hidden and repeated inputs and check the rest in the worker",
+    suggestionResult.status === 200 && suggestions.length === 2
+    && suggestions[0]?.input === "0\n" && suggestions[0]?.verdict === "accepted"
+    && suggestions[1]?.input === "100\n" && suggestions[1]?.verdict === "wrong_answer");
+  check("the model receives public examples without the reference or existing hidden inputs",
+    suggestionEvidence.includes("3\\n") && !suggestionEvidence.includes("-2\\n") && !suggestionEvidence.includes(referencePython));
+  const afterSuggestions = QuestionDetail.parse((await call("GET", path, owner, undefined, base)).json);
+  check("requesting test suggestions does not change the saved question",
+    afterSuggestions.revision === revised.revision && afterSuggestions.draft?.tests.length === 2);
 } finally {
   server.close();
 }

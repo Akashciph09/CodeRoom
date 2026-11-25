@@ -1,5 +1,7 @@
 import type {
   CandidateQuestionView,
+  CheckedTestSuggestion,
+  SuggestTestsRequest,
   CandidateSubmissionView,
   CreateRoomResponse,
   CreateSubmissionRequest,
@@ -112,6 +114,8 @@ export const api = {
   // Question authoring (owner-only except `questions`)
   myQuestions: () => request<MyQuestionSummary[]>("GET", "/questions/mine"),
   question: (id: string) => request<QuestionDetail>("GET", `/questions/${id}`),
+  suggestQuestionTests: (id: string, input: SuggestTestsRequest) =>
+    request<{ suggestions: CheckedTestSuggestion[] }>("POST", `/questions/${id}/test-suggestions`, input),
   generateQuestion: (brief: string) => request<QuestionDetail>("POST", "/questions/generate", { brief }),
   createQuestion: (title?: string) => request<QuestionDetail>("POST", "/questions", title ? { title } : {}),
   saveDraft: (id: string, draft: QuestionDraftInput) => request<QuestionDetail>("PUT", `/questions/${id}/draft`, draft),

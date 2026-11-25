@@ -412,3 +412,8 @@ a.note-jump { font-size: 12px; }
 .interview-summary ul { list-style: none; padding: 0; display: grid; gap: 12px; }
 .interview-summary textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 .summary-citations { display: flex; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+
+.test-suggestions form { display: grid; gap: 10px; margin-top: 10px; }
+.test-suggestions form > button { justify-self: start; }
+.test-suggestions .io { min-width: 0; }
+.test-suggestions .io > div { min-width: 0; }
