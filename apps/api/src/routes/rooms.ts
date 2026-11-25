@@ -291,16 +291,19 @@ roomsRouter.get(
     const userId = req.user!.userId;
     const role = await requireRoomRole(roomId, userId);
 
-    const rows = await db
-      .select()
-      .from(submissions)
-      .where(
-        role === "interviewer"
-          ? eq(submissions.roomId, roomId)
-          : and(eq(submissions.roomId, roomId), eq(submissions.userId, userId)),
-      )
-      .orderBy(desc(submissions.createdAt))
-      .limit(50);
+    const questionId = UuidParam.optional().parse(req.query.questionId);
+    const scope = and(
+      eq(submissions.roomId, roomId),
+      role === "candidate" ? eq(submissions.userId, userId) : undefined,
+      questionId ? eq(submissions.roomQuestionId, questionId) : undefined,
+    );
+    const recent = (limit: number, mode?: "run" | "submit") => db.select().from(submissions)
+      .where(and(scope, mode ? eq(submissions.mode, mode) : undefined))
+      .orderBy(desc(submissions.createdAt), desc(submissions.id))
+      .limit(limit);
+    // A busy question's Runs must never push another question's latest Run or Submit out of the room UI.
+    const rows = questionId ? (await Promise.all([recent(50, "run"), recent(50, "submit")])).flat()
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id)) : await recent(50);
 
     const ids = rows.map((r) => r.id);
     const [results, custom] = await Promise.all([resultsFor(ids), customResultsFor(ids)]);

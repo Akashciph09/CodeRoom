@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { expectUnchanged, replaceCode, results, startInterview } from "./helpers";
+import { editorTab, selectedSubmission, testResultTab, expectUnchanged, replaceCode, results, startInterview } from "./helpers";
 
 /*
  * Shared custom test cases and the interview timer (ADR 0010).
@@ -53,6 +53,7 @@ test("both participants add test cases, see each other's, and the candidate runs
       await expect(card.getByLabel("Custom 2 output")).toHaveText("15");
       await expect(card.locator("table.custom-results")).toContainText("Ran"); // no expected output → just ran
 
+      await testResultTab(iv).click();
       const ivCard = results(iv).first();
       await expect(ivCard.getByLabel("Custom 2 output")).toHaveText("15");
     });
@@ -69,9 +70,9 @@ test("both participants add test cases, see each other's, and the candidate runs
       await expect(caseButton(iv, "Custom 2")).toHaveCount(0); // …so this absence means removed
 
       await cd.getByRole("button", { name: "Submit" }).click();
-      await expect(results(cd)).toHaveCount(2);
-      await expect(cd.getByRole("button", { name: "Submission results (Accepted)", exact: true })).toBeVisible();
-      await expect(results(cd).first().locator("table.custom-results")).toHaveCount(0);
+      await expect(selectedSubmission(cd)).toContainText("2/2 hidden tests passed");
+      await expect(selectedSubmission(cd).locator("table.custom-results")).toHaveCount(0);
+      await editorTab(cd, "Code").click();
     });
 
     await test.step("cases survive a reload", async () => {

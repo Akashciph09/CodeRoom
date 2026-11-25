@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { Language } from "./languages.js";
+import { SubmissionMode } from "./submissions.js";
 
 export const EXECUTION_QUEUE = "execution";
 
@@ -18,19 +20,26 @@ export const EXECUTION_JOB_OPTIONS = {
 
 /**
  * Internal room event bus (Redis pub/sub), published by the API and worker and consumed by
- * every realtime gateway instance. Carries ids only — gateways load data and apply role views.
+ * every realtime gateway instance. Carries identifiers and safe queue metadata. Gateways load results
+ * and apply role views.
  */
 export const roomEventsChannel = (roomId: string) => `room:${roomId}:events`;
 export const ROOM_EVENTS_PATTERN = "room:*:events";
 
+export const SubmissionQueuedEvent = z.object({
+  type: z.literal("submission:queued"),
+  roomId: z.string(),
+  submissionId: z.string(),
+  /** Which room question it answers, so clients file it under the right question before the result. */
+  roomQuestionId: z.string().optional(),
+  mode: SubmissionMode.optional(),
+  language: Language.optional(),
+  createdAt: z.string().optional(),
+  roomTestRevision: z.number().int().nonnegative().optional(),
+});
+
 export const RoomBusEvent = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("submission:queued"),
-    roomId: z.string(),
-    submissionId: z.string(),
-    /** Which room question it answers, so clients file it under the right question before the result. */
-    roomQuestionId: z.string().optional(),
-  }),
+  SubmissionQueuedEvent,
   z.object({
     type: z.literal("submission:done"),
     roomId: z.string(),

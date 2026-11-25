@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CandidateSubmissionView } from "@coderoom/shared";
-import { mergeHistory, questionOf, upsertEntry, type SubmissionEntry } from "./submissions";
+import { attemptsFor, mergeHistory, questionOf, upsertEntry, type SubmissionEntry } from "./submissions";
 
 const view = (id: string, status: CandidateSubmissionView["status"]): CandidateSubmissionView => ({
   submissionId: id,
@@ -62,4 +62,18 @@ describe("upsertEntry", () => {
     const list = upsertEntry([entry("a", "completed")], entry("b", "queued"));
     expect(list.map((e) => e.submissionId)).toEqual(["b", "a"]);
   });
+});
+
+it("orders attempts by acceptance time even when a previously unseen result arrives late", () => {
+  const newerRun: SubmissionEntry = {
+    submissionId: "new", pending: true, mode: "run", roomQuestionId: "rq-1", createdAt: "2026-01-01T00:00:02.000Z",
+  };
+  const olderRun: SubmissionEntry = {
+    submissionId: "old", pending: false, view: { ...view("old", "completed"), createdAt: "2026-01-01T00:00:01.000Z" },
+  };
+  const submit: SubmissionEntry = { submissionId: "submit", pending: false, view: { ...view("submit", "completed"), mode: "submit" } };
+  const entries = upsertEntry([submit, newerRun], olderRun);
+  expect(attemptsFor(entries, "rq-1", "run").map((run) => run.submissionId)).toEqual(["new", "old"]);
+  expect(attemptsFor(entries, "rq-1", "submit")).toEqual([submit]);
+  expect(attemptsFor(entries, "rq-2", "run")).toEqual([]);
 });

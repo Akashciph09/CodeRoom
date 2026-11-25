@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   MAX_CUSTOM_CASE_BYTES,
   MAX_CUSTOM_CASES,
   utf8Length,
   type CandidateQuestionView,
-  type RoomQuestionView,
 } from "@coderoom/shared";
 import type { SharedCase } from "../lib/roomQuestions";
-import { questionOf, type SubmissionEntry } from "../lib/submissions";
+import type { SubmissionEntry } from "../lib/submissions";
 import { ResultsPanel } from "./ResultsPanel";
 
 type Tab = "cases" | "result" | "notes";
@@ -25,13 +24,12 @@ type CaseItem =
  *  - "Test Result": public and custom case results for this question.
  *  - "Notes": the interviewer's private notes — only when `notes` is given (never for the candidate).
  *    Kept mounted while another tab shows, so a half-written note survives switching tabs.
- * Switches to Test Result when a run for this question starts — except from Notes, so the candidate
- * pressing Run never pulls the interviewer out of a note they're writing.
+ * Only a locally initiated Run switches the selected tab.
  */
 export function TestPanel({
   question,
-  roomQuestion,
-  entries,
+  run,
+  runNavigation,
   ended = false,
   customCases,
   canEditCases,
@@ -41,9 +39,8 @@ export function TestPanel({
   roomTests,
 }: {
   question: CandidateQuestionView;
-  /** The room question being viewed — only in multi-question rooms (scopes the results). */
-  roomQuestion?: RoomQuestionView;
-  entries: SubmissionEntry[];
+  run?: SubmissionEntry;
+  runNavigation: number;
   /** The interview has ended: opening it is for reviewing results, so start on Test Result. */
   ended?: boolean;
   customCases: SharedCase[];
@@ -80,22 +77,9 @@ export function TestPanel({
   const showForm = adding && canEditCases;
   const overflow = Math.max(0, customCases.length - MAX_CUSTOM_CASES);
 
-  /*
-   * A run starting for this question (ours, or the candidate's for the interviewer) → show its result.
-   * "Starting" = a new newest entry that is still pending (our submit or the queued event). One effect
-   * tracks the question and its newest run together, and handles a question change first, so:
-   *  - switching to a question that already has runs keeps the current tab;
-   *  - loading history (on open, reload or reconnect) doesn't count as a run starting.
-   */
-  const newest = entries.find((e) => !roomQuestion || questionOf(e) === roomQuestion.id);
-  const questionKey = roomQuestion?.id ?? "";
-  const seen = useRef({ questionKey, newestId: newest?.submissionId });
   useEffect(() => {
-    const prev = seen.current;
-    seen.current = { questionKey, newestId: newest?.submissionId };
-    if (prev.questionKey !== questionKey) return; // switched questions: not a new run
-    if (newest && newest.submissionId !== prev.newestId && newest.pending) setTab((t) => (t === "notes" ? t : "result"));
-  }, [questionKey, newest]);
+    if (runNavigation > 0) setTab("result");
+  }, [runNavigation]);
 
   const full = customCases.length >= MAX_CUSTOM_CASES;
 
@@ -230,7 +214,7 @@ export function TestPanel({
       )}
       {tab === "result" && (
         <div className="pane-body">
-          <ResultsPanel entries={entries} question={roomQuestion} />
+          <ResultsPanel run={run} />
         </div>
       )}
       {notes && (

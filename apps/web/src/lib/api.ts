@@ -110,7 +110,9 @@ export const api = {
   addRoomTest: (roomId: string, questionId: string, test: AddRoomTestRequest) =>
     request<void>("POST", `/rooms/${roomId}/questions/${questionId}/tests`, test),
   room: (roomId: string) => request<RoomView>("GET", `/rooms/${roomId}`),
-  roomSubmissions: (roomId: string) => request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions`),
+  roomSubmissions: (roomId: string, questionId?: string) =>
+    request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions${questionId ? `?questionId=${encodeURIComponent(questionId)}` : ""}`),
+  submission: (submissionId: string) => request<SubmissionView>("GET", `/submissions/${submissionId}`),
   closeRoom: (roomId: string) => request<{ roomId: string; status: "closed" }>("POST", `/rooms/${roomId}/close`),
   submit: (body: CreateSubmissionRequest, idempotencyKey: string) =>
     request<CreateSubmissionResponse>("POST", "/submissions", body, { "idempotency-key": idempotencyKey }),

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CandidateSubmissionView, InterviewerSubmissionView } from "./submissions.js";
+import { SubmissionQueuedEvent } from "./queue.js";
 
 /**
  * Realtime endpoints (both on the API's HTTP server):
@@ -19,12 +20,7 @@ export const CloseCode = {
 
 export const ServerEvent = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready"), roomId: z.string() }),
-  z.object({
-    type: z.literal("submission:queued"),
-    roomId: z.string(),
-    submissionId: z.string(),
-    roomQuestionId: z.string().optional(),
-  }),
+  SubmissionQueuedEvent,
   z.object({
     type: z.literal("submission:result"),
     roomId: z.string(),

@@ -49,6 +49,8 @@ export function toCandidateView(s: Submission, results: ResultRow[], custom: Cus
     roomTestRevision: s.roomTestRevision,
     status: s.status,
     mode: s.mode,
+    language: s.language,
+    createdAt: s.createdAt.toISOString(),
     ...(s.overall ? { overall: s.overall } : {}),
     publicResults: results.filter((r) => !r.isHidden).map(base),
     ...(s.mode === "submit" && s.status === "completed"

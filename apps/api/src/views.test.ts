@@ -38,6 +38,14 @@ describe("toCandidateView", () => {
     expect(view.hiddenTotal).toBe(2);
   });
 
+  it("returns only safe submission history metadata to the candidate", () => {
+    expect(view.language).toBe("python");
+    expect(view.createdAt).toBe(submission.createdAt.toISOString());
+    expect(view).not.toHaveProperty("code");
+    expect(view).not.toHaveProperty("userId");
+    expect(view).not.toHaveProperty("results");
+  });
+
   it("omits hidden counts for run mode", () => {
     const run = toCandidateView({ ...submission, mode: "run" }, results.slice(0, 1));
     expect(run.hiddenTotal).toBeUndefined();

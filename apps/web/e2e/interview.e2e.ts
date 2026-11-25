@@ -10,7 +10,10 @@ import {
   replaceCode,
   results,
   signUp,
-  submissionCards,
+  editorTab,
+  selectedSubmission,
+  submissionHistory,
+  testResultTab,
   type Participant,
 } from "./helpers";
 
@@ -89,22 +92,20 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
     await test.step("candidate submits; each side sees its own view of the result", async () => {
       await candidate.page.getByRole("button", { name: "Submit" }).click();
 
-      const mine = results(candidate.page).first();
-      await expect(mine).toContainText("Accepted");
-      await expect(mine).not.toContainText("hidden tests");
-      await candidate.page.getByRole("button", { name: "Submission results (Accepted)", exact: true }).click();
-      const candidateSubmission = submissionCards(candidate.page).first();
-      await expect(candidateSubmission).toContainText("2/2 hidden tests passed");
-      await expect(candidateSubmission.getByRole("button", { name: /submitted code/ })).toHaveCount(0);
+      const mine = selectedSubmission(candidate.page);
+      await expect(mine).toContainText("2/2 hidden tests passed");
+      await expect(mine.getByText("Submitted code")).toHaveCount(0);
 
-      await interviewer.page.getByRole("button", { name: "Submission results (Accepted)", exact: true }).click();
-      const theirs = submissionCards(interviewer.page).first();
+      await expect(editorTab(interviewer.page, "Code")).toHaveAttribute("aria-selected", "true");
+      await editorTab(interviewer.page, "Submissions").click();
+      await submissionHistory(interviewer.page).first().click();
+      const theirs = selectedSubmission(interviewer.page);
       await expect(theirs).toContainText("Accepted");
       await expect(theirs.getByRole("table", { name: "Hidden test results" }).getByRole("row")).toHaveCount(2);
-      await theirs.getByRole("button", { name: "Show submitted code" }).click();
+      await theirs.getByText("Submitted code", { exact: true }).click();
       await expect(theirs.locator(".code-snapshot")).toContainText("print(a + b)");
-      await candidate.page.getByRole("button", { name: "Back to code" }).click();
-      await interviewer.page.getByRole("button", { name: "Back to code" }).click();
+      await editorTab(candidate.page, "Code").click();
+      await editorTab(interviewer.page, "Code").click();
     });
 
     await test.step("language change syncs to the other participant", async () => {
@@ -118,7 +119,8 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
       await candidate.page.getByRole("button", { name: "Run" }).click();
       const run = results(candidate.page).first();
       await expect(run).toContainText("Time limit exceeded", { timeout: 30_000 });
-      await expect(results(interviewer.page).first()).toContainText("Time limit exceeded");
+      await testResultTab(interviewer.page).click();
+      await expect(results(interviewer.page)).toContainText("Time limit exceeded");
     });
 
     await test.step("an outsider can't open the room", async () => {
@@ -156,7 +158,9 @@ test("interviewer and candidate run a full interview", async ({ browser, baseURL
       await page.reload();
       await expect(page.getByText("This interview has ended. The code is read-only.")).toBeVisible();
       await expect.poll(() => editorText(page)).toBe("while (true) {}");
-      await expect(results(page)).toHaveCount(2);
+      await expect(results(page)).toHaveCount(1);
+      await editorTab(page, "Submissions").click();
+      await expect(submissionHistory(page)).toHaveCount(1);
     });
   } finally {
     for (const p of people) await p.close();

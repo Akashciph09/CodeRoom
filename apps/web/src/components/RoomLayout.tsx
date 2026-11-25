@@ -105,7 +105,8 @@ interface Props {
   question: ReactNode;
   code: ReactNode;
   tests: ReactNode;
-  /** Changes whenever results change; on narrow screens it marks the Tests tab as unseen. */
+  runNavigation: number;
+  /** Changes when the latest Run changes so narrow layouts can mark the Tests tab as unseen. */
   resultsKey: string;
 }
 
@@ -114,10 +115,14 @@ interface Props {
  * rendered, in the same position, in every mode: switching modes or resizing only changes CSS, so the
  * editor (Monaco + its Yjs binding) is never remounted.
  */
-export function RoomColumns({ layout, question, code, tests, resultsKey }: Props) {
+export function RoomColumns({ layout, question, code, tests, resultsKey, runNavigation }: Props) {
   const { containerRef, narrow, displayed, area } = layout;
   const [tab, setTab] = useState<Tab>("code");
   const [unseen, setUnseen] = useState(false);
+
+  useEffect(() => {
+    if (runNavigation > 0) setTab("tests");
+  }, [runNavigation]);
 
   const firstResults = useRef(resultsKey);
   useEffect(() => {

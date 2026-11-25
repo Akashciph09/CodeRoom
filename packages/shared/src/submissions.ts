@@ -68,6 +68,8 @@ export type CreateSubmissionRequest = z.infer<typeof CreateSubmissionRequest>;
 export const CreateSubmissionResponse = z.object({
   submissionId: z.string().uuid(),
   status: SubmissionStatus,
+  createdAt: z.string().optional(),
+  roomTestRevision: z.number().int().nonnegative().optional(),
 });
 export type CreateSubmissionResponse = z.infer<typeof CreateSubmissionResponse>;
 
@@ -78,6 +80,8 @@ export const CandidateSubmissionView = z.object({
   roomQuestionId: z.string(),
   status: SubmissionStatus,
   mode: SubmissionMode,
+  language: Language.optional(),
+  createdAt: z.string().optional(),
   overall: Verdict.optional(),
   publicResults: z.array(TestResult),
   hiddenPassed: z.number().int().optional(),

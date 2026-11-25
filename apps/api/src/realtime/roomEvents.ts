@@ -103,14 +103,7 @@ export class RoomEventHub {
     if (event.type === "room:question_revealed") return this.markRevealed(event.roomId, event.revealedCount);
 
     if (event.type === "submission:queued") {
-      for (const s of subscribers) {
-        sendEvent(s.ws, {
-          type: "submission:queued",
-          roomId: event.roomId,
-          submissionId: event.submissionId,
-          ...(event.roomQuestionId ? { roomQuestionId: event.roomQuestionId } : {}),
-        });
-      }
+      for (const s of subscribers) sendEvent(s.ws, event);
       return;
     }
 

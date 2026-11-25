@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { replaceCode, results, startInterview, submissionCards } from "./helpers";
+import { replaceCode, results, startInterview, editorTab, selectedSubmission, submissionHistory } from "./helpers";
 
 test("reviewed room tests update candidate grading without exposing hidden inputs or changing prior results", async ({ browser }) => {
   const { interviewer, candidate, close } = await startInterview(browser);
@@ -14,7 +14,9 @@ test("reviewed room tests update candidate grading without exposing hidden input
     await expect(cd.getByRole("button", { name: "Suggest test cases" })).toHaveCount(0);
     await replaceCode(cd, "a, b = map(int, input().split())\nprint(a+b)");
     await cd.getByRole("button", { name: "Submit", exact: true }).click();
-    await expect(cd.getByRole("button", { name: "Submission results (Accepted)", exact: true })).toBeVisible();
+    await expect(selectedSubmission(cd)).toContainText("2/2 hidden tests passed");
+    await expect(selectedSubmission(cd)).toContainText("Revision 0");
+    await editorTab(cd, "Code").click();
 
     await iv.getByRole("tab", { name: "Testcase" }).click();
     await interviewerTests.getByRole("button", { name: "Add test case", exact: true }).click();
@@ -54,28 +56,34 @@ test("reviewed room tests update candidate grading without exposing hidden input
     await expect(candidateTests.getByLabel("Case input")).toHaveText("-101 101");
     await expect(candidateTests.getByLabel("Case expected output")).toHaveText("0");
     await cd.getByRole("button", { name: "Run", exact: true }).click();
-    await expect(results(cd)).toHaveCount(2);
+    await expect(results(cd)).toHaveCount(1);
     await expect(results(cd).first()).toContainText("Example 3");
+    await expect(results(cd)).toContainText("Revision 2");
     await expect(notice).toBeVisible();
     await replaceCode(cd, "a, b = map(int, input().split())\nprint(0 if a == 314159 else a + b)");
     await cd.getByRole("button", { name: "Submit", exact: true }).click();
-    await expect(results(cd)).toHaveCount(3);
-    await cd.getByRole("button", { name: "Submission results (Wrong answer)", exact: true }).click();
-    const candidateSubmit = submissionCards(cd).first();
+    const candidateSubmit = selectedSubmission(cd);
     await expect(candidateSubmit).toContainText("2/3 hidden tests passed");
-    await expect(candidateSubmit.getByRole("list", { name: "Passed hidden tests" }).getByRole("listitem")).toHaveCount(2);
+    await expect(candidateSubmit).toContainText("Revision 2");
     await expect(candidateSubmit.getByRole("table", { name: "Hidden test results" })).toHaveCount(0);
-    await expect(submissionCards(cd).last()).toContainText("2/2 hidden tests passed");
+    await expect(candidateSubmit).not.toContainText(/Passed case|Hidden case/i);
     await expect(results(cd).first().locator("table.tests").getByRole("row")).toHaveCount(3);
     await expect(results(cd).first()).not.toContainText(/hidden|Wrong answer/i);
+    await cd.getByRole("button", { name: "Back to submissions" }).click();
+    await expect(submissionHistory(cd)).toHaveCount(2);
+    await submissionHistory(cd).last().click();
+    await expect(candidateSubmit).toContainText("Revision 0");
+    await expect(candidateSubmit).toContainText("2/2 hidden tests passed");
+    await expect(candidateSubmit.getByRole("table", { name: "Public test results" }).getByRole("row")).toHaveCount(2);
 
-    await iv.getByRole("button", { name: "Submission results (Wrong answer)", exact: true }).click();
-    const interviewerRows = submissionCards(iv).first().getByRole("table", { name: "Hidden test results" }).getByRole("row");
+    await editorTab(iv, "Submissions").click();
+    await submissionHistory(iv).first().click();
+    const interviewerRows = selectedSubmission(iv).getByRole("table", { name: "Hidden test results" }).getByRole("row");
     await expect(interviewerRows).toHaveCount(3);
     await expect(interviewerRows.filter({ hasText: "Wrong answer" })).toHaveCount(1);
     await expect(interviewerRows.filter({ hasText: "Accepted" })).toHaveCount(2);
 
-    await cd.getByRole("button", { name: "Back to code" }).click();
+    await editorTab(cd, "Code").click();
     await expect(notice).toHaveCount(0);
   } finally {
     await close();

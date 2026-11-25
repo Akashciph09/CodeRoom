@@ -209,10 +209,19 @@ label input, label select { color: var(--text); font-size: 14px; }
 .pane-body > .panel { padding: 12px 16px; background: transparent; overflow: visible; }
 .code-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .code-content[hidden] { display: none; }
-.code-results-toggle { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-tabs { display: flex; align-items: stretch; min-width: 0; }
+.editor-tabs button { white-space: nowrap; padding-inline: 8px; }
+.editor-tabs .active { box-shadow: inset 0 -2px var(--accent); }
+@media (max-width: 380px) {
+  .editor-tabs .pane-icon { display: none; }
+  .code-pane > .pane-head { gap: 4px; padding-inline: 6px; }
+  .code-pane > .pane-head button { padding-inline: 6px; }
+}
 .submission-results h2 { margin: 0; }
 .submission-results { display: flex; flex-direction: column; gap: 10px; }
-.passed-hidden-tests { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; margin: 8px 0 0; list-style: none; }
+.submission-history { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.submission-history button { width: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; text-align: left; }
+.submission-back { align-self: flex-start; }
 .cases { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .case-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .case-tab { background: transparent; border-color: transparent; color: var(--muted); padding: 6px 14px; }

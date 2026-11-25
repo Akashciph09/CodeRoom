@@ -48,7 +48,12 @@ async function replay(res: Response, existing: Submission, body: CreateSubmissio
   if (!same) throw new UnprocessableEntity("Idempotency-Key was already used for a different request");
   // Cheap insurance if the original enqueue failed (jobId dedupes if it didn't).
   if (existing.status === "queued") await tryEnqueue(existing.id);
-  const response: CreateSubmissionResponse = { submissionId: existing.id, status: existing.status };
+  const response: CreateSubmissionResponse = {
+    submissionId: existing.id,
+    status: existing.status,
+    createdAt: existing.createdAt.toISOString(),
+    roomTestRevision: existing.roomTestRevision,
+  };
   res.status(202).setHeader("Idempotent-Replayed", "true").json(response);
 }
 
@@ -98,7 +103,7 @@ submissionsRouter.post(
         })
         // Two concurrent requests with the same key: exactly one row wins; the other replays it.
         .onConflictDoNothing({ target: [submissions.userId, submissions.idempotencyKey] })
-        .returning({ id: submissions.id });
+        .returning({ id: submissions.id, createdAt: submissions.createdAt, roomTestRevision: submissions.roomTestRevision });
       return row;
     });
 
@@ -109,6 +114,7 @@ submissionsRouter.post(
     }
 
     const submissionId = inserted.id;
+    const metadata = { createdAt: inserted.createdAt.toISOString(), roomTestRevision: inserted.roomTestRevision };
     await tryEnqueue(submissionId);
 
     // Best effort: realtime clients learn about it; REST still works if this fails.
@@ -117,10 +123,13 @@ submissionsRouter.post(
       roomId: body.roomId,
       submissionId,
       roomQuestionId: body.roomQuestionId,
+      mode: body.mode,
+      language: body.language,
+      ...metadata,
     };
     redis.publish(roomEventsChannel(body.roomId), JSON.stringify(event)).catch(() => {});
 
-    const response: CreateSubmissionResponse = { submissionId, status: "queued" };
+    const response: CreateSubmissionResponse = { submissionId, status: "queued", ...metadata };
     res.status(202).json(response);
   }),
 );
