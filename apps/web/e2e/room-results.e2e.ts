@@ -50,6 +50,11 @@ test("history opens one snapshot and incoming Submits leave the interviewer on t
     await editorTab(iv, "Submissions").click();
     await expect(submissionHistory(iv)).toHaveCount(1);
     await submissionHistory(iv).first().click();
+    await selectedSubmission(iv).getByRole("button", { name: "Inspect hidden case 1", exact: true }).click();
+    await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveText("-5 5");
+    await expect(selectedSubmission(iv).getByLabel("Hidden case expected output")).toHaveText("0");
+    await selectedSubmission(iv).getByRole("button", { name: "Hide hidden case 1", exact: true }).click();
+    await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveCount(0);
     await selectedSubmission(iv).getByText("Submitted code", { exact: true }).click();
     await expect(selectedSubmission(iv).locator(".code-snapshot")).toHaveText(original);
 
@@ -79,6 +84,8 @@ test("history opens one snapshot and incoming Submits leave the interviewer on t
     await iv.getByRole("button", { name: "Back to submissions" }).click();
     await expect(selectedSubmission(iv)).toHaveCount(0);
     await expect(submissionHistory(iv)).toHaveCount(2);
+    await expect(submissionHistory(iv).first()).toHaveAccessibleName(/^Submission 2 /);
+    await expect(submissionHistory(iv).last()).toHaveAccessibleName(/^Submission 1 /);
     await expect(submissionHistory(iv).first()).toContainText("Accepted");
     await expect(submissionHistory(iv).last()).toContainText("Wrong answer");
     await expect(submissionHistory(iv).first()).toContainText("Python");

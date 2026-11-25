@@ -45,9 +45,9 @@ try {
     throw new Error("Submission did not finish");
   }
 
-  async function run(mode: "run" | "submit") {
+  async function run(mode: "run" | "submit", source = code) {
     const queued = await call("POST", "/submissions", candidate, {
-      roomId: room.roomId, roomQuestionId: original.id, language: "python", mode, code,
+      roomId: room.roomId, roomQuestionId: original.id, language: "python", mode, code: source,
     }, base);
     if (queued.status !== 202) throw new Error(`Queue request failed: ${queued.status}`);
     return waitForSubmission(queued.json.submissionId);
@@ -99,6 +99,19 @@ try {
     && laterSubmit.roomTestRevision === 2 && !JSON.stringify(laterSubmit).includes(hiddenInput));
   check("old submissions retain their results and revision",
     JSON.stringify(previous) === JSON.stringify(old.result) && previous.roomTestRevision === 0);
+  const failed = await run("submit", "print(-12345)");
+  const hiddenId = ownerRoom.json.questions[0].addedTests.find((test: { isHidden: boolean }) => test.isHidden).id;
+  const inspection = `${failed.resultPath}/hidden-tests/${hiddenId}`;
+  const inspect = (url: string, token = interviewer) => call("GET", url, token, undefined, base);
+  const [inspected, deniedCandidate, deniedOutsider, beforeAddition, passed] = await Promise.all([
+    inspect(inspection), inspect(inspection, candidate), inspect(inspection, outsider),
+    inspect(`${old.resultPath}/hidden-tests/${hiddenId}`),
+    inspect(`/submissions/${laterSubmit.submissionId}/hidden-tests/${hiddenId}`),
+  ]);
+  check("only the room interviewer can inspect a failed hidden case from the pinned suite",
+    inspected.status === 200 && inspected.json.input === hiddenInput && inspected.json.expectedOutput === hidden.expectedOutput
+    && !Object.hasOwn(inspected.json, "stdout") && !Object.hasOwn(inspected.json, "stderr")
+    && deniedCandidate.status === 403 && deniedOutsider.status === 403 && beforeAddition.status === 404 && passed.status === 404);
   const review = await call("GET", `${roomPath}/review`, interviewer, undefined, base);
   check("review counts added tests on the new submission", review.json.candidates[0].submissions.some(
     (entry: { submissionId: string; total: number }) => entry.submissionId === laterSubmit.submissionId

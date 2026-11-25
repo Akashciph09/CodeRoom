@@ -13,7 +13,7 @@ import { asyncHandler, NotFound, PayloadTooLarge, UnprocessableEntity } from "..
 import { enqueueExecution, redis } from "../queue.js";
 import { submittableQuestion } from "../services/roomQuestions.js";
 import { enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
-import { loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
+import { failedHiddenCaseFor, loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
 import { UuidParam } from "./params.js";
 
 export const submissionsRouter: Router = Router();
@@ -131,6 +131,21 @@ submissionsRouter.post(
 
     const response: CreateSubmissionResponse = { submissionId, status: "queued", ...metadata };
     res.status(202).json(response);
+  }),
+);
+
+submissionsRouter.get(
+  "/:id/hidden-tests/:testId",
+  asyncHandler(async (req, res) => {
+    const id = UuidParam.parse(req.params.id);
+    const testId = UuidParam.parse(req.params.testId);
+    const [submission] = await db.select().from(submissions).where(eq(submissions.id, id));
+    if (!submission) throw new NotFound();
+    await requireRoomRole(submission.roomId, req.user!.userId, "interviewer");
+    if (submission.mode !== "submit" || submission.status !== "completed") throw new NotFound();
+    const test = await failedHiddenCaseFor(submission, testId);
+    if (!test) throw new NotFound();
+    res.setHeader("Cache-Control", "private, no-store").json(test);
   }),
 );
 

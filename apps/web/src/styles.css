@@ -221,6 +221,9 @@ label input, label select { color: var(--text); font-size: 14px; }
 .submission-results { display: flex; flex-direction: column; gap: 10px; }
 .submission-history { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .submission-history button { width: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; text-align: left; }
+.submission-number { min-width: 2ch; text-align: end; font-variant-numeric: tabular-nums; margin-right: 4px; }
+.hidden-case-details { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); }
+.hidden-case-details pre { max-height: 12rem; overflow: auto; }
 .submission-back { align-self: flex-start; }
 .cases { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
 .case-tabs { display: flex; gap: 6px; flex-wrap: wrap; }

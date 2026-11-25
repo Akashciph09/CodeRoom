@@ -61,7 +61,9 @@ test("reviewed room tests update candidate grading without exposing hidden input
     await expect(results(cd)).toContainText("Revision 2");
     await expect(notice).toBeVisible();
     await replaceCode(cd, "a, b = map(int, input().split())\nprint(0 if a == 314159 else a + b)");
+    const posted = cd.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/submissions");
     await cd.getByRole("button", { name: "Submit", exact: true }).click();
+    const authorization = await (await posted).request().headerValue("authorization");
     const candidateSubmit = selectedSubmission(cd);
     await expect(candidateSubmit).toContainText("2/3 hidden tests passed");
     await expect(candidateSubmit).toContainText("Revision 2");
@@ -82,6 +84,13 @@ test("reviewed room tests update candidate grading without exposing hidden input
     await expect(interviewerRows).toHaveCount(3);
     await expect(interviewerRows.filter({ hasText: "Wrong answer" })).toHaveCount(1);
     await expect(interviewerRows.filter({ hasText: "Accepted" })).toHaveCount(2);
+    const inspected = iv.waitForResponse((r) => new URL(r.url()).pathname.includes("/hidden-tests/"));
+    await interviewerRows.filter({ hasText: "Wrong answer" }).getByRole("button", { name: "Inspect hidden case 3" }).click();
+    await expect(selectedSubmission(iv).getByLabel("Hidden case input")).toHaveText(hiddenInput);
+    await expect(selectedSubmission(iv).getByLabel("Hidden case expected output")).toHaveText("42331");
+    const denied = await cd.request.get((await inspected).url(), { headers: { authorization: authorization! } });
+    expect(denied.status()).toBe(403);
+    expect(await denied.text()).not.toContain(hiddenInput);
 
     await editorTab(cd, "Code").click();
     await expect(notice).toHaveCount(0);

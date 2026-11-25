@@ -1,9 +1,12 @@
 import {
+  and,
   asc,
   customCaseResults,
   eq,
   getTableColumns,
   inArray,
+  lte,
+  ne,
   submissions,
   roomTestCases,
   roomTestResults,
@@ -53,6 +56,23 @@ export async function loadSubmissionWithResults(id: string): Promise<SubmissionW
   if (!submission) return null;
   const [results, custom] = await Promise.all([resultsFor([id]), customResultsFor([id])]);
   return { submission, results, custom };
+}
+
+/** An already-authorized interviewer can inspect a failed result from this attempt's pinned suite. */
+export async function failedHiddenCaseFor(submission: Submission, testId: string) {
+  const [bank, room] = await Promise.all([
+    db.select({ input: testCases.input, expectedOutput: testCases.expectedOutput })
+      .from(testResults).innerJoin(testCases, eq(testCases.id, testResults.testCaseId))
+      .where(and(eq(testResults.submissionId, submission.id), eq(testResults.testCaseId, testId),
+        eq(testResults.isHidden, true), ne(testResults.verdict, "accepted"), eq(testCases.isHidden, true),
+        eq(testCases.versionId, submission.questionVersionId))),
+    db.select({ input: roomTestCases.input, expectedOutput: roomTestCases.expectedOutput })
+      .from(roomTestResults).innerJoin(roomTestCases, eq(roomTestCases.id, roomTestResults.testCaseId))
+      .where(and(eq(roomTestResults.submissionId, submission.id), eq(roomTestResults.testCaseId, testId),
+        eq(roomTestResults.isHidden, true), ne(roomTestResults.verdict, "accepted"), eq(roomTestCases.isHidden, true),
+        eq(roomTestCases.roomQuestionId, submission.roomQuestionId), lte(roomTestCases.revision, submission.roomTestRevision))),
+  ]);
+  return bank[0] ?? room[0];
 }
 
 /** The single place that decides which shape of a submission a role may see. */
