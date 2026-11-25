@@ -11,6 +11,8 @@ const Env = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url(),
   SUPABASE_URL: z.string().url(),
+  /** Where to fetch the signing keys, if not from SUPABASE_URL (self-hosted: the auth container). */
+  SUPABASE_JWKS_URL: z.string().url().optional(),
   AI_SUMMARY_PROVIDER: z.enum(["claude", "groq"]).default("claude"),
   GROQ_API_KEY: z.string().trim().optional(),
   ANTHROPIC_API_KEY: z.string().trim().optional(),

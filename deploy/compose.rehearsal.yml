@@ -1,0 +1,10 @@
+# Rehearse the production stack on a laptop over plain HTTP, without a domain.
+# Steps: deploy/README.md → "Rehearse locally". Uses its own project name and volumes, so it never
+# touches a real deployment's data or the dev stack.
+name: coderoom-rehearsal
+
+services:
+  web:
+    ports: !override
+      - "8080:8080" # app (APP_URL=http://localhost:8080)
+      - "8081:8081" # API (API_URL=http://localhost:8081)

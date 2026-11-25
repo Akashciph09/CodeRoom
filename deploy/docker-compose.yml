@@ -1,0 +1,155 @@
+# CodeRoom on one VM (ADR 0022): Postgres + Auth (self-hosted Supabase pieces), Redis, API, worker,
+# and Caddy serving the web app over HTTPS. Settings come from deploy/.env (see .env.example);
+# `deploy/scripts/deploy.sh` is the usual entry point.
+name: coderoom-prod
+
+x-restart: &restart
+  restart: unless-stopped
+  logging:
+    driver: local # rotated by Docker, so logs never fill the disk
+    options: { max-size: "10m", max-file: "5" }
+
+services:
+  db:
+    <<: *restart
+    image: public.ecr.aws/supabase/postgres:17.12.0.000
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_DB: postgres
+      PGPORT: 5432
+      POSTGRES_PORT: 5432
+      JWT_SECRET: ${AUTH_JWT_SECRET}
+      JWT_EXP: 3600
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Not published: only the containers on this network reach Postgres.
+
+  auth:
+    <<: *restart
+    image: public.ecr.aws/supabase/gotrue:v2.198.0
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: ${APP_URL}/auth/v1
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@db:5432/postgres
+      GOTRUE_SITE_URL: ${APP_URL}
+      GOTRUE_URI_ALLOW_LIST: ${APP_URL}/**
+      GOTRUE_DISABLE_SIGNUP: ${AUTH_DISABLE_SIGNUP:-false}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      # No mail server on a free VM: accounts are usable right after sign-up (no confirmation email).
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ISSUER: ${APP_URL}/auth/v1
+      # ES256 signing key (private JWK set), as hosted Supabase uses; the API verifies via JWKS (ADR 0002).
+      GOTRUE_JWT_KEYS: ${AUTH_JWT_KEYS:?run deploy/scripts/gen-secrets.sh}
+      GOTRUE_JWT_SECRET: ${AUTH_JWT_SECRET:?run deploy/scripts/gen-secrets.sh}
+      GOTRUE_JWT_VALID_METHODS: ES256
+      GOTRUE_PASSWORD_MIN_LENGTH: 8
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: 150
+      GOTRUE_RATE_LIMIT_VERIFY: 30
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    # Append-only file: queued jobs survive a restart. BullMQ needs the default noeviction policy.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: { context: .., dockerfile: deploy/Dockerfile, target: migrate, args: &web-args { VITE_API_URL: "${API_URL}", VITE_SUPABASE_URL: "${APP_URL}" } }
+    depends_on:
+      auth: { condition: service_healthy } # Auth creates auth.users, which our tables reference
+    environment:
+      MIGRATE_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+    restart: "no"
+
+  api:
+    <<: *restart
+    build: { context: .., dockerfile: deploy/Dockerfile, target: api, args: { <<: *web-args, APP: api } }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    env_file: [{ path: ./api.env, required: false }] # optional AI keys (see api.env.example)
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      REDIS_URL: redis://redis:6379
+      SUPABASE_URL: ${APP_URL}
+      SUPABASE_JWKS_URL: http://auth:9999/.well-known/jwks.json
+      CORS_ORIGIN: ${APP_URL}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  worker:
+    <<: *restart
+    build: { context: .., dockerfile: deploy/Dockerfile, target: worker, args: { <<: *web-args, APP: worker } }
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      # Code files go here; sandboxes mount them by HOST path, so the path is identical on both sides.
+      TMPDIR: ${RUNS_DIR:-/var/lib/coderoom/runs}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${RUNS_DIR:-/var/lib/coderoom/runs}:${RUNS_DIR:-/var/lib/coderoom/runs}
+
+  web:
+    <<: *restart
+    build: { context: .., dockerfile: deploy/Dockerfile, target: web, args: *web-args }
+    depends_on: [api, auth]
+    environment:
+      APP_ADDRESS: ${APP_URL:?set APP_URL in deploy/.env}
+      API_ADDRESS: ${API_URL:?set API_URL in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    healthcheck:
+      # Caddy's admin endpoint (IPv4 only) answers once the config has loaded.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    volumes:
+      - caddy-data:/data # certificates
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  redis-data:
+  caddy-data:
+  caddy-config:

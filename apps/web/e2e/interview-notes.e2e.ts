@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addInterviewQuestion, createInterviewRoom, authorQuestion, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, authorQuestion, fromApi, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
 
 /*
  * Private interviewer notes (ADR 0016): a Notes tab for the interviewer only, linked to a question
@@ -19,7 +19,7 @@ test("interviewer notes: private tab, links, edit/delete, after the end, on the 
   // Everything the candidate's browser receives from the API, to prove no note text ever arrives.
   const candidateBodies: string[] = [];
   cd.on("response", (r) => {
-    if (new URL(r.url()).port === "4000") void r.text().then((t) => candidateBodies.push(t), () => {});
+    if (fromApi(r.url())) void r.text().then((t) => candidateBodies.push(t), () => {});
   });
   try {
     await test.step("only the interviewer has a Notes tab", async () => {

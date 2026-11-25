@@ -25,3 +25,4 @@ Rule for this repo: a technology goes in only if it has a "why" and a "why not t
 | [0018](0018-ai-interview-summary.md) | AI drafts an evidence-linked interview summary | Accepted |
 | [0019](0019-ai-question-drafts.md) | Draft and validate questions with AI | Accepted |
 | [0021](0021-room-test-cases.md) | Room-scoped interviewer test additions | Accepted |
+| [0022](0022-self-hosted-single-vm.md) | Deploy on one free VM, self-hosting Postgres and Auth | Accepted |
