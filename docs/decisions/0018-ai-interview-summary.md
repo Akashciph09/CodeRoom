@@ -25,6 +25,8 @@ labels and anchors come from server-loaded evidence. A valid citation identifies
 interviewer can verify. The generated draft is saved privately per room and interviewer. The author can save edits or discard
 the draft in the review page. Edits change only the text, so citations remain server-authored.
 Revision checks prevent a stale request from overwriting edits or restoring a discarded draft.
+If evidence disappears, Review flags the affected item and disables its missing citation link.
+The saved wording remains available for the interviewer to review.
 
 Model calls happen on demand, with a per-interviewer rate limit, an input budget, and a timeout.
 Tests inject a fake model. Production keys are server-only and optional, so the rest of the app

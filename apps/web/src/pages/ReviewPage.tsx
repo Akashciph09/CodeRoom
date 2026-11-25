@@ -177,7 +177,7 @@ export function ReviewPage() {
           </p>
         </section>
 
-        <InterviewSummaryCard key={review.roomId} roomId={review.roomId} />
+        <InterviewSummaryCard key={review.roomId} review={review} />
         <ReviewNotes review={review} />
 
         {review.candidates.length === 0 && <p className="muted">No candidate joined this interview.</p>}

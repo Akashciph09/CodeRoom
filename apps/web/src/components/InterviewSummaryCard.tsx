@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { InterviewSummaryDraft } from "@coderoom/shared";
+import type { InterviewSummaryDraft, RoomReview } from "@coderoom/shared";
 import { api } from "../lib/api";
 
 const sections = {
@@ -8,7 +8,24 @@ const sections = {
   follow_up: "Questions to probe next time",
 } satisfies Record<InterviewSummaryDraft["items"][number]["section"], string>;
 
-export function InterviewSummaryCard({ roomId }: { roomId: string }) {
+function availableCitations(review: RoomReview) {
+  const anchors = new Set(review.notes.map((note) => `note-${note.id}`));
+  const revealed = new Set(review.questions.filter((question) => question.revealedAt).map((question) => question.id));
+  for (const candidate of review.candidates) {
+    for (const submission of candidate.submissions) {
+      if (revealed.has(submission.roomQuestionId)) anchors.add(`submission-${submission.submissionId}`);
+    }
+    for (const dimension of candidate.evaluation?.dimensions ?? []) {
+      if (dimension.rating !== null || dimension.notObserved || dimension.explanation.trim()) {
+        anchors.add(`rubric-${candidate.userId}-${dimension.dimension}`);
+      }
+    }
+  }
+  return anchors;
+}
+
+export function InterviewSummaryCard({ review }: { review: RoomReview }) {
+  const { roomId } = review;
   const [summary, setSummary] = useState<InterviewSummaryDraft | null>();
   const [texts, setTexts] = useState<string[]>([]);
   const [busy, setBusy] = useState<"draft" | "save" | "discard">();
@@ -30,6 +47,7 @@ export function InterviewSummaryCard({ roomId }: { roomId: string }) {
   }, [roomId, loadAttempt]);
 
   const dirty = summary?.items.some((item, index) => item.text !== texts[index]) ?? false;
+  const anchors = availableCitations(review);
 
   async function update(action: NonNullable<typeof busy>, operation: () => Promise<InterviewSummaryDraft | null>) {
     setBusy(action);
@@ -73,8 +91,13 @@ export function InterviewSummaryCard({ roomId }: { roomId: string }) {
                         }}
                         rows={3}
                       />
+                      {item.citations.some(({ anchor }) => !anchors.has(anchor)) && (
+                        <p className="small muted">Needs review · a cited source is unavailable.</p>
+                      )}
                       <div className="summary-citations">
-                        {item.citations.map(({ anchor, label }) => <a key={anchor} href={`#${anchor}`}>{label}</a>)}
+                        {item.citations.map(({ anchor, label }) => anchors.has(anchor)
+                          ? <a key={anchor} href={`#${anchor}`}>{label}</a>
+                          : <span key={anchor} className="muted">{label} (unavailable)</span>)}
                       </div>
                     </li>
                   ))}

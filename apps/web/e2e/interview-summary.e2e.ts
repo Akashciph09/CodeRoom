@@ -55,6 +55,19 @@ test("interviewer summary persists on return until explicitly discarded", async 
     await expect(card.getByRole("button", { name: "Save edits" })).toBeDisabled();
     await page.reload();
     await expect(draft).toHaveValue("Clarified what the input represents.");
+
+    await page.getByRole("link", { name: "← Back to the room" }).click();
+    await page.getByRole("tab", { name: "Notes" }).click();
+    const notes = page.getByRole("region", { name: "Tests" }).getByRole("list", { name: "Notes" });
+    await expect(notes.getByText("Clarified input format.")).toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
+    await notes.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(notes.getByText("Clarified input format.")).toHaveCount(0);
+    await page.getByRole("link", { name: "Review" }).click();
+    await expect(draft).toHaveValue("Clarified what the input represents.");
+    await expect(card.getByText("Needs review · a cited source is unavailable.")).toBeVisible();
+    await expect(card.getByRole("link", { name: "Note 1" })).toHaveCount(0);
+
     await card.getByRole("button", { name: "Discard draft" }).click();
     await expect(draft).toHaveCount(0);
     await page.reload();
