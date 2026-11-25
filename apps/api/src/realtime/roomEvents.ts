@@ -14,6 +14,7 @@ interface RoomSubscribers {
   closed: boolean;
   /** Highest revealed-question count this instance has announced to the room (undefined = none yet). */
   revealed?: number;
+  testRevision?: number;
 }
 
 /**
@@ -64,6 +65,13 @@ export class RoomEventHub {
     for (const s of room.subs) sendEvent(s.ws, { type: "room:question_revealed", roomId });
   }
 
+  markTestsAdded(roomId: string, revision: number) {
+    const room = this.rooms.get(roomId);
+    if (!room || revision <= (room.testRevision ?? 0)) return;
+    room.testRevision = revision;
+    for (const subscriber of room.subs) sendEvent(subscriber.ws, { type: "room:tests_added", roomId });
+  }
+
   /** Rooms with listeners here that haven't been told the room ended (checked by the status reconciler). */
   openRoomIds(): string[] {
     return [...this.rooms.entries()].filter(([, r]) => !r.closed).map(([id]) => id);
@@ -91,17 +99,11 @@ export class RoomEventHub {
     if (!subscribers || subscribers.size === 0) return;
 
     // Id-only: no question content goes over the socket; each client re-fetches its own role's view.
+    if (event.type === "room:tests_added") return this.markTestsAdded(event.roomId, event.totalRevision);
     if (event.type === "room:question_revealed") return this.markRevealed(event.roomId, event.revealedCount);
 
     if (event.type === "submission:queued") {
-      for (const s of subscribers) {
-        sendEvent(s.ws, {
-          type: "submission:queued",
-          roomId: event.roomId,
-          submissionId: event.submissionId,
-          ...(event.roomQuestionId ? { roomQuestionId: event.roomQuestionId } : {}),
-        });
-      }
+      for (const s of subscribers) sendEvent(s.ws, event);
       return;
     }
 

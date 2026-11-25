@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addInterviewQuestion, authorQuestion, createInterviewRoom, openAs, replaceCode, results, signUp, startInterview } from "./helpers";
+import { addInterviewQuestion, authorQuestion, createInterviewRoom, openAs, replaceCode, editorTab, selectedSubmission, submissionHistory, signUp, startInterview } from "./helpers";
 
 /*
  * Post-interview review and test score (ADR 0011).
@@ -9,10 +9,13 @@ const WRONG = "a, b = map(int, input().split())\nprint(a - b)";
 const SUM = "a, b = map(int, input().split())\nprint(a + b)";
 
 async function submit(page: Page, code: string, count: number) {
+  await editorTab(page, "Code").click();
   await replaceCode(page, code);
   await page.getByRole("button", { name: "Submit" }).click();
-  await expect(results(page)).toHaveCount(count);
-  await expect(results(page).first()).not.toContainText("Running", { timeout: 30_000 });
+  await expect(selectedSubmission(page).getByRole("status")).toContainText(/Accepted|Wrong answer/, { timeout: 30_000 });
+  await page.getByRole("button", { name: "Back to submissions" }).click();
+  await expect(submissionHistory(page)).toHaveCount(count);
+  await editorTab(page, "Code").click();
 }
 
 test("after the session, the interviewer reviews the score, timeline and diffs; candidates can't", async ({ browser }) => {
@@ -138,7 +141,7 @@ test("the review updates as submissions finish, without a reload", async ({ brow
     await cd.bringToFront();
     await replaceCode(cd, SLOW_SUM);
     await cd.getByRole("button", { name: "Submit" }).click();
-    await expect(results(cd)).toHaveCount(2);
+    await expect(selectedSubmission(cd)).toBeVisible();
     await iv.bringToFront();
     await iv.goto(roomUrl);
     iv.once("dialog", (d) => d.accept());
@@ -171,7 +174,7 @@ test("a failed refresh doesn't hide the review; the next successful one recovers
     // A slow Submit, so the review opens while it's still being graded and keeps polling.
     await replaceCode(cd, SLOW_SUM);
     await cd.getByRole("button", { name: "Submit" }).click();
-    await expect(results(cd)).toHaveCount(1);
+    await expect(selectedSubmission(cd)).toBeVisible();
 
     // The review loads normally (still grading, so it keeps polling)…
     await iv.bringToFront();

@@ -1,4 +1,6 @@
 import type {
+  AddRoomTestRequest,
+  RoomTestSuggestions,
   CandidateQuestionView,
   CandidateSubmissionView,
   CreateRoomResponse,
@@ -7,6 +9,7 @@ import type {
   EvaluationDraftInput,
   EvaluationView,
   InterviewerSubmissionView,
+  HiddenCaseReplayResult,
   InterviewSummaryDraft,
   EditSummaryDraftRequest,
   JoinRoomResponse,
@@ -17,6 +20,7 @@ import type {
   QuestionDetail,
   QuestionDraftInput,
   QuestionSummary,
+  QuestionSubmissionHistory,
   RoomSummary,
   RoomReview,
   RoomView,
@@ -103,8 +107,19 @@ export const api = {
   revealQuestion: (roomId: string, roomQuestionId: string) =>
     request<{ roomQuestionId: string; revealed: true }>("POST", `/rooms/${roomId}/questions/${roomQuestionId}/reveal`),
   joinRoom: (inviteCode: string) => request<JoinRoomResponse>("POST", "/rooms/join", { inviteCode }),
+  suggestRoomTests: (roomId: string, questionId: string) =>
+    request<RoomTestSuggestions>("POST", `/rooms/${roomId}/questions/${questionId}/tests/suggest`),
+  addRoomTest: (roomId: string, questionId: string, test: AddRoomTestRequest) =>
+    request<void>("POST", `/rooms/${roomId}/questions/${questionId}/tests`, test),
   room: (roomId: string) => request<RoomView>("GET", `/rooms/${roomId}`),
   roomSubmissions: (roomId: string) => request<SubmissionView[]>("GET", `/rooms/${roomId}/submissions`),
+  questionSubmissions: (roomId: string, questionId: string, before?: string) =>
+    request<QuestionSubmissionHistory>("GET", `/rooms/${roomId}/questions/${questionId}/submissions${before ? `?before=${encodeURIComponent(before)}` : ""}`),
+  submission: (submissionId: string) => request<SubmissionView>("GET", `/submissions/${submissionId}`),
+  failedHiddenCase: (submissionId: string, testId: string) =>
+    request<{ input: string; expectedOutput: string }>("GET", `/submissions/${submissionId}/hidden-tests/${testId}`),
+  replayHiddenCase: (submissionId: string, testId: string) =>
+    request<HiddenCaseReplayResult>("POST", `/submissions/${submissionId}/hidden-tests/${testId}/replay`),
   closeRoom: (roomId: string) => request<{ roomId: string; status: "closed" }>("POST", `/rooms/${roomId}/close`),
   submit: (body: CreateSubmissionRequest, idempotencyKey: string) =>
     request<CreateSubmissionResponse>("POST", "/submissions", body, { "idempotency-key": idempotencyKey }),

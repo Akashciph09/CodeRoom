@@ -217,12 +217,13 @@ test("narrow screens use tabs without remounting the editor", async ({ browser }
     expect(await editorText(page)).toBe(code);
     await expect.poll(async () => (await monacoBox(page)).width).toBeGreaterThan(550); // the editor uses the full width
 
-    // Run from the Code tab: the Tests tab marks the new result.
+    // Run from the Code tab opens Tests on narrow screens.
     await page.getByRole("button", { name: "Run", exact: true }).click();
-    await expect(tabs.getByRole("tab", { name: /Tests \(new\)/ })).toBeVisible();
+    await expect(tabs.getByRole("tab", { name: "Tests", exact: true })).toHaveAttribute("aria-selected", "true");
 
     // Keyboard tab navigation (←/→) and the panels behind the tabs.
-    await tabs.getByRole("tab", { name: "Code" }).focus();
+    await tabs.getByRole("tab", { name: "Code", exact: true }).click();
+    await tabs.getByRole("tab", { name: "Code", exact: true }).focus();
     await page.keyboard.press("ArrowLeft");
     await expect(tabs.getByRole("tab", { name: "Question" })).toBeFocused();
     await expect(page.getByRole("complementary", { name: "Question" })).toBeVisible();

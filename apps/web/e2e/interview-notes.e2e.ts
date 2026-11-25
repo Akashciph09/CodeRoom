@@ -35,7 +35,7 @@ test("interviewer notes: private tab, links, edit/delete, after the end, on the 
       await replaceCode(cd, SUM);
       await cd.getByRole("button", { name: "Run", exact: true }).click();
       await expect(results(cd).first()).toContainText("Accepted");
-      // A run starting would normally switch to Test Result — never away from a note being written.
+      // An incoming run leaves the interviewer's selected tab and note draft intact.
       await expect(testsPane(iv).getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
       await expect(iv.getByLabel("New note", { exact: true })).toHaveValue(SECRET);
 

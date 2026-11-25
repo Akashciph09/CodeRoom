@@ -77,7 +77,7 @@ export function ReviewPage() {
     if (!live) return;
     return connectRoomEvents(roomId, {
       onEvent: (e) => {
-        if (e.type === "submission:queued" || e.type === "submission:result" || e.type === "room:closed" || e.type === "room:question_revealed") load();
+        if (e.type === "submission:queued" || e.type === "submission:result" || e.type === "room:closed" || e.type === "room:question_revealed" || e.type === "room:tests_added") load();
       },
       onStatus: () => {},
       onOpen: load,
@@ -259,8 +259,11 @@ function CandidateReview({ candidate, questions, start }: { candidate: ReviewCan
           <span className="muted"> / 100</span>
         </div>
       </div>
+      {candidate.questions.some((question) => question.needsResubmit) && (
+        <p className="warning small" role="status">Provisional score. Questions awaiting a resubmit contribute zero points.</p>
+      )}
       <p className="muted small">
-        Test score: share of each revealed question's tests passed on its best Submit (hidden tests included), weighted as
+        Test score uses each revealed question’s best Submit on the current test suite, including hidden tests, weighted as
         shown. It measures correctness only — not approach, code quality or communication — and is evidence for your
         evaluation, not a decision.
       </p>
@@ -278,12 +281,14 @@ function CandidateReview({ candidate, questions, start }: { candidate: ReviewCan
             const q = questions.find((x) => x.id === s.roomQuestionId);
             return (
               <tr key={s.roomQuestionId}>
-                <td>Q{q?.position}</td>
+                <td>Q{q?.position}{q?.testRevision !== undefined && <span className="muted small"> · Revision {q.testRevision}</span>}</td>
                 <td>
                   {!s.counted ? (
                     <span className="muted">not revealed — not counted</span>
                   ) : s.best ? (
                     `${s.best.passed}/${s.best.total} tests`
+                  ) : s.needsResubmit ? (
+                    <span className="warning small">Needs resubmit</span>
                   ) : (
                     <span className="muted">no Submit</span>
                   )}
@@ -369,6 +374,7 @@ function TimelineEntry({
       <div className="timeline-row">
         <span className="mono muted">+{formatElapsed(Date.parse(s.createdAt) - start)}</span>
         <span className="badge">{s.mode === "submit" ? "Submit" : "Run"}</span>
+        {s.roomTestRevision !== undefined && <span className="muted small">Revision {s.roomTestRevision}</span>}
         <span className={`verdict ${verdict === "accepted" ? "ok" : verdict ? "bad" : "pending"}`}>
           {verdict ? VERDICT_LABEL[verdict] : "Running…"}
         </span>

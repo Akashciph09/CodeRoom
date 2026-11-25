@@ -68,15 +68,20 @@ export type CreateSubmissionRequest = z.infer<typeof CreateSubmissionRequest>;
 export const CreateSubmissionResponse = z.object({
   submissionId: z.string().uuid(),
   status: SubmissionStatus,
+  createdAt: z.string().optional(),
+  roomTestRevision: z.number().int().nonnegative().optional(),
 });
 export type CreateSubmissionResponse = z.infer<typeof CreateSubmissionResponse>;
 
 /** What a candidate is allowed to see about a submission. No hidden-test detail. */
 export const CandidateSubmissionView = z.object({
+  roomTestRevision: z.number().int().nonnegative().optional(),
   submissionId: z.string(),
   roomQuestionId: z.string(),
   status: SubmissionStatus,
   mode: SubmissionMode,
+  language: Language.optional(),
+  createdAt: z.string().optional(),
   overall: Verdict.optional(),
   publicResults: z.array(TestResult),
   hiddenPassed: z.number().int().optional(),
@@ -87,6 +92,7 @@ export type CandidateSubmissionView = z.infer<typeof CandidateSubmissionView>;
 
 /** Interviewer view: every test result, flagged hidden or not. */
 export const InterviewerSubmissionView = z.object({
+  roomTestRevision: z.number().int().nonnegative().optional(),
   submissionId: z.string(),
   roomQuestionId: z.string(),
   userId: z.string(),
@@ -100,3 +106,12 @@ export const InterviewerSubmissionView = z.object({
   createdAt: z.string(),
 });
 export type InterviewerSubmissionView = z.infer<typeof InterviewerSubmissionView>;
+
+export const QuestionSubmissionHistory = z.object({
+  latestRun: z.union([InterviewerSubmissionView, CandidateSubmissionView]).optional(),
+  submissions: z.array(z.object({
+    attemptNumber: z.number().int().positive(),
+    view: z.union([InterviewerSubmissionView, CandidateSubmissionView]),
+  })),
+});
+export type QuestionSubmissionHistory = z.infer<typeof QuestionSubmissionHistory>;

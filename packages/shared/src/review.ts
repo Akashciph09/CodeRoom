@@ -17,6 +17,7 @@ export const ReviewQuestion = z.object({
   title: z.string(),
   version: z.number().int().nullable(),
   points: z.number().int(),
+  testRevision: z.number().int().nonnegative().optional(),
   revealedAt: z.string().optional(),
   /**
    * Reveal window: from this question's reveal to the next reveal, or to the end (or now, while live).
@@ -34,6 +35,7 @@ export const QuestionScore = z.object({
   counted: z.boolean(),
   /** Contribution to the score out of 100. */
   earned: z.number(),
+  needsResubmit: z.boolean().optional(),
   best: z.object({ submissionId: z.string(), passed: z.number().int(), total: z.number().int() }).optional(),
 });
 export type QuestionScore = z.infer<typeof QuestionScore>;
@@ -41,6 +43,7 @@ export type QuestionScore = z.infer<typeof QuestionScore>;
 export const ReviewSubmission = z.object({
   submissionId: z.string(),
   roomQuestionId: z.string(),
+  roomTestRevision: z.number().int().nonnegative().optional(),
   mode: SubmissionMode,
   status: SubmissionStatus,
   overall: Verdict.optional(),

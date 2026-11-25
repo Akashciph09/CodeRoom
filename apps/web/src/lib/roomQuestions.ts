@@ -84,11 +84,15 @@ export const nextToReveal = (room: RoomView): RoomQuestionView | undefined => ro
  */
 export function mergeRoom(prev: RoomView | null, next: RoomView): RoomView {
   if (!prev || prev.roomId !== next.roomId) return next;
-  const wasRevealed = new Set(prev.questions.filter((q) => q.revealed).map((q) => q.id));
+  const previous = new Map(prev.questions.map((q) => [q.id, q]));
   const byId = new Map(next.questions.map((q) => [q.id, q]));
   // A candidate's older snapshot may hold a question a stale response lacks; keep it.
   const questions = [
-    ...next.questions.map((q) => (wasRevealed.has(q.id) && !q.revealed ? { ...q, revealed: true } : q)),
+    ...next.questions.map((q) => {
+      const old = previous.get(q.id);
+      if (old && ((old.testRevision ?? 0) > (q.testRevision ?? 0) || (old.revealed && !q.revealed))) return old;
+      return q;
+    }),
     ...prev.questions.filter((q) => !byId.has(q.id) && q.revealed),
   ].sort((a, b) => a.position - b.position);
   return { ...next, status: prev.status === "closed" ? "closed" : next.status, questions };

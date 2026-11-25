@@ -47,6 +47,7 @@ export function attachRealtimeGateway(server: Server) {
     onClosed: (roomId) => events.markClosed(roomId),
     revealCandidates: () => events.openRoomIds(), // ended rooms can't reveal any more
     onRevealed: (roomId, count) => events.markRevealed(roomId, count),
+    onTestsAdded: (roomId, revision) => events.markTestsAdded(roomId, revision),
   });
 
   const wss = new WebSocketServer({

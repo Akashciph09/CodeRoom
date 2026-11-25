@@ -150,6 +150,7 @@ export const roomQuestions = pgTable(
       .references(() => questionVersions.id, { onDelete: "restrict" }),
     /** Weight in the test score (ADR 0011). Relative: the score is normalized over revealed questions. */
     points: integer("points").notNull().default(1),
+    testRevision: integer("test_revision").notNull().default(0),
     revealedAt: timestamp("revealed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -162,6 +163,19 @@ export const roomQuestions = pgTable(
     check("room_questions_position_positive", sql`${t.position} >= 1`),
     check("room_questions_points_range", sql`${t.points} BETWEEN 1 AND 100`),
   ],
+).enableRLS();
+
+export const roomTestCases = pgTable(
+  "room_test_cases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    roomQuestionId: uuid("room_question_id").notNull().references(() => roomQuestions.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    input: text("input").notNull(),
+    expectedOutput: text("expected_output").notNull(),
+    isHidden: boolean("is_hidden").notNull(),
+  },
+  (t) => [uniqueIndex("room_test_cases_revision").on(t.roomQuestionId, t.revision)],
 ).enableRLS();
 
 export const roomParticipants = pgTable(
@@ -202,6 +216,7 @@ export const submissions = pgTable(
     questionVersionId: uuid("question_version_id")
       .notNull()
       .references(() => questionVersions.id, { onDelete: "restrict" }),
+    roomTestRevision: integer("room_test_revision").notNull().default(0),
     userId: uuid("user_id")
       .notNull()
       .references(() => authUsers.id, { onDelete: "cascade" }),
@@ -263,6 +278,23 @@ export const testResults = pgTable(
   (t) => [
     primaryKey({ columns: [t.submissionId, t.testCaseId] }),
     check("hidden_output_not_stored", sql`NOT ${t.isHidden} OR (${t.stdout} IS NULL AND ${t.stderr} IS NULL)`),
+  ],
+).enableRLS();
+
+export const roomTestResults = pgTable(
+  "room_test_results",
+  {
+    submissionId: uuid("submission_id").notNull().references(() => submissions.id, { onDelete: "cascade" }),
+    testCaseId: uuid("test_case_id").notNull().references(() => roomTestCases.id, { onDelete: "cascade" }),
+    isHidden: boolean("is_hidden").notNull(),
+    verdict: verdictEnum("verdict").notNull(),
+    timeMs: integer("time_ms").notNull(),
+    stdout: text("stdout"),
+    stderr: text("stderr"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.submissionId, t.testCaseId] }),
+    check("room_hidden_output_not_stored", sql`NOT ${t.isHidden} OR (${t.stdout} IS NULL AND ${t.stderr} IS NULL)`),
   ],
 ).enableRLS();
 

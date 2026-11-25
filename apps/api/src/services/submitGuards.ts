@@ -9,7 +9,7 @@ const WINDOW_SECONDS = 60;
  * Fixed-window rate limit per user, counted in Redis so it holds across API instances.
  * Counts every submit attempt (valid or not) — the point is to cap load on the sandbox and DB.
  */
-export async function enforceSubmitRateLimit(userId: string) {
+export async function enforceSubmitRateLimit(userId: string, label = "submissions") {
   const window = Math.floor(Date.now() / 1000 / WINDOW_SECONDS);
   const key = `rl:submit:${userId}:${window}`;
   const [[, count]] = (await redis.multi().incr(key).expire(key, WINDOW_SECONDS + 1).exec()) as [
@@ -18,7 +18,7 @@ export async function enforceSubmitRateLimit(userId: string) {
   ];
   if (count > config.SUBMIT_RATE_LIMIT_PER_MIN) {
     const retryAfter = WINDOW_SECONDS - (Math.floor(Date.now() / 1000) % WINDOW_SECONDS);
-    throw new TooManyRequests(`Too many submissions; try again in ${retryAfter}s`, retryAfter);
+    throw new TooManyRequests(`Too many ${label}; try again in ${retryAfter}s`, retryAfter);
   }
 }
 

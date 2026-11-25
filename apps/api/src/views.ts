@@ -46,8 +46,11 @@ export function toCandidateView(s: Submission, results: ResultRow[], custom: Cus
   return {
     submissionId: s.id,
     roomQuestionId: s.roomQuestionId,
+    roomTestRevision: s.roomTestRevision,
     status: s.status,
     mode: s.mode,
+    language: s.language,
+    createdAt: s.createdAt.toISOString(),
     ...(s.overall ? { overall: s.overall } : {}),
     publicResults: results.filter((r) => !r.isHidden).map(base),
     ...(s.mode === "submit" && s.status === "completed"
@@ -64,6 +67,7 @@ export function toInterviewerView(s: Submission, results: ResultRow[], custom: C
   return {
     submissionId: s.id,
     roomQuestionId: s.roomQuestionId,
+    roomTestRevision: s.roomTestRevision,
     userId: s.userId,
     status: s.status,
     mode: s.mode,

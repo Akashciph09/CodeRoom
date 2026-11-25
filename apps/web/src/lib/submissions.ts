@@ -1,12 +1,47 @@
 import type { SubmissionView } from "./api";
+import type { Language, SubmissionMode } from "@coderoom/shared";
+
+type PendingEntry = {
+  submissionId: string;
+  pending: true;
+  roomQuestionId?: string;
+  mode?: SubmissionMode;
+  language?: Language;
+  createdAt?: string;
+  roomTestRevision?: number;
+};
 
 export type SubmissionEntry =
   /** Accepted, no result yet. `roomQuestionId` is known from our own submit or the queued event. */
-  | { submissionId: string; pending: true; roomQuestionId?: string }
+  | PendingEntry
   | { submissionId: string; pending: false; view: SubmissionView };
 
 /** The room question an entry answers (undefined only for a placeholder that never learned it). */
 export const questionOf = (e: SubmissionEntry) => (e.pending ? e.roomQuestionId : e.view.roomQuestionId);
+
+export const attemptMetadata = (entry: SubmissionEntry) => entry.pending ? entry : entry.view;
+
+export function numberedHistory(entries: SubmissionEntry[], numbers: Readonly<Record<string, number>>) {
+  const sorted = entries.flatMap((entry) => {
+    const attemptNumber = numbers[entry.submissionId];
+    return attemptNumber === undefined ? [] : [{ entry, attemptNumber }];
+  }).sort((a, b) => b.attemptNumber - a.attemptNumber);
+  // After a long disconnect the new page may not overlap the cached pages. Stop at the first gap.
+  const gap = sorted.findIndex((row, index) => index > 0 && sorted[index - 1]!.attemptNumber - row.attemptNumber > 1);
+  return gap < 0 ? sorted : sorted.slice(0, gap);
+}
+
+/** Acceptance time orders attempts even when the first event we receive is a late result. */
+export function attemptsFor(entries: SubmissionEntry[], questionId: string, mode: SubmissionMode) {
+  return entries.filter((entry) => questionOf(entry) === questionId && attemptMetadata(entry).mode === mode)
+    .sort((a, b) => {
+      const aTime = attemptMetadata(a).createdAt;
+      const bTime = attemptMetadata(b).createdAt;
+      return aTime && bTime
+        ? bTime.localeCompare(aTime) || b.submissionId.localeCompare(a.submissionId)
+        : Number(Boolean(bTime)) - Number(Boolean(aTime));
+    });
+}
 
 /**
  * How far along a submission is. Results only move forward: a slower source (a history request
@@ -37,10 +72,10 @@ export function upsertEntry(list: SubmissionEntry[], incoming: SubmissionEntry):
   const next = list.slice();
   const current = list[i]!;
   const winner = newer(current, incoming);
-  // Two placeholders for the same submission: don't lose the question one of them knew.
+  // Two placeholders may get their metadata from different sources during a rolling deploy.
   next[i] =
-    winner.pending && current.pending && !winner.roomQuestionId && current.roomQuestionId
-      ? { ...winner, roomQuestionId: current.roomQuestionId }
+    winner.pending && current.pending
+      ? { ...current, ...winner }
       : winner;
   return next;
 }

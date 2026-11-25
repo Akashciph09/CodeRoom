@@ -18,6 +18,7 @@ export interface RealtimeSwitch {
    * publish was lost and the reconciler hadn't delivered it either.
    */
   dropEvents(type: string): void;
+  holdNextEvent(type: string): { received: Promise<void>; release: () => void };
 }
 
 /**
@@ -34,6 +35,7 @@ export async function openAs(browser: Browser, name: string): Promise<Participan
   let online = true;
   const open = new Set<WebSocketRoute>();
   const droppedEvents = new Set<string>();
+  const heldEvents = new Map<string, (deliver: () => void) => void>();
   const eventType = (message: string | Buffer) => {
     if (typeof message !== "string" || !message.startsWith("{")) return null; // Yjs frames are binary
     try {
@@ -52,6 +54,12 @@ export async function openAs(browser: Browser, name: string): Promise<Participan
     server.onMessage((message) => {
       const type = eventType(message);
       if (type && droppedEvents.has(type)) return;
+      const hold = type ? heldEvents.get(type) : undefined;
+      if (type && hold) {
+        heldEvents.delete(type);
+        hold(() => ws.send(message));
+        return;
+      }
       ws.send(message);
     });
     open.add(ws);
@@ -68,6 +76,14 @@ export async function openAs(browser: Browser, name: string): Promise<Participan
     },
     dropEvents(type) {
       droppedEvents.add(type);
+    },
+    holdNextEvent(type) {
+      let deliver: (() => void) | undefined;
+      const received = new Promise<void>((resolve) => heldEvents.set(type, (send) => {
+        deliver = send;
+        resolve();
+      }));
+      return { received, release: () => deliver?.() };
     },
   };
 
@@ -199,6 +215,10 @@ export async function expectUnchanged(read: () => Promise<string>, expected: str
 }
 
 export const results = (page: Page) => page.locator(".results-panel .submission");
+export const selectedSubmission = (page: Page) => page.getByRole("article", { name: "Selected submission" });
+export const submissionHistory = (page: Page) => page.getByRole("list", { name: "Submission history" }).getByRole("button");
+export const editorTab = (page: Page, name: "Code" | "Submissions") => page.getByRole("tablist", { name: "Editor views" }).getByRole("tab", { name, exact: true });
+export const testResultTab = (page: Page) => page.getByRole("tab", { name: "Test Result" });
 export const avatars = (page: Page) => page.locator(".presence .avatar");
 
 /** Author and publish a question with one public test, through the UI. */

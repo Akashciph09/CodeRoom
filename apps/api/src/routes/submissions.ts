@@ -1,5 +1,5 @@
 import { Router, type Response } from "express";
-import { and, eq, submissions, type Submission } from "@coderoom/db";
+import { and, eq, failedHiddenCaseFor, submissions, type Submission } from "@coderoom/db";
 import {
   CreateSubmissionRequest,
   roomEventsChannel,
@@ -9,8 +9,8 @@ import {
 import { requireRoomRole } from "../auth.js";
 import { config } from "../config.js";
 import { db } from "../db.js";
-import { asyncHandler, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
-import { enqueueExecution, redis } from "../queue.js";
+import { asyncHandler, HttpError, NotFound, PayloadTooLarge, UnprocessableEntity } from "../errors.js";
+import { enqueueExecution, redis, replayHiddenCase } from "../queue.js";
 import { submittableQuestion } from "../services/roomQuestions.js";
 import { enforceSubmitRateLimit, parseIdempotencyKey } from "../services/submitGuards.js";
 import { loadSubmissionWithResults, viewFor } from "../services/submissionViews.js";
@@ -48,7 +48,12 @@ async function replay(res: Response, existing: Submission, body: CreateSubmissio
   if (!same) throw new UnprocessableEntity("Idempotency-Key was already used for a different request");
   // Cheap insurance if the original enqueue failed (jobId dedupes if it didn't).
   if (existing.status === "queued") await tryEnqueue(existing.id);
-  const response: CreateSubmissionResponse = { submissionId: existing.id, status: existing.status };
+  const response: CreateSubmissionResponse = {
+    submissionId: existing.id,
+    status: existing.status,
+    createdAt: existing.createdAt.toISOString(),
+    roomTestRevision: existing.roomTestRevision,
+  };
   res.status(202).setHeader("Idempotent-Replayed", "true").json(response);
 }
 
@@ -87,6 +92,7 @@ submissionsRouter.post(
         .values({
           roomId: body.roomId,
           roomQuestionId: body.roomQuestionId,
+          roomTestRevision: target.testRevision,
           questionVersionId: target.versionId, // graded against that question's pinned version
           userId,
           language: body.language,
@@ -97,7 +103,7 @@ submissionsRouter.post(
         })
         // Two concurrent requests with the same key: exactly one row wins; the other replays it.
         .onConflictDoNothing({ target: [submissions.userId, submissions.idempotencyKey] })
-        .returning({ id: submissions.id });
+        .returning({ id: submissions.id, createdAt: submissions.createdAt, roomTestRevision: submissions.roomTestRevision });
       return row;
     });
 
@@ -108,6 +114,7 @@ submissionsRouter.post(
     }
 
     const submissionId = inserted.id;
+    const metadata = { createdAt: inserted.createdAt.toISOString(), roomTestRevision: inserted.roomTestRevision };
     await tryEnqueue(submissionId);
 
     // Best effort: realtime clients learn about it; REST still works if this fails.
@@ -116,11 +123,46 @@ submissionsRouter.post(
       roomId: body.roomId,
       submissionId,
       roomQuestionId: body.roomQuestionId,
+      mode: body.mode,
+      language: body.language,
+      ...metadata,
     };
     redis.publish(roomEventsChannel(body.roomId), JSON.stringify(event)).catch(() => {});
 
-    const response: CreateSubmissionResponse = { submissionId, status: "queued" };
+    const response: CreateSubmissionResponse = { submissionId, status: "queued", ...metadata };
     res.status(202).json(response);
+  }),
+);
+
+async function inspectableHiddenCase(params: Record<string, string>, userId: string) {
+  const id = UuidParam.parse(params.id);
+  const testId = UuidParam.parse(params.testId);
+  const [submission] = await db.select().from(submissions).where(eq(submissions.id, id));
+  if (!submission) throw new NotFound();
+  await requireRoomRole(submission.roomId, userId, "interviewer");
+  if (submission.mode !== "submit" || submission.status !== "completed") throw new NotFound();
+  const test = await failedHiddenCaseFor(db, submission, testId);
+  if (!test) throw new NotFound();
+  return { id, testId, test };
+}
+
+submissionsRouter.get(
+  "/:id/hidden-tests/:testId",
+  asyncHandler(async (req, res) => {
+    const { test } = await inspectableHiddenCase(req.params, req.user!.userId);
+    res.setHeader("Cache-Control", "private, no-store").json(test);
+  }),
+);
+
+submissionsRouter.post(
+  "/:id/hidden-tests/:testId/replay",
+  asyncHandler(async (req, res) => {
+    const userId = req.user!.userId;
+    const { id, testId } = await inspectableHiddenCase(req.params, userId);
+    await enforceSubmitRateLimit(userId, "sandbox requests");
+    const result = await replayHiddenCase(id, testId);
+    if (!result) throw new HttpError(503, "Replay unavailable. Try again.");
+    res.setHeader("Cache-Control", "private, no-store").json(result);
   }),
 );
 

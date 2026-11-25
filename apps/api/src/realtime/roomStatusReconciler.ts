@@ -17,6 +17,7 @@ export function startRoomStatusReconciler(opts: {
   /** Rooms with event listeners here, whose revealed questions are re-read. */
   revealCandidates?: () => string[];
   onRevealed?: (roomId: string, revealedCount: number) => void;
+  onTestsAdded?: (roomId: string, totalRevision: number) => void;
 }) {
   let running = false;
   const tick = async () => {
@@ -33,16 +34,20 @@ export function startRoomStatusReconciler(opts: {
       }
 
       const revealIds = [...new Set(opts.revealCandidates?.() ?? [])];
-      if (revealIds.length > 0 && opts.onRevealed) {
+      if (revealIds.length > 0 && (opts.onRevealed || opts.onTestsAdded)) {
         const counts = await opts.db
           .select({
             roomId: roomQuestions.roomId,
             revealed: sql<number>`count(${roomQuestions.revealedAt})::int`,
+            totalRevision: sql<number>`sum(${roomQuestions.testRevision})::int`,
           })
           .from(roomQuestions)
           .where(inArray(roomQuestions.roomId, revealIds))
           .groupBy(roomQuestions.roomId);
-        for (const { roomId, revealed } of counts) opts.onRevealed(roomId, revealed);
+        for (const { roomId, revealed, totalRevision } of counts) {
+          opts.onRevealed?.(roomId, revealed);
+          opts.onTestsAdded?.(roomId, totalRevision);
+        }
       }
     } catch (err) {
       console.error("room status reconcile failed:", err);

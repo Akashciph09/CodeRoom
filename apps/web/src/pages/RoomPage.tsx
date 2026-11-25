@@ -8,11 +8,13 @@ import { Presence, RemoteCursorStyles } from "../components/Presence";
 import { QuestionNav } from "../components/QuestionNav";
 import { QuestionPanel } from "../components/QuestionPanel";
 import { RoomColumns, useRoomLayout } from "../components/RoomLayout";
+import { RoomTests } from "../components/RoomTests";
+import { SubmissionResults } from "../components/ResultsPanel";
 import { TestPanel } from "../components/TestPanel";
 import { NotesPanel } from "../components/NotesPanel";
 import { TopBar } from "../components/TopBar";
 import { api, ApiError, isInterviewerView, isRetryable, submitWithRetry } from "../lib/api";
-import { mergeHistory, upsertEntry, type SubmissionEntry } from "../lib/submissions";
+import { attemptsFor, mergeHistory, numberedHistory, progress, upsertEntry, type SubmissionEntry } from "../lib/submissions";
 import { displayName, useSession } from "../lib/auth";
 import {
   colorFor,
@@ -38,6 +40,10 @@ import {
 
 export function RoomPage() {
   const { roomId = "" } = useParams();
+  return <InterviewRoom key={roomId} roomId={roomId} />;
+}
+
+function InterviewRoom({ roomId }: { roomId: string }) {
   const { session } = useSession();
   const [room, setRoom] = useState<RoomView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -47,8 +53,14 @@ export function RoomPage() {
   const [eventStatus, setEventStatus] = useState<ConnectionStatus>("connecting");
   /** The question this participant is looking at (local — each side navigates on their own). */
   const [activePosition, setActivePosition] = useState(1);
+  const [submissionNavigation, setSubmissionNavigation] = useState<{ questionId: string; selectedId?: string }>();
+  const [runNavigation, setRunNavigation] = useState(0);
+  const [sending, setSending] = useState<Extract<SubmissionEntry, { pending: true }>>();
   const [language, setLanguage] = useState<Language>("python");
   const [entries, setEntries] = useState<SubmissionEntry[]>([]);
+  const [attemptNumbers, setAttemptNumbers] = useState<Record<string, number>>({});
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [historyError, setHistoryError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [revealing, setRevealing] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -57,6 +69,9 @@ export function RoomPage() {
   /** Shared custom cases of the question being viewed (ADR 0010). */
   const [customCases, setCustomCases] = useState<SharedCase[]>([]);
   const layout = useRoomLayout();
+  const active = room?.questions.find((q) => q.position === activePosition) ?? room?.questions[0];
+  const activeQuestionId = useRef(active?.id);
+  activeQuestionId.current = active?.id;
 
   // Room metadata. Re-fetched on every events (re)connect and on `room:question_revealed` — see below.
   useEffect(() => {
@@ -85,12 +100,16 @@ export function RoomPage() {
    * Re-fetch history (on every events (re)connect). Merged, not replaced: a result event that arrived
    * while this request was in flight is further along than the snapshot and must not be rolled back.
    */
-  const refreshHistory = useCallback(() => {
-    api
-      .roomSubmissions(roomId)
-      .then((list) => setEntries((prev) => mergeHistory(prev, list)))
-      .catch(() => {});
+  const loadHistoryPage = useCallback(async (questionId: string, before?: string) => {
+    const page = await api.questionSubmissions(roomId, questionId, before);
+    const list = page.submissions.map(({ view }) => view);
+    setAttemptNumbers((prev) => ({ ...prev, ...Object.fromEntries(page.submissions.map(({ view, attemptNumber }) => [view.submissionId, attemptNumber])) }));
+    setEntries((prev) => mergeHistory(prev, page.latestRun ? [page.latestRun, ...list] : list));
   }, [roomId]);
+  const refreshHistory = useCallback((questionId = activeQuestionId.current) => {
+    if (questionId) void loadHistoryPage(questionId).catch(() => {});
+  }, [loadHistoryPage]);
+  useEffect(() => { refreshHistory(); setHistoryError(undefined); }, [active?.id, refreshHistory]);
 
   // Shared editor (Yjs) — one doc per room, one Y.Text per question inside it.
   useEffect(() => {
@@ -163,20 +182,27 @@ export function RoomPage() {
         // Also re-fetch: a reveal whose notification was lost may have landed just before the close, and
         // gateways stop reconciling reveals for ended rooms — this is the last chance to pick it up.
         refreshRoom();
-      } else if (event.type === "room:question_revealed") {
+      } else if (event.type === "room:question_revealed" || event.type === "room:tests_added") {
         refreshRoom();
       } else if (event.type === "submission:queued") {
+        const { type: _type, roomId: _roomId, ...attempt } = event;
         setEntries((prev) =>
-          upsertEntry(prev, { submissionId: event.submissionId, pending: true, roomQuestionId: event.roomQuestionId }),
+          upsertEntry(prev, { ...attempt, pending: true }),
         );
+        if (attempt.mode !== "run" || !attempt.createdAt) refreshHistory(attempt.roomQuestionId);
       } else if (event.type === "submission:result") {
         const view = event.result;
         setEntries((prev) => upsertEntry(prev, { submissionId: view.submissionId, pending: false, view }));
+        if (view.mode === "submit") refreshHistory(view.roomQuestionId);
       }
     };
     const onOpen = () => {
       refreshHistory();
       refreshRoom();
+      // Notes can link recent attempts from other questions without first visiting each question.
+      if (room.role === "interviewer") void api.roomSubmissions(room.roomId)
+        .then((list) => setEntries((prev) => mergeHistory(prev, list)))
+        .catch(() => {});
     };
     return connectRoomEvents(room.roomId, { onEvent, onStatus: setEventStatus, onOpen });
     // Only (re)subscribe when the room itself changes, not when its status or questions change.
@@ -199,7 +225,6 @@ export function RoomPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealedCount]);
 
-  const active = room?.questions.find((q) => q.position === activePosition) ?? room?.questions[0];
   const activeText = useMemo(
     () => (roomDoc && active ? roomDoc.textFor(active.position) : null),
     [roomDoc, active?.position],
@@ -254,20 +279,33 @@ export function RoomPage() {
       if (pendingAttempt.current?.fingerprint !== fingerprint) {
         pendingAttempt.current = { fingerprint, key: crypto.randomUUID() };
       }
+      const attempt = { submissionId: pendingAttempt.current.key, pending: true as const, roomQuestionId: active.id, mode, language };
+      setSending(attempt);
+      if (mode === "run") {
+        setRunNavigation((n) => n + 1);
+      } else {
+        setSubmissionNavigation({ questionId: active.id, selectedId: attempt.submissionId });
+      }
       setSubmitting(true);
       setNotice(null);
       try {
-        const { submissionId } = await submitWithRetry(body, pendingAttempt.current.key);
+        const { submissionId, status, createdAt, roomTestRevision } = await submitWithRetry(body, attempt.submissionId);
         pendingAttempt.current = null;
-        setEntries((prev) => upsertEntry(prev, { submissionId, pending: true, roomQuestionId: body.roomQuestionId }));
+        setEntries((prev) => upsertEntry(prev, {
+          ...attempt, submissionId, ...(createdAt && { createdAt }), ...(roomTestRevision !== undefined && { roomTestRevision }),
+        }));
+        setSubmissionNavigation((current) => current?.selectedId === attempt.submissionId ? { ...current, selectedId: submissionId } : current);
+        if (mode === "submit" || status !== "queued" || !createdAt) refreshHistory(body.roomQuestionId);
       } catch (err) {
         if (!isRetryable(err)) pendingAttempt.current = null; // 4xx is final: the next click is a new action
+        setSubmissionNavigation((current) => current?.selectedId === attempt.submissionId ? { questionId: current.questionId } : current);
         setNotice(err instanceof Error ? err.message : String(err));
       } finally {
+        setSending(undefined);
         setSubmitting(false);
       }
     },
-    [roomDoc, roomId, language, active],
+    [roomDoc, roomId, language, active, refreshHistory],
   );
 
   async function reveal() {
@@ -302,6 +340,45 @@ export function RoomPage() {
     });
   }
 
+  const submissions = active ? attemptsFor(entries, active.id, "submit") : [];
+  const history = numberedHistory(submissions, attemptNumbers);
+  const oldest = history.at(-1);
+  const before = oldest && oldest.attemptNumber > 1 ? oldest.entry.submissionId : undefined;
+
+  async function loadOlder() {
+    if (!active || !before || loadingOlder) return;
+    setLoadingOlder(true);
+    setHistoryError(undefined);
+    try {
+      await loadHistoryPage(active.id, before);
+    } catch {
+      if (activeQuestionId.current === active.id) setHistoryError("Couldn’t load older submissions. Try again.");
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+  const showSubmissionResults = !!active && submissionNavigation?.questionId === active.id;
+  const selectedId = showSubmissionResults ? submissionNavigation?.selectedId : undefined;
+  const selected = selectedId === sending?.submissionId ? sending : submissions.find((entry) => entry.submissionId === selectedId);
+  const latestRun = active ? attemptsFor(entries, active.id, "run")[0] : undefined;
+  const run = sending?.mode === "run" && sending.roomQuestionId === active?.id ? sending : latestRun;
+  const pendingRunId = latestRun && progress(latestRun) < 3 ? latestRun.submissionId : undefined;
+  const pendingSubmitId = selected && selected !== sending && progress(selected) < 3 ? selected.submissionId : undefined;
+
+  useEffect(() => {
+    const ids = [pendingRunId, pendingSubmitId].filter((id): id is string => id !== undefined);
+    if (!ids.length || eventStatus !== "connected") return;
+    // Events deliver the final result. Poll unresolved attempts to show running status and recover
+    // a missed completion without allowing a stale response to replace a newer result.
+    let stopped = false;
+    const timer = window.setInterval(() => {
+      for (const id of ids) void api.submission(id).then((view) => {
+        if (!stopped) setEntries((prev) => upsertEntry(prev, { submissionId: id, pending: false, view }));
+      }).catch(() => {});
+    }, 1500);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [pendingRunId, pendingSubmitId, eventStatus]);
+
   if (error) {
     return (
       <>
@@ -322,6 +399,7 @@ export function RoomPage() {
   const closed = room.status !== "open";
   const canReveal = !closed && !isCandidate && nextToReveal(room)?.id === active.id;
   const multi = room.questions.length > 1;
+  const selectSubmission = (id?: string) => setSubmissionNavigation({ questionId: active.id, selectedId: id });
 
   return (
     <div className="room-page">
@@ -359,10 +437,12 @@ export function RoomPage() {
         )}
       </TopBar>
       {closed && <div className="banner">This interview has ended. The code is read-only.</div>}
+      {notice && <div className="banner error" role="alert">{notice}</div>}
 
       <RoomColumns
         layout={layout}
-        resultsKey={entries.map((e) => `${e.submissionId}:${e.pending ? "pending" : e.view.status}`).join(",")}
+        runNavigation={runNavigation}
+        resultsKey={run ? `${run.submissionId}:${progress(run)}` : ""}
         question={
           <section className="pane question-pane">
             {multi && <QuestionNav questions={room.questions} activePosition={active.position} onSelect={setActivePosition} />}
@@ -384,16 +464,32 @@ export function RoomPage() {
         code={
           <section className="pane code-pane" aria-label="Code">
             <div className="pane-head">
-              <span className="pane-title">
-                <span className="pane-icon ok" aria-hidden="true">&lt;/&gt;</span> Code
-              </span>
+              <div className="editor-tabs" role="tablist" aria-label="Editor views" onKeyDown={(event) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const index = event.key === "Home" ? 0 : event.key === "End" ? 1 : Number(!showSubmissionResults);
+                const tab = event.currentTarget.querySelectorAll("button")[index];
+                tab?.click();
+                tab?.focus();
+              }}>
+                <button id="editor-code-tab" type="button" role="tab" aria-selected={!showSubmissionResults} aria-controls="editor-code"
+                  tabIndex={showSubmissionResults ? -1 : 0} className={`pane-tab ${!showSubmissionResults ? "active" : ""}`}
+                  onClick={() => setSubmissionNavigation(undefined)}>
+                  <span className="pane-icon ok" aria-hidden="true">&lt;/&gt;</span> Code
+                </button>
+                <button id="editor-submissions-tab" type="button" role="tab" aria-selected={showSubmissionResults} aria-controls="room-submission-results"
+                  tabIndex={showSubmissionResults ? 0 : -1} className={`pane-tab ${showSubmissionResults ? "active" : ""}`}
+                  onClick={() => { if (!showSubmissionResults) selectSubmission(); }}>
+                  Submissions
+                </button>
+              </div>
               {multi && (
                 <span className="badge question-badge" title={active.question.title}>
                   Q{active.position}
                 </span>
               )}
               <div className="spacer" />
-              {isCandidate ? (
+              {isCandidate && (
                 <>
                   <button onClick={() => submit("run")} disabled={submitting || !roomDoc || closed}>
                     Run
@@ -402,50 +498,57 @@ export function RoomPage() {
                     Submit
                   </button>
                 </>
-              ) : (
-                <span className="muted small">Only the candidate can run code</span>
               )}
             </div>
-            <div className="pane-toolbar">
-              <select
-                className="bare-select"
-                aria-label="Language"
-                value={language}
-                onChange={(e) => changeLanguage(e.target.value as Language)}
-                disabled={!roomDoc || !active.revealed || closed}
-              >
-                <option value="python">Python</option>
-                <option value="javascript">JavaScript</option>
-              </select>
-              {notice && <span className="error small">{notice}</span>}
-              {!isCandidate && <span className="muted small">You see every test, including hidden ones.</span>}
-            </div>
-            {roomDoc && activeText ? (
-              <CollaborativeEditor
-                text={activeText}
-                awareness={roomDoc.provider.awareness}
-                language={language}
-                // Unrevealed questions are read-only for the interviewer too: nothing is typed into a buffer
-                // the candidate can't see yet.
-                readOnly={closed || !active.revealed}
-                onCursor={(line, column) => setCursor({ line, column })}
-              />
-            ) : (
-              <div className="editor center muted">Connecting…</div>
+            {isCandidate && !closed && (active.testRevision ?? 0) > 0 && !submissions.some((entry) =>
+              !entry.pending && entry.view.status === "completed" && entry.view.roomTestRevision === active.testRevision
+            ) && (
+              <div className="pane-toolbar small" role="status">The interviewer added additional tests. Please resubmit.</div>
             )}
-            <div className="pane-foot">
-              <span>{closed ? "Read-only" : docStatus === "connected" ? "Synced" : "Reconnecting…"}</span>
-              <span>
-                Ln {cursor.line}, Col {cursor.column}
-              </span>
+            <div id="editor-code" className="code-content" role="tabpanel" aria-labelledby="editor-code-tab" hidden={showSubmissionResults}>
+              <div className="pane-toolbar">
+                <select
+                  className="bare-select"
+                  aria-label="Language"
+                  value={language}
+                  onChange={(e) => changeLanguage(e.target.value as Language)}
+                  disabled={!roomDoc || !active.revealed || closed}
+                >
+                  <option value="python">Python</option>
+                  <option value="javascript">JavaScript</option>
+                </select>
+              </div>
+              {roomDoc && activeText ? (
+                <CollaborativeEditor
+                  text={activeText}
+                  awareness={roomDoc.provider.awareness}
+                  language={language}
+                  // Unrevealed questions are read-only for the interviewer too: nothing is typed into a buffer
+                  // the candidate can't see yet.
+                  readOnly={closed || !active.revealed}
+                  onCursor={(line, column) => setCursor({ line, column })}
+                />
+              ) : (
+                <div className="editor center muted">Connecting…</div>
+              )}
+              <div className="pane-foot">
+                <span>{closed ? "Read-only" : docStatus === "connected" ? "Synced" : "Reconnecting…"}</span>
+                <span>
+                  Ln {cursor.line}, Col {cursor.column}
+                </span>
+              </div>
+            </div>
+            <div id="room-submission-results" className="pane-body" role="tabpanel" aria-labelledby="editor-submissions-tab" hidden={!showSubmissionResults}>
+              {showSubmissionResults && <SubmissionResults submissions={history} selected={selected} onSelect={selectSubmission}
+                onLoadOlder={before ? loadOlder : undefined} loadingOlder={loadingOlder} historyError={historyError} />}
             </div>
           </section>
         }
         tests={
           <TestPanel
             question={active.question}
-            roomQuestion={multi ? active : undefined}
-            entries={entries}
+            run={run}
+            runNavigation={runNavigation}
             ended={closed}
             customCases={customCases}
             // Never for unrevealed questions: anything in the shared doc is readable by the candidate's client.
@@ -472,6 +575,9 @@ export function RoomPage() {
               const index = cases.toArray().findIndex((c) => (c as { id?: unknown })?.id === id);
               if (index >= 0) cases.delete(index, 1);
             }}
+            roomTests={room.role === "interviewer" && !closed && active.revealed ? (
+              <RoomTests key={active.id} roomId={room.roomId} questionId={active.id} tests={active.addedTests ?? []} onAdded={refreshRoom} />
+            ) : undefined}
             notes={
               room.role === "interviewer" ? (
                 <NotesPanel

@@ -10,7 +10,7 @@ After a room ends, the interviewer needs to evaluate how the candidate did. The 
 - **Test score out of 100, computed by one pure, unit-tested function** (`scoring.ts`):
   - **Per question, then combined** — a question's credit is the fraction of its tests passed, so a question with many tests can't outweigh one with few.
   - **Submit only, hidden tests included** — Run only uses visible examples and custom cases, which a candidate could hard-code.
-  - **Best Submit per question** — breaking a solved question later doesn't remove the credit (every attempt is still on the timeline).
+  - **Best Submit on each question’s current test suite.** All attempts stay on the timeline with their original test counts and suite revisions. When an updated suite is awaiting a completed resubmission, that question contributes zero points and the score is marked provisional.
   - **Only revealed questions count** — a question the interviewer never reached isn't held against the candidate; the score is normalized over revealed questions' points.
   - **Weights.** Questions count equally by default. Custom points must sum to 100 at room creation, for example warm-up 20, main 50, hard 30. The score still normalizes over revealed questions, including for rooms created before the total requirement.
   - **Per candidate** — rooms created before [ADR 0012](0012-one-candidate-per-room.md) can have more than one; new rooms have exactly one.

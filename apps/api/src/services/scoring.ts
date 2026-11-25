@@ -4,7 +4,7 @@ import type { QuestionScore, SubmissionMode, SubmissionStatus } from "@coderoom/
  * The test score (ADR 0011): evidence for the human evaluation, never a decision.
  *  - per question, then combined (a question with many tests doesn't outweigh one with few);
  *  - Submit only, hidden tests included (Run can be gamed with the visible examples);
- *  - best Submit per question (a late regression doesn't remove credit);
+ *  - best Submit per question on its current test-suite revision;
  *  - only revealed questions count (the interviewer's pacing isn't the candidate's fault);
  *  - weighted by each question's `points`, normalized to 100.
  */
@@ -13,6 +13,7 @@ export interface ScoredQuestion {
   id: string;
   points: number;
   revealed: boolean;
+  testRevision: number;
 }
 
 export interface ScoredSubmission {
@@ -20,6 +21,7 @@ export interface ScoredSubmission {
   roomQuestionId: string;
   mode: SubmissionMode;
   status: SubmissionStatus;
+  roomTestRevision: number;
   /** Tests passed / run, hidden included. */
   passed: number;
   total: number;
@@ -36,7 +38,8 @@ export function scoreCandidate(
   let total = 0;
   const perQuestion = questions.map((q): QuestionScore => {
     const graded = submissions
-      .filter((s) => s.roomQuestionId === q.id && s.mode === "submit" && s.status === "completed" && s.total > 0)
+      .filter((s) => s.roomQuestionId === q.id && s.roomTestRevision === q.testRevision
+        && s.mode === "submit" && s.status === "completed" && s.total > 0)
       // Best fraction first; on a tie, the earliest (when it was first achieved).
       .sort((a, b) => b.passed / b.total - a.passed / a.total || a.createdAt.getTime() - b.createdAt.getTime());
     const best = graded[0];
@@ -48,6 +51,7 @@ export function scoreCandidate(
       points: q.points,
       counted: q.revealed,
       earned: round1(earned),
+      ...(q.revealed && q.testRevision > 0 && !best ? { needsResubmit: true } : {}),
       ...(best ? { best: { submissionId: best.id, passed: best.passed, total: best.total } } : {}),
     };
   });

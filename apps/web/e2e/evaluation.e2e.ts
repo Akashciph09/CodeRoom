@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { replaceCode, results, startInterview } from "./helpers";
+import { replaceCode, selectedSubmission, startInterview } from "./helpers";
 
 /*
  * The interviewer's structured evaluation (ADR 0017): drafted on the review page during the interview,
@@ -36,7 +36,7 @@ test("draft during the interview, submit after it ends, then locked; separate fr
     await test.step("the candidate submits; the interviewer writes a note", async () => {
       await replaceCode(cd, SUM);
       await cd.getByRole("button", { name: "Submit", exact: true }).click();
-      await expect(results(cd).first()).toContainText("Accepted");
+      await expect(selectedSubmission(cd)).toContainText("Accepted");
       await testsPane(iv).getByRole("tab", { name: "Notes" }).click();
       await iv.getByLabel("New note", { exact: true }).fill("Clarified the input format before coding");
       await iv.getByRole("button", { name: "Add note" }).click();

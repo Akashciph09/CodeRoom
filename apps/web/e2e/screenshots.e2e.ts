@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { addInterviewQuestion, createInterviewRoom, openAs, replaceCode, results, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, openAs, replaceCode, results, editorTab, selectedSubmission, submissionHistory, signUp } from "./helpers";
 
 /*
  * README screenshots, generated from a real interview driven through the UI (local stack only):
@@ -61,9 +61,9 @@ async function pasteCode(page: Page, code: string) {
   await expect.poll(() => page.locator(".monaco-editor .view-lines").first().innerText()).toContain("print(");
 }
 
-async function settle(page: Page, count: number) {
-  await expect(results(page)).toHaveCount(count);
-  await expect(results(page).first()).not.toContainText("Running", { timeout: 30_000 });
+async function settleRun(page: Page) {
+  await expect(results(page)).toHaveCount(1);
+  await expect(results(page)).not.toContainText(/Queued|Running/, { timeout: 30_000 });
 }
 
 test("README screenshots", async ({ browser }) => {
@@ -123,7 +123,8 @@ test("README screenshots", async ({ browser }) => {
     // 3. A first attempt that misses the all-negative case; the interviewer proposes an edge case.
     await pasteCode(cdp, BUGGY);
     await cdp.getByRole("button", { name: "Submit" }).click();
-    await settle(cdp, 1);
+    await expect(selectedSubmission(cdp)).toContainText("Wrong answer");
+    await editorTab(cdp, "Code").click();
     await ivp.bringToFront();
     await tests(ivp).getByRole("tab", { name: "Testcase" }).click();
     await tests(ivp).getByRole("button", { name: "Add a custom test case" }).click();
@@ -139,13 +140,16 @@ test("README screenshots", async ({ browser }) => {
 
     // 5. Run (with the custom case) and Submit; the interviewer sees every test, hidden ones included.
     await cdp.getByRole("button", { name: "Run", exact: true }).click();
-    await settle(cdp, 2);
+    await settleRun(cdp);
     await cdp.getByRole("button", { name: "Submit" }).click();
-    await settle(cdp, 3);
+    await expect(selectedSubmission(cdp)).toContainText("Accepted");
     await ivp.bringToFront();
     await tests(ivp).getByRole("tab", { name: "Test Result" }).click();
     await expect(results(ivp).first()).toContainText("Accepted");
+    await editorTab(ivp, "Submissions").click();
+    await submissionHistory(ivp).first().click();
     await shot(ivp, "room-interviewer");
+    await editorTab(ivp, "Code").click();
 
     // 6. Second question, revealed by the interviewer; a phone-sized view of the candidate's room.
     await navButton(ivp, 2).click();
@@ -153,7 +157,8 @@ test("README screenshots", async ({ browser }) => {
     await expect(cdp.getByRole("navigation", { name: "Questions" }).getByRole("button")).toHaveCount(2);
     await replaceCode(cdp, SUM);
     await cdp.getByRole("button", { name: "Submit" }).click();
-    await settle(cdp, 1);
+    await expect(selectedSubmission(cdp)).toContainText("Accepted");
+    await editorTab(cdp, "Code").click();
     await cdp.setViewportSize({ width: 390, height: 844 });
     await expect(cdp.getByRole("tablist", { name: "Room panels" })).toBeVisible();
     await shot(cdp, "mobile");

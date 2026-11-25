@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { editorText, openAs, replaceCode, results, signUp } from "./helpers";
+import { editorText, openAs, replaceCode, signUp, editorTab, selectedSubmission, submissionHistory } from "./helpers";
 
 const TITLE = "Add two numbers (e2e)";
 const STATEMENT = "Read two integers a and b from one line and print a + b.";
@@ -112,9 +112,8 @@ test("author a question, interview with it, and keep the version pinned", async 
 
       await replaceCode(candidate.page, SOLUTION);
       await candidate.page.getByRole("button", { name: "Submit" }).click();
-      const card = results(candidate.page).first();
-      await expect(card).toContainText("Accepted");
-      await expect(card).toContainText("hidden tests 1/1");
+      await expect(selectedSubmission(candidate.page)).toContainText("1/1 hidden tests passed");
+      await editorTab(candidate.page, "Code").click();
     });
 
     await test.step("author publishes v2 with a different expected output", async () => {
@@ -131,8 +130,9 @@ test("author a question, interview with it, and keep the version pinned", async 
       const q = candidate.page.getByRole("complementary", { name: "Question" });
       await expect(q.locator(".example pre").nth(1)).toHaveText("3"); // v1's expected output, not v2's "4"
       await candidate.page.getByRole("button", { name: "Submit" }).click();
-      await expect(results(candidate.page)).toHaveCount(2);
-      await expect(results(candidate.page).first()).toContainText("Accepted"); // graded on v1 tests
+      await expect(selectedSubmission(candidate.page)).toContainText("1/1 hidden tests passed"); // graded on v1 tests
+      await candidate.page.getByRole("button", { name: "Back to submissions" }).click();
+      await expect(submissionHistory(candidate.page)).toHaveCount(2);
     });
   } finally {
     await author.close();

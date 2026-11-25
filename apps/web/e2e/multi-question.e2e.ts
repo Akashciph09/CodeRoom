@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addInterviewQuestion, createInterviewRoom, authorQuestion, editorText, expectUnchanged, openAs, replaceCode, results, signUp } from "./helpers";
+import { addInterviewQuestion, createInterviewRoom, authorQuestion, editorText, expectUnchanged, openAs, replaceCode, results, signUp, editorTab, selectedSubmission, submissionHistory, testResultTab } from "./helpers";
 
 /*
  * Multi-question rooms (ADR 0009): the interviewer picks an ordered list, reveals questions one at a
@@ -13,9 +13,8 @@ const DIFFERENCE = "a, b = map(int, input().split())\nprint(a - b)";
 const questionPanel = (page: Page) => page.getByRole("complementary", { name: "Question" });
 const nav = (page: Page) => page.getByRole("navigation", { name: "Questions" });
 const navButton = (page: Page, n: number) => nav(page).getByRole("button", { name: new RegExp(`^Q${n}:`) });
-const resultsHeading = (page: Page) => page.locator(".results-panel h2");
-/** Test-case rows of the newest result card. */
-const testRows = (page: Page) => results(page).first().locator("table.tests tr");
+/** Public test rows of the selected submission. */
+const testRows = (page: Page) => selectedSubmission(page).getByRole("table", { name: "Public test results" }).getByRole("row");
 
 test("interviewer reveals questions one by one; the candidate sees only revealed ones", async ({ browser }) => {
   const interviewer = await openAs(browser, "Iris Interviewer");
@@ -89,7 +88,7 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
 
       await replaceCode(cd, SUM);
       await cd.getByRole("button", { name: "Submit" }).click();
-      await expect(results(cd).first()).toContainText("Accepted");
+      await expect(selectedSubmission(cd)).toContainText("Accepted");
     });
 
     await test.step("questions can only be revealed in order", async () => {
@@ -119,42 +118,40 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
 
       await replaceCode(cd, PRODUCT);
       await cd.getByRole("button", { name: "Submit" }).click();
-      // The results panel follows the question: only Q2's run, with Q2's single example as its test rows.
-      await expect(resultsHeading(cd)).toHaveText("Results · Q2");
-      await expect(results(cd)).toHaveCount(1);
-      await expect(results(cd).first()).toContainText("Accepted"); // graded on Q2's tests
+      await expect(selectedSubmission(cd)).toContainText("Accepted");
       await expect(testRows(cd)).toHaveCount(1);
       await expect(testRows(cd)).toContainText(["Example 1"]);
-      await expect.poll(() => editorText(iv)).toBe(PRODUCT); // interviewer is on Q2 too: same buffer
-      await expect(resultsHeading(iv)).toHaveText("Results · Q2");
-      await expect(results(iv)).toHaveCount(1); // the interviewer's panel follows their own question
+      await expect.poll(() => editorText(iv)).toBe(PRODUCT);
+      await editorTab(iv, "Submissions").click();
+      await submissionHistory(iv).first().click();
+      await expect(testRows(iv)).toHaveCount(1);
     });
 
     await test.step("each question keeps its own code", async () => {
       await navButton(cd, 1).click();
       await expect.poll(() => editorText(cd)).toBe(SUM);
-      await expectUnchanged(() => editorText(iv), PRODUCT, 800); // the interviewer's Q2 view is unaffected
 
-      // …and its own results: back on Q1, only Q1's run with Q1's two examples.
-      await expect(resultsHeading(cd)).toHaveText("Results · Q1");
-      await expect(results(cd)).toHaveCount(1);
-      await expect(results(cd).first()).toContainText("Accepted");
+      await expect(selectedSubmission(cd)).toHaveCount(0);
+      await editorTab(cd, "Submissions").click();
+      await submissionHistory(cd).first().click();
       await expect(testRows(cd)).toHaveCount(2);
-      await expect(results(iv)).toHaveCount(1); // the interviewer, still on Q2, still sees only Q2's run
-      await expect(resultsHeading(iv)).toHaveText("Results · Q2");
+      await expect(testRows(iv)).toHaveCount(1); // the interviewer is still inspecting Q2
+      await editorTab(iv, "Code").click();
+      await expect.poll(() => editorText(iv)).toBe(PRODUCT);
+      await editorTab(cd, "Code").click();
     });
 
     await test.step("switching between questions with history keeps the Testcase tab", async () => {
-      // Regression (PR #5 review): the other question's existing runs must not count as a new run.
+      // Switching to a question with history keeps the current test tab.
       const panel = cd.getByRole("region", { name: "Tests" });
       const testcaseTab = panel.getByRole("tab", { name: "Testcase" });
       await testcaseTab.click();
       await expect(testcaseTab).toHaveAttribute("aria-selected", "true");
-      await navButton(cd, 2).click(); // Q2 has a run
+      await navButton(cd, 2).click();
       await expect(questionPanel(cd).getByRole("heading", { name: "Multiply two numbers" })).toBeVisible();
       await expectUnchanged(async () => String(await testcaseTab.getAttribute("aria-selected")), "true", 800);
       await expect(panel.getByLabel("Case input")).toHaveText("2 3"); // Q2's case, not Q1's
-      await navButton(cd, 1).click(); // and back: Q1 has a run too
+      await navButton(cd, 1).click();
       await expectUnchanged(async () => String(await testcaseTab.getAttribute("aria-selected")), "true", 800);
     });
 
@@ -171,7 +168,6 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       await expect.poll(() => editorText(cd)).toBe("# subtract");
       await replaceCode(cd, DIFFERENCE);
       await cd.getByRole("button", { name: "Run" }).click();
-      await expect(resultsHeading(cd)).toHaveText("Results · Q3");
       await expect(results(cd)).toHaveCount(1);
       await expect(results(cd).first()).toContainText("Accepted");
     });
@@ -182,13 +178,20 @@ test("interviewer reveals questions one by one; the candidate sees only revealed
       // Loading history isn't a new run: the panel stays on Testcase until asked.
       const testcaseTab = cd.getByRole("region", { name: "Tests" }).getByRole("tab", { name: "Testcase" });
       await expectUnchanged(async () => String(await testcaseTab.getAttribute("aria-selected")), "true", 1500);
-      await cd.getByRole("region", { name: "Tests" }).getByRole("tab", { name: "Test Result" }).click();
+      await testResultTab(cd).click();
+      await expect(results(cd)).toContainText("Accepted"); // Q3's Run recovered
       await navButton(cd, 2).click();
       await expect.poll(() => editorText(cd)).toBe(PRODUCT);
-      await expect(results(cd)).toHaveCount(1); // history re-fetched, still filed per question
-      await expect(results(cd).first()).toContainText("Accepted");
+      await expect(cd.getByText("Run your code to see test results.")).toBeVisible();
+      await editorTab(cd, "Submissions").click();
+      await expect(submissionHistory(cd)).toHaveCount(1);
+      await submissionHistory(cd).first().click();
+      await expect(testRows(cd)).toHaveCount(1);
       await navButton(cd, 1).click();
-      await expect(results(cd)).toHaveCount(1);
+      await expect(selectedSubmission(cd)).toHaveCount(0);
+      await editorTab(cd, "Submissions").click();
+      await expect(submissionHistory(cd)).toHaveCount(1);
+      await submissionHistory(cd).first().click();
       await expect(testRows(cd)).toHaveCount(2);
     });
   } finally {
