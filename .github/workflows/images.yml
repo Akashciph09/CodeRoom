@@ -1,0 +1,82 @@
+# Deployment images (ADR 0022): built here so a small VM only pulls them.
+#   main:          build and push ghcr.io/<owner>/coderoom-{api,worker,migrate,web} as :latest and :sha-<commit>
+#   pull requests: build only (proves the Dockerfile still builds), nothing pushed
+# Images contain no settings or secrets: URLs and keys come from deploy/.env on the server.
+name: Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "supabase/**"
+      - "deploy/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".dockerignore"
+      - ".github/workflows/images.yml"
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "supabase/**"
+      - "deploy/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".dockerignore"
+      - ".github/workflows/images.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: images-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write # push to GHCR (read-only on pull requests from forks)
+
+jobs:
+  build:
+    name: Build${{ github.event_name != 'pull_request' && ' and push' || '' }} images
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build${{ github.event_name != 'pull_request' && ' and push' || '' }}
+        run: |
+          set -euo pipefail
+          docker buildx create --use --name coderoom >/dev/null
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          base="ghcr.io/$owner/coderoom"
+          sha=$(git rev-parse --short=12 HEAD)
+          for target in api worker migrate web; do
+            echo "::group::$target"
+            image="$base-$target"
+            args=(--platform linux/amd64 -f deploy/Dockerfile --target "$target"
+                  --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+                  --label "org.opencontainers.image.revision=$GITHUB_SHA"
+                  --cache-from "type=registry,ref=$image:buildcache")
+            case "$target" in api|worker) args+=(--build-arg "APP=$target") ;; esac
+            if [ "$PUSH" = true ]; then
+              args+=(--tag "$image:latest" --tag "$image:sha-$sha" --push
+                     --cache-to "type=registry,ref=$image:buildcache,mode=max")
+            fi
+            docker buildx build "${args[@]}" .
+            echo "::endgroup::"
+          done
+          if [ "$PUSH" = true ]; then
+            {
+              echo "### Pushed (tag \`latest\` and \`sha-$sha\`)"
+              for target in api worker migrate web; do echo "- \`$base-$target\`"; done
+              echo
+              echo "On the server: \`git pull && deploy/scripts/deploy.sh\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

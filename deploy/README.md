@@ -1,83 +1,118 @@
 # Deploying CodeRoom (free, on one VM)
 
-Everything — Postgres, Auth, Redis, API, worker, web — runs on one Oracle Cloud **Always Free** ARM VM
-behind Caddy with automatic HTTPS. The reasoning, alternatives and trade-offs are in
-[ADR 0022](../docs/decisions/0022-self-hosted-single-vm.md).
+Everything — Postgres, Auth, Redis, API, worker, web — runs on one small VM behind Caddy with
+automatic HTTPS. It fits in **1 GB of RAM** (plus swap), so a free student VM is enough. The reasoning,
+alternatives and trade-offs are in [ADR 0022](../docs/decisions/0022-self-hosted-single-vm.md).
 
 ```
              https://app.<ip>.sslip.io                 https://api.<ip>.sslip.io
                        │                                          │
              ┌─────────▼──────────────── Caddy (web) ─────────────▼──────────┐
              │ /           → built web app        everything → api:4000       │
-             │ /auth/v1/*  → auth:9999 (GoTrue)   (REST + WebSockets)         │
+             │ /config.js  → URLs from deploy/.env (REST + WebSockets)         │
+             │ /auth/v1/*  → auth:9999 (GoTrue)                                │
              └────────────────────────────────────────────────────────────────┘
    auth ──► db (supabase/postgres)  ◄── api ──► redis ◄── worker ──► host Docker ──► sandbox containers
                        ▲
              migrate (one-shot: supabase db push + seed)
 ```
 
-Expected cost within Oracle’s Always Free allowances is $0. Setup takes about an hour, mostly in the Oracle console.
+**The VM never compiles anything.** GitHub Actions ([`images.yml`](../.github/workflows/images.yml))
+builds our four images on every push to `main` and publishes them to GitHub's container registry
+(`ghcr.io/akashciph09/coderoom-{api,worker,migrate,web}`); the VM only pulls them. The images hold no
+settings: URLs and secrets come from `deploy/.env` on the server, so one image fits every deployment.
 
-## 1. Oracle Cloud account
+Measured on the local rehearsal with these settings: about 315 MB idle and 500 MB peak for the whole
+stack during the smoke and browser suites, plus up to 256 MB per running sandbox (one at a time).
 
-1. Sign up at cloud.oracle.com. A card is needed for identity checks; the Always Free resources cost nothing.
-   Pick your **home region** carefully: Always Free compute only runs there, and popular regions
-   sometimes have no free ARM capacity.
-2. Stay on the **Always Free account** and select resources marked Always Free eligible. Capacity
-   depends on your home region, and Oracle may reclaim idle instances. Keep off-VM backups so you can recover.
-   [Oracle Always Free limits](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
-3. Pay As You Go is optional. Resources outside the free allowances can incur charges after upgrading.
-   Oracle budget alerts notify you of spending and do not cap it.
-   [Oracle budgets](https://docs.oracle.com/en-us/iaas/Content/Billing/Concepts/budgetsoverview.htm)
+## 1. Get a VM
 
-## 2. The VM
+Any Ubuntu 24.04 VM with ≥1 GB RAM, a public IPv4 address and ports 22, 80 and 443 open works.
+Two free routes:
 
-Compute → Instances → Create:
+### Azure for Students (no credit card)
 
-| Setting | Value |
-|---|---|
-| Image | Canonical Ubuntu 24.04 |
-| Shape | Ampere `VM.Standard.A1.Flex` with **2 OCPUs and 12 GB RAM** (the total Always Free A1 allowance) |
-| Networking | Create a VCN with a public subnet; assign a public IPv4 address |
-| SSH key | Upload your public key |
-| Boot volume | 100 GB (Always Free includes 200 GB of block storage in total) |
+Azure for Students gives full-time students $100 of credit for 12 months, without a card, plus 750
+free hours a month of a few small VM sizes. When the credit runs out, resources stop: there is no bill.
 
-"Out of capacity"? Retry later, or try another availability domain in the same region.
-
-Note the **public IP**, e.g. `140.238.10.20`. Your free hostnames are then
-`app.140-238-10-20.sslip.io` and `api.140-238-10-20.sslip.io` (sslip.io resolves them to that IP —
-nothing to register or renew).
-
-### Open ports 80 and 443
-
-1. **Oracle firewall:** VCN → the subnet's Security List → Add Ingress Rules from `0.0.0.0/0`:
-   TCP 80, TCP 443, UDP 443. Restrict the existing SSH rule (TCP 22) to your own IP if you can.
-2. **Ubuntu's firewall** (Oracle images ship with restrictive iptables rules) — on the VM:
+1. **Find a region and size you're allowed to use.** Student subscriptions only allow a few regions, and
+   not every free size is offered in each. In the portal, open Cloud Shell (`>_`, Bash, "No storage
+   account required"), then:
 
    ```bash
-   sudo iptables -I INPUT 1 -p tcp -m multiport --dports 80,443 -j ACCEPT
-   sudo iptables -I INPUT 1 -p udp --dport 443 -j ACCEPT
-   sudo netfilter-persistent save
+   az policy assignment list --query "[].parameters.listOfAllowedLocations.value" -o tsv
    ```
 
-## 3. Prepare the VM
+   For each allowed region (closest first), check the free sizes; `AVAILABLE` means you can use it:
+
+   ```bash
+   az vm list-skus -l <region> --size Standard_B --all --query "[?name=='Standard_B1s'||name=='Standard_B2ats_v2'||name=='Standard_B2pts_v2'].[name, restrictions[0].reasonCode || 'AVAILABLE']" -o tsv
+   ```
+
+2. **Create the VM** (Virtual machines → Create):
+
+   | Tab | Setting | Value |
+   |---|---|---|
+   | Basics | Region | the one you found (e.g. India South Central) |
+   | | Image | Ubuntu Server 24.04 LTS — **x64** |
+   | | Size | **Standard_B2ats_v2** (2 vCPU, 1 GB) or Standard_B1s — search by name with filters cleared; the default sizes cost $50+/month |
+   | | Authentication | SSH public key, generate a new key pair, username `azureuser` |
+   | | Inbound ports | SSH (22), HTTP (80), HTTPS (443) |
+   | Disks | OS disk | Standard SSD, default size; **Delete with VM** checked |
+   | Networking | | defaults (new public IP — Standard SKU, so it's static) |
+   | Management | System-assigned managed identity | **off** (this VM runs untrusted code; it needs no Azure identity) |
+   | | Auto-shutdown | off |
+   | Monitoring | Boot diagnostics | managed storage (a few cents; gives you the Serial console if SSH ever breaks) |
+
+   Download the private key when asked — it's the only way in — then on your Mac:
+
+   ```bash
+   mkdir -p ~/.ssh && mv ~/Downloads/<key>.pem ~/.ssh/ && chmod 600 ~/.ssh/<key>.pem
+   ```
+
+3. **Cost check:** the compute is free within the 750 hours; the public IP (~$3–4/month) and disk come
+   out of the credit. Add a budget alert (Cost Management → Budgets, e.g. $5/month), and the next day
+   check the **Free services** page shows your VM's free hours being used.
+
+### Oracle Cloud Always Free (needs a card for verification)
+
+Ampere A1 ARM shape, Ubuntu 24.04, public IPv4. Open TCP 80/443 (and UDP 443) in the subnet's
+Security List, and in Ubuntu's iptables (Oracle images ship restrictive rules):
 
 ```bash
-ssh ubuntu@<public-ip>
+sudo iptables -I INPUT 1 -p tcp -m multiport --dports 80,443 -j ACCEPT && sudo iptables -I INPUT 1 -p udp --dport 443 -j ACCEPT && sudo netfilter-persistent save
+```
+
+The prebuilt images are x64 only; on ARM, deploy with `BUILD_LOCALLY=1` (step 4) — fine on Oracle's
+larger ARM shapes, not on 1 GB.
+
+### Your hostnames
+
+With public IP `172.128.33.87`, your free hostnames are `app.172-128-33-87.sslip.io` and
+`api.172-128-33-87.sslip.io` — sslip.io resolves them to that IP, nothing to register or renew.
+
+## 2. Log in
+
+```bash
+ssh -o IdentitiesOnly=yes -i ~/.ssh/<key>.pem azureuser@<public-ip>
+```
+
+(`IdentitiesOnly` stops your SSH client offering other keys first, which can make the server close the
+connection.)
+
+## 3. Prepare the VM (once)
+
+```bash
+git clone https://github.com/Akashciph09/CodeRoom.git && cd CodeRoom
 ```
 
 ```bash
-sudo apt-get update && sudo apt-get -y upgrade
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker ubuntu && newgrp docker
+sudo bash deploy/scripts/setup-vm.sh
 ```
 
-Security updates install themselves (`unattended-upgrades` is on by default in Ubuntu). Let them
-reboot the VM when a kernel update needs it — every container comes back on its own:
-
-```bash
-printf 'Unattended-Upgrade::Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:00";\n' | sudo tee /etc/apt/apt.conf.d/52coderoom-reboot
-```
+It installs Docker (with Compose and Buildx), adds 2 GB of swap (a 1 GB VM needs it), turns on
+automatic security updates with a 04:00 reboot when one needs it, and creates the directory for
+submitted code. Log out and back in afterwards so your user can run `docker`.
 
 **This VM runs untrusted code.** The worker controls Docker, which is root-equivalent on this
 machine (the sandboxes themselves are locked down — ADR 0004). Don't run anything else on it.
@@ -85,15 +120,11 @@ machine (the sandboxes themselves are locked down — ADR 0004). Don't run anyth
 ## 4. Configure and deploy
 
 ```bash
-git clone https://github.com/Akashciph09/CodeRoom.git && cd CodeRoom
-```
-
-```bash
-deploy/scripts/gen-secrets.sh https://app.140-238-10-20.sslip.io https://api.140-238-10-20.sslip.io
+deploy/scripts/gen-secrets.sh https://app.<ip-with-dashes>.sslip.io https://api.<ip-with-dashes>.sslip.io
 ```
 
 This writes `deploy/.env` (mode 600) with the database password and the ES256 signing key.
-**Keep a copy in your password manager** so a restore can reuse those settings.
+**Keep a copy in your password manager** so a restore can reuse those settings. Run it once per server.
 
 Optional — AI features (summaries, question drafts, test suggestions):
 
@@ -109,15 +140,29 @@ Deploy:
 deploy/scripts/deploy.sh
 ```
 
-The first run builds the images (about 10 minutes on the free VM), applies the migrations, seeds the
-"Sum two numbers" question and waits for service health checks. The worker check verifies access to Docker,
-both sandbox images, and the writable run directory. Caddy obtains HTTPS certificates automatically.
-Open `https://app.<ip>.sslip.io`, sign up as the interviewer, and
-from a private window as the candidate.
+It pulls the images, applies the migrations, seeds the "Sum two numbers" question and waits for every
+service's health check. The worker check verifies access to Docker, both sandbox images, and the
+writable run directory. Caddy obtains HTTPS certificates on the first request. Open
+`https://app.<ip>.sslip.io`, sign up as the interviewer, and from a private window as the candidate.
+
+**Images are public packages.** GitHub creates new packages as private; the first time
+`images.yml` publishes them, open your GitHub profile → Packages → each `coderoom-*` package →
+Package settings → Change visibility → **Public** (they contain only open-source code, no settings).
+Otherwise `deploy.sh` fails with "denied" — or log the VM in with a token that can read packages:
+`echo <token> | docker login ghcr.io -u <github-user> --password-stdin`.
+
+`CODEROOM_TAG=sha-<commit>` in `deploy/.env` pins a version (rollback); the default is `latest`.
+`BUILD_LOCALLY=1 deploy/scripts/deploy.sh` builds the images on the machine instead — needs ≥4 GB RAM.
 
 Once your accounts exist, close sign-ups: add `AUTH_DISABLE_SIGNUP=true` to `deploy/.env` and run
 `deploy/scripts/deploy.sh` again. There is no mail server, so sign-ups are confirmed automatically and
 password reset by email isn't available.
+
+### Sizing
+
+The defaults suit 1 GB. On a bigger machine raise them in `deploy/.env`:
+`WORKER_CONCURRENCY` (default 1 sandbox at a time), `PG_SHARED_BUFFERS` (64MB), `API_HEAP_MB` (192),
+`WORKER_HEAP_MB` (128), `REDIS_MAXMEMORY` (96mb), `SANDBOX_MEMORY_MB` (256).
 
 ## 5. Backups
 
@@ -128,10 +173,10 @@ Nightly at 03:15 (keeps the latest 14 in `deploy/backups/`):
 ```
 
 Those dumps live on the same VM, so also keep a copy elsewhere:
-- **Boot volume backups:** Block Storage → Boot Volumes → your volume → Backup Policies. Always Free
-  includes a few volume backups; a weekly policy covers losing the VM.
-- **Off the VM:** copy a dump now and then (`scp ubuntu@<ip>:CodeRoom/deploy/backups/*.dump .`), or
-  sync them to Oracle Object Storage (also part of Always Free).
+- **Off the VM:** copy the dumps to your laptop now and then:
+  `scp -i ~/.ssh/<key>.pem '<user>@<ip>:CodeRoom/deploy/backups/*.dump' .`
+- **Disk snapshots** (Azure: the disk → Create snapshot; Oracle: boot volume backups) cover losing the
+  VM, at a small storage cost.
 
 Restore (a new VM, or after `docker compose down -v`), with the original `deploy/.env` in place:
 
@@ -185,12 +230,17 @@ Compose file first. Clean up with `docker compose down -v`.
 
 ## Troubleshooting
 
-- **The site doesn't load:** check both firewalls (step 2), then `docker compose -f deploy/docker-compose.yml logs web`.
+- **The site doesn't load:** check the firewall (Azure: the VM's Networking → inbound rules for 80/443;
+  Oracle: step 1), then `docker compose -f deploy/docker-compose.yml logs web`.
+- **`deploy.sh` says "denied" pulling `ghcr.io/...`:** the packages are still private (step 4).
+- **`JavaScript heap out of memory` during a deploy:** it's building on the VM — use the prebuilt images
+  (don't set `BUILD_LOCALLY` on small machines).
 - **Certificate errors:** Caddy needs ports 80 and 443 reachable from the internet. sslip.io is
   shared by many people, so Let's Encrypt rate limits can occasionally bite; a free DuckDNS name or
   your own domain works the same way (put its URLs in `deploy/.env`).
 - **Runs stay "queued":** `docker compose -f deploy/docker-compose.yml logs worker`; check the
   sandbox images exist (`docker images | grep coderoom-runner`). Stuck submissions are re-queued
   automatically once the worker is back.
-- **Changing the hostnames** (new IP or domain): edit `APP_URL`/`API_URL` in `deploy/.env` and redeploy.
-  Everyone has to sign in again, since tokens name the old issuer.
+- **Changing the hostnames** (new IP or domain): edit `APP_URL`/`API_URL` in `deploy/.env` and redeploy
+  (no rebuild: the web app reads them from `/config.js`). Everyone has to sign in again, since tokens
+  name the old issuer.

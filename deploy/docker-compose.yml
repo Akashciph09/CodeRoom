@@ -1,6 +1,10 @@
 # CodeRoom on one VM (ADR 0022): Postgres + Auth (self-hosted Supabase pieces), Redis, API, worker,
-# and Caddy serving the web app over HTTPS. Settings come from deploy/.env (see .env.example);
+# and Caddy serving the web app over HTTPS. Settings come from deploy/.env (see gen-secrets.sh);
 # `deploy/scripts/deploy.sh` is the usual entry point.
+#
+# Our four images are prebuilt by .github/workflows/images.yml and pulled from GHCR, so a small VM
+# never compiles anything; `BUILD_LOCALLY=1 deploy.sh` builds them here instead (same tags).
+# Sized to fit a 1 GB VM with swap (deploy/scripts/setup-vm.sh); raise the limits on bigger machines.
 name: coderoom-prod
 
 x-restart: &restart
@@ -13,7 +17,23 @@ services:
   db:
     <<: *restart
     image: public.ecr.aws/supabase/postgres:17.12.0.000
-    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "log_min_messages=fatal"]
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - log_min_messages=fatal
+      # Small-VM memory settings; a handful of interviews need nothing more.
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-64MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-256MB}
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-60}
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
       PGPASSWORD: ${POSTGRES_PASSWORD}
@@ -63,6 +83,7 @@ services:
       GOTRUE_PASSWORD_MIN_LENGTH: 8
       GOTRUE_RATE_LIMIT_TOKEN_REFRESH: 150
       GOTRUE_RATE_LIMIT_VERIFY: 30
+      GOTRUE_DB_MAX_POOL_SIZE: 5
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9999/health"]
       interval: 5s
@@ -72,8 +93,9 @@ services:
   redis:
     <<: *restart
     image: redis:7-alpine
-    # Append-only file: queued jobs survive a restart. BullMQ needs the default noeviction policy.
-    command: ["redis-server", "--appendonly", "yes"]
+    # Append-only file: queued jobs survive a restart. BullMQ needs noeviction: at the memory cap Redis
+    # refuses new writes (submissions stay queued in Postgres and are retried) instead of dropping jobs.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "${REDIS_MAXMEMORY:-96mb}", "--maxmemory-policy", "noeviction"]
     volumes: [redis-data:/data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -82,7 +104,8 @@ services:
       retries: 20
 
   migrate:
-    build: { context: .., dockerfile: deploy/Dockerfile, target: migrate, args: &web-args { VITE_API_URL: "${API_URL}", VITE_SUPABASE_URL: "${APP_URL}" } }
+    image: ${CODEROOM_IMAGE:-ghcr.io/akashciph09/coderoom}-migrate:${CODEROOM_TAG:-latest}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: migrate }
     depends_on:
       auth: { condition: service_healthy } # Auth creates auth.users, which our tables reference
     environment:
@@ -91,7 +114,8 @@ services:
 
   api:
     <<: *restart
-    build: { context: .., dockerfile: deploy/Dockerfile, target: api, args: { <<: *web-args, APP: api } }
+    image: ${CODEROOM_IMAGE:-ghcr.io/akashciph09/coderoom}-api:${CODEROOM_TAG:-latest}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: api, args: { APP: api } }
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -99,6 +123,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
+      NODE_OPTIONS: --max-old-space-size=${API_HEAP_MB:-192}
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
       REDIS_URL: redis://redis:6379
       SUPABASE_URL: ${APP_URL}
@@ -112,7 +137,8 @@ services:
 
   worker:
     <<: *restart
-    build: { context: .., dockerfile: deploy/Dockerfile, target: worker, args: { <<: *web-args, APP: worker } }
+    image: ${CODEROOM_IMAGE:-ghcr.io/akashciph09/coderoom}-worker:${CODEROOM_TAG:-latest}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: worker, args: { APP: worker } }
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -120,7 +146,12 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
       REDIS_URL: redis://redis:6379
-      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      NODE_OPTIONS: --max-old-space-size=${WORKER_HEAP_MB:-128}
+      # One sandbox at a time by default: each may use SANDBOX_MEMORY_MB, and a 1 GB VM has little to spare.
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-1}
+      SANDBOX_MEMORY_MB: ${SANDBOX_MEMORY_MB:-256}
+      SANDBOX_CPUS: ${SANDBOX_CPUS:-0.5}
+      SANDBOX_TIMEOUT_MS: ${SANDBOX_TIMEOUT_MS:-2000}
       # Code files go here; sandboxes mount them by HOST path, so the path is identical on both sides.
       TMPDIR: ${RUNS_DIR:-/var/lib/coderoom/runs}
     volumes:
@@ -134,7 +165,8 @@ services:
 
   web:
     <<: *restart
-    build: { context: .., dockerfile: deploy/Dockerfile, target: web, args: *web-args }
+    image: ${CODEROOM_IMAGE:-ghcr.io/akashciph09/coderoom}-web:${CODEROOM_TAG:-latest}
+    build: { context: .., dockerfile: deploy/Dockerfile, target: web }
     depends_on: [api, auth]
     environment:
       APP_ADDRESS: ${APP_URL:?set APP_URL in deploy/.env}
