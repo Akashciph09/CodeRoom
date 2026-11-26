@@ -16,18 +16,19 @@ behind Caddy with automatic HTTPS. The reasoning, alternatives and trade-offs ar
              migrate (one-shot: supabase db push + seed)
 ```
 
-Total cost: $0. Time: about an hour, most of it in the Oracle console.
+Expected cost within Oracle’s Always Free allowances is $0. Setup takes about an hour, mostly in the Oracle console.
 
 ## 1. Oracle Cloud account
 
 1. Sign up at cloud.oracle.com. A card is needed for identity checks; the Always Free resources cost nothing.
    Pick your **home region** carefully: Always Free compute only runs there, and popular regions
    sometimes have no free ARM capacity.
-2. **Upgrade to Pay As You Go** (Billing → Upgrade). Always Free resources stay free, and Oracle
-   doesn't reclaim idle Always Free VMs on paid accounts — this is what keeps the site up for months
-   without anyone touching it.
-3. Billing → Budgets: create a budget of **$1** with an email alert, so any accidental paid resource
-   is noticed the same day.
+2. Stay on the **Always Free account** and select resources marked Always Free eligible. Capacity
+   depends on your home region, and Oracle may reclaim idle instances. Keep off-VM backups so you can recover.
+   [Oracle Always Free limits](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+3. Pay As You Go is optional. Resources outside the free allowances can incur charges after upgrading.
+   Oracle budget alerts notify you of spending and do not cap it.
+   [Oracle budgets](https://docs.oracle.com/en-us/iaas/Content/Billing/Concepts/budgetsoverview.htm)
 
 ## 2. The VM
 
@@ -36,7 +37,7 @@ Compute → Instances → Create:
 | Setting | Value |
 |---|---|
 | Image | Canonical Ubuntu 24.04 |
-| Shape | Ampere `VM.Standard.A1.Flex`: **2 OCPU, 12 GB** (Always Free allows up to 4 / 24 in total) |
+| Shape | Ampere `VM.Standard.A1.Flex` with **2 OCPUs and 12 GB RAM** (the total Always Free A1 allowance) |
 | Networking | Create a VCN with a public subnet; assign a public IPv4 address |
 | SSH key | Upload your public key |
 | Boot volume | 100 GB (Always Free includes 200 GB of block storage in total) |
@@ -91,13 +92,15 @@ git clone https://github.com/Akashciph09/CodeRoom.git && cd CodeRoom
 deploy/scripts/gen-secrets.sh https://app.140-238-10-20.sslip.io https://api.140-238-10-20.sslip.io
 ```
 
-This writes `deploy/.env` (mode 600): the database password and the ES256 key that signs every
-login token. **Copy it to your password manager now** — a backup can't be opened without it.
+This writes `deploy/.env` (mode 600) with the database password and the ES256 signing key.
+**Keep a copy in your password manager** so a restore can reuse those settings.
 
 Optional — AI features (summaries, question drafts, test suggestions):
 
 ```bash
-cp deploy/api.env.example deploy/api.env && nano deploy/api.env
+test -e deploy/api.env || install -m 600 deploy/api.env.example deploy/api.env
+chmod 600 deploy/api.env
+nano deploy/api.env
 ```
 
 Deploy:
@@ -107,8 +110,9 @@ deploy/scripts/deploy.sh
 ```
 
 The first run builds the images (about 10 minutes on the free VM), applies the migrations, seeds the
-"Sum two numbers" question and waits until every service is healthy. Caddy gets the HTTPS
-certificates on the first request. Open `https://app.<ip>.sslip.io`, sign up as the interviewer, and
+"Sum two numbers" question and waits for service health checks. The worker check verifies access to Docker,
+both sandbox images, and the writable run directory. Caddy obtains HTTPS certificates automatically.
+Open `https://app.<ip>.sslip.io`, sign up as the interviewer, and
 from a private window as the candidate.
 
 Once your accounts exist, close sign-ups: add `AUTH_DISABLE_SIGNUP=true` to `deploy/.env` and run
@@ -137,8 +141,9 @@ deploy/scripts/restore.sh deploy/backups/coderoom-<time>.dump && deploy/scripts/
 
 ## 6. Monitoring
 
-Add a free HTTP monitor (e.g. UptimeRobot) on `https://api.<ip>.sslip.io/health`. It returns 200 only
-when the API can reach Postgres and Redis, and the monitor emails you if the site goes down.
+An HTTP monitor on `https://api.<ip>.sslip.io/health` checks whether the API can reach Postgres and
+Redis. Check `docker compose -f deploy/docker-compose.yml ps worker` for worker readiness. After
+deploying, run a candidate submission to confirm end-to-end grading.
 
 ## Day-to-day
 
@@ -170,7 +175,8 @@ docker compose up -d --build --wait
 Run the browser tests against it (from the repo root):
 
 ```bash
-E2E_WEB_URL=http://localhost:8080 E2E_API_URL=http://localhost:8081 pnpm e2e
+E2E_WEB_URL=http://localhost:8080 E2E_API_URL=http://localhost:8081 \
+  E2E_SUPABASE_URL=http://localhost:8080 pnpm e2e
 ```
 
 The smoke scripts also take `SMOKE_API_URL=http://localhost:8081` and `SUPABASE_URL=http://localhost:8080`.

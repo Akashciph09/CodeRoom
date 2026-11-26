@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Browser, type Page, type WebSocketRoute } from "@playwright/test";
+import { apiUrl } from "./targets";
 
 /** The API the app under test talks to (E2E_API_URL when testing a deployment, e.g. deploy/'s rehearsal). */
-export const API_ORIGIN = new URL(process.env.E2E_API_URL ?? "http://localhost:4000").origin;
+const API_ORIGIN = new URL(apiUrl).origin;
 /** A response from that API (REST); used to prove what a participant's browser received. */
 export const fromApi = (url: string) => new URL(url).origin === API_ORIGIN;
 

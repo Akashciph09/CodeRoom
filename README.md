@@ -408,7 +408,7 @@ docs/decisions/ Architecture Decision Records
 
 [`deploy/`](deploy/README.md) runs the whole stack on one free Oracle Cloud VM: Postgres and Auth
 (self-hosted Supabase images), Redis, API, worker and the web app behind Caddy with automatic HTTPS.
-It stays up untouched for months, backs itself up nightly, and can be rehearsed on a laptop first.
+The guide covers nightly backups and a laptop rehearsal. Oracle may reclaim idle free VMs.
 Why this shape: [ADR 0022](docs/decisions/0022-self-hosted-single-vm.md).
 
 ## Roadmap

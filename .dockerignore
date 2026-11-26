@@ -7,6 +7,7 @@
 .env.*
 !.env.example
 deploy/.env
+deploy/api.env
 deploy/backups
 .ci-logs
 apps/web/test-results

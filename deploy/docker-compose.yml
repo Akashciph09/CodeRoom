@@ -126,6 +126,11 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${RUNS_DIR:-/var/lib/coderoom/runs}:${RUNS_DIR:-/var/lib/coderoom/runs}
+    healthcheck:
+      test: ["CMD-SHELL", "test -w \"$$TMPDIR\" && docker info >/dev/null && docker image inspect coderoom-runner-python coderoom-runner-javascript >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
 
   web:
     <<: *restart
