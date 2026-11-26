@@ -18,8 +18,10 @@ alternatives and trade-offs are in [ADR 0022](../docs/decisions/0022-self-hosted
 ```
 
 **The VM never compiles anything.** GitHub Actions ([`images.yml`](../.github/workflows/images.yml))
-builds our four images on every push to `main` and publishes them to GitHub's container registry
-(`ghcr.io/akashciph09/coderoom-{api,worker,migrate,web}`); the VM only pulls them. The images hold no
+builds our four images for every commit on `main` and publishes them to GitHub's container registry
+as `ghcr.io/akashciph09/coderoom-{api,worker,migrate,web}:sha-<commit>`. `deploy.sh` pulls the four
+images of the commit the server has checked out — so images, compose file and migrations always come
+from the same commit — and restarts nothing unless all four pulled. The images hold no
 settings: URLs and secrets come from `deploy/.env` on the server, so one image fits every deployment.
 
 Measured on the local rehearsal with these settings: about 315 MB idle and 500 MB peak for the whole
@@ -140,7 +142,8 @@ Deploy:
 deploy/scripts/deploy.sh
 ```
 
-It pulls the images, applies the migrations, seeds the "Sum two numbers" question and waits for every
+It pulls this commit's images (the **Images** run for that commit on GitHub must have finished),
+applies the migrations, seeds the "Sum two numbers" question and waits for every
 service's health check. The worker check verifies access to Docker, both sandbox images, and the
 writable run directory. Caddy obtains HTTPS certificates on the first request. Open
 `https://app.<ip>.sslip.io`, sign up as the interviewer, and from a private window as the candidate.
@@ -151,8 +154,11 @@ Package settings → Change visibility → **Public** (they contain only open-so
 Otherwise `deploy.sh` fails with "denied" — or log the VM in with a token that can read packages:
 `echo <token> | docker login ghcr.io -u <github-user> --password-stdin`.
 
-`CODEROOM_TAG=sha-<commit>` in `deploy/.env` pins a version (rollback); the default is `latest`.
+**Rolling back** = deploying an older commit: `git checkout <commit> && deploy/scripts/deploy.sh`
+(then `git checkout main` to go forward again). Only roll back past a commit that added a migration
+after restoring a backup from before it — migrations only move forward.
 `BUILD_LOCALLY=1 deploy/scripts/deploy.sh` builds the images on the machine instead — needs ≥4 GB RAM.
+Always (re)start through `deploy.sh`: it selects the release; a bare `docker compose up` doesn't.
 
 Once your accounts exist, close sign-ups: add `AUTH_DISABLE_SIGNUP=true` to `deploy/.env` and run
 `deploy/scripts/deploy.sh` again. There is no mail server, so sign-ups are confirmed automatically and
@@ -232,7 +238,9 @@ Compose file first. Clean up with `docker compose down -v`.
 
 - **The site doesn't load:** check the firewall (Azure: the VM's Networking → inbound rules for 80/443;
   Oracle: step 1), then `docker compose -f deploy/docker-compose.yml logs web`.
-- **`deploy.sh` says "denied" pulling `ghcr.io/...`:** the packages are still private (step 4).
+- **`deploy.sh` can't pull this commit's images:** the Images run for that commit hasn't finished
+  (GitHub → Actions → Images), or — "denied" — the packages are still private (step 4). Nothing is
+  restarted in that case; the old release keeps running.
 - **`JavaScript heap out of memory` during a deploy:** it's building on the VM — use the prebuilt images
   (don't set `BUILD_LOCALLY` on small machines).
 - **Certificate errors:** Caddy needs ports 80 and 443 reachable from the internet. sslip.io is
