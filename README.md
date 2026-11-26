@@ -404,6 +404,13 @@ infra/          docker-compose (Redis)
 docs/decisions/ Architecture Decision Records
 ```
 
+## Deployment
+
+[`deploy/`](deploy/README.md) runs the whole stack on one free Oracle Cloud VM: Postgres and Auth
+(self-hosted Supabase images), Redis, API, worker and the web app behind Caddy with automatic HTTPS.
+The guide covers nightly backups and a laptop rehearsal. Oracle may reclaim idle free VMs.
+Why this shape: [ADR 0022](docs/decisions/0022-self-hosted-single-vm.md).
+
 ## Roadmap
 
 - [x] Monorepo, shared schemas, Postgres schema + migrations
@@ -418,6 +425,7 @@ docs/decisions/ Architecture Decision Records
 - [x] Multi-question rooms: ordered questions revealed by the interviewer, a code buffer per question, per-question grading
 - [x] Private interviewer notes, linked to questions and runs, on the review page
 - [x] Structured evaluation rubric: four dimensions, evidence links, recommendation, locked on submit
+- [x] Free self-hosted deployment on one VM: Compose, automatic HTTPS, nightly backups, tested restore
 - [ ] Interviewer hints (revealed by the interviewer, recorded as evidence)
 - [ ] Submission history and editor replay (Supabase Storage)
 - [x] AI-drafted review summaries with evidence citations

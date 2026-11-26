@@ -40,3 +40,7 @@ apps/web/blob-report/
 
 # CI integration logs (scripts/ci/integration.sh)
 .ci-logs/
+
+# Deployment (deploy/): secrets and backups stay on the server
+deploy/api.env
+deploy/backups/

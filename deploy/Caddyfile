@@ -1,0 +1,43 @@
+# Two sites on one Caddy (ADR 0022). With real hostnames Caddy gets and renews Let's Encrypt
+# certificates by itself; with http:// addresses (local rehearsal) it serves plain HTTP.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+# The web app, plus Auth under /auth/v1 — the same paths the Supabase client uses with hosted Supabase.
+{$APP_ADDRESS} {
+	import security_headers
+	encode zstd gzip
+
+	handle_path /auth/v1/* {
+		reverse_proxy auth:9999
+	}
+
+	# Supabase's data APIs aren't deployed at all (ADR 0006: all data goes through our API).
+	# Say so plainly instead of answering with the web app's index.html.
+	@supabase_data path /rest/* /storage/* /realtime/* /graphql/*
+	handle @supabase_data {
+		respond 404
+	}
+
+	handle {
+		root * /srv/web
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		# Client-side routes (/rooms/…, /join/…) all load index.html.
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# The REST API and the WebSocket gateway (Caddy proxies upgrades as-is).
+{$API_ADDRESS} {
+	import security_headers
+	encode zstd gzip
+	reverse_proxy api:4000
+}

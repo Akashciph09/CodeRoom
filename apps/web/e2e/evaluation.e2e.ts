@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { replaceCode, selectedSubmission, startInterview } from "./helpers";
+import { fromApi, replaceCode, selectedSubmission, startInterview } from "./helpers";
 
 /*
  * The interviewer's structured evaluation (ADR 0017): drafted on the review page during the interview,
@@ -30,7 +30,7 @@ test("draft during the interview, submit after it ends, then locked; separate fr
   const cd = candidate.page;
   const candidateBodies: string[] = [];
   cd.on("response", (r) => {
-    if (new URL(r.url()).port === "4000") void r.text().then((t) => candidateBodies.push(t), () => {});
+    if (fromApi(r.url())) void r.text().then((t) => candidateBodies.push(t), () => {});
   });
   try {
     await test.step("the candidate submits; the interviewer writes a note", async () => {

@@ -1,0 +1,21 @@
+# Context for deploy/Dockerfile (repo root). Never send secrets or local builds into an image.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+deploy/.env
+deploy/api.env
+deploy/backups
+.ci-logs
+apps/web/test-results
+apps/web/playwright-report
+apps/web/blob-report
+supabase/.branches
+supabase/.temp
+supabase/signing_keys.json
+CLAUDE.md
+AGENTS.md
+.claude

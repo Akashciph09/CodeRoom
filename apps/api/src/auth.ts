@@ -24,7 +24,8 @@ declare global {
 const issuer = `${config.SUPABASE_URL}/auth/v1`;
 // Supabase signs access tokens with an asymmetric key; the public keys are published here.
 // jose caches the key set and refetches on unknown `kid`, so this is one fetch per key rotation.
-const jwks = createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`));
+// Self-hosted (deploy/): fetched from the auth container directly; the issuer stays the public URL.
+const jwks = createRemoteJWKSet(new URL(config.SUPABASE_JWKS_URL ?? `${issuer}/.well-known/jwks.json`));
 
 /** Verify the Supabase access token locally (no round trip to Supabase per request). */
 export async function verifyAccessToken(token: string): Promise<AuthUser> {

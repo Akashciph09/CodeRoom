@@ -93,12 +93,17 @@ async function main() {
     (await call("GET", `/submissions/${firstSubmitId}`, outsider)).status === 403,
   );
 
-  // RLS: the public Supabase API must not expose tables, even to a signed-in user.
+  // RLS: the public Supabase API must not expose tables, even to a signed-in user. The self-hosted
+  // deployment (deploy/) doesn't run that API at all: a 404 there is the stronger pass.
   const rest = await fetch(`${SUPABASE_URL}/rest/v1/test_cases?select=*`, {
     headers: { apikey: PUBLISHABLE_KEY, authorization: `Bearer ${candidate}` },
   });
-  const rows = (await rest.json()) as unknown[];
-  check("RLS: test_cases unreadable via Supabase REST", Array.isArray(rows) && rows.length === 0, `(${rows.length} rows)`);
+  if (rest.status === 404) {
+    check("RLS: no Supabase REST endpoint deployed", true);
+  } else {
+    const rows = (await rest.json()) as unknown[];
+    check("RLS: test_cases unreadable via Supabase REST", Array.isArray(rows) && rows.length === 0, `(${rows.length} rows)`);
+  }
 
   // --- Idempotency (stored with the submission in Postgres) ------------------------------------
   // Fresh room + candidate: the first candidate has used its 10/min submit budget by now.

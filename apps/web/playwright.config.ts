@@ -1,9 +1,5 @@
 import { defineConfig } from "@playwright/test";
-import { loadEnv } from "vite";
-
-// Same repo-root .env the app uses.
-const env = loadEnv("", "../..", "");
-const WEB_URL = process.env.E2E_WEB_URL ?? "http://localhost:5173";
+import { apiUrl, webUrl } from "./e2e/targets";
 
 /**
  * Browser tests for the interviewer/candidate flow. They drive the real stack:
@@ -23,7 +19,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: WEB_URL,
+    baseURL: webUrl,
     viewport: { width: 1400, height: 900 },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
@@ -40,12 +36,12 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
-    // Starts web + API + worker if nothing is running yet; reuses them if they are.
+  webServer: process.env.E2E_WEB_URL ? undefined : {
+    // An explicit target already has its own stack, so only auto-start the default dev stack.
     command: "pnpm --dir ../.. dev",
-    url: WEB_URL,
+    url: webUrl,
     reuseExistingServer: true,
     timeout: 120_000,
   },
-  metadata: { apiUrl: env.VITE_API_URL },
+  metadata: { apiUrl },
 });
