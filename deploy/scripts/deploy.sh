@@ -10,7 +10,10 @@ cd "$(dirname "$0")/.."
 # One release = the four images built from the commit checked out here, so the images always match
 # this compose file and these migrations (.github/workflows/images.yml publishes sha-<commit> for every
 # commit on main). CODEROOM_TAG in deploy/.env overrides it — for emergencies only.
-if ! grep -q '^CODEROOM_TAG=' .env; then
+if [ "${BUILD_LOCALLY:-0}" = 1 ]; then
+  # Built from this working tree, uncommitted changes included: a local tag, never a CI release tag.
+  grep -q '^CODEROOM_TAG=' .env || export CODEROOM_TAG="local-$(git rev-parse --short=12 HEAD)"
+elif ! grep -q '^CODEROOM_TAG=' .env; then
   if [ -n "$(git status --porcelain --untracked-files=no -- . ../apps ../packages ../supabase)" ]; then
     echo "Uncommitted changes in the checkout: prebuilt images wouldn't match them." >&2
     echo "Discard them (git checkout -- .) or use BUILD_LOCALLY=1." >&2

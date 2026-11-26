@@ -155,7 +155,9 @@ Otherwise `deploy.sh` fails with "denied" — or log the VM in with a token that
 `echo <token> | docker login ghcr.io -u <github-user> --password-stdin`.
 
 **Rolling back** = deploying an older commit: `git checkout <commit> && deploy/scripts/deploy.sh`
-(then `git checkout main` to go forward again). Only roll back past a commit that added a migration
+(then `git checkout main` to go forward again). Pick a commit whose **Images** run succeeded (GitHub →
+Actions → Images): every commit on `main` gets a run, but a run can fail, and then that commit has
+no images — `deploy.sh` stops without restarting anything. Only roll back past a commit that added a migration
 after restoring a backup from before it — migrations only move forward.
 `BUILD_LOCALLY=1 deploy/scripts/deploy.sh` builds the images on the machine instead — needs ≥4 GB RAM.
 Always (re)start through `deploy.sh`: it selects the release; a bare `docker compose up` doesn't.

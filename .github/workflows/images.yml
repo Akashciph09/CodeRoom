@@ -24,10 +24,14 @@ on:
       - ".github/workflows/images.yml"
   workflow_dispatch: # on main: (re)publish that commit's images; on other branches: build only
 
+# Pull requests: a newer push cancels the older build. Everything else (each commit on main, manual
+# runs) gets a group of its own, so it is never cancelled or replaced in the queue — GitHub keeps only
+# one PENDING run per group, which would leave a commit in a burst of pushes without images, and
+# rolling back to that commit would then fail. Parallel publishes write different tags; at worst they
+# race on the build cache, which only costs speed.
 concurrency:
-  group: images-${{ github.event.pull_request.number || github.ref }}
-  # Never cancel a publish on main halfway; a newer commit's run simply follows.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: images-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
