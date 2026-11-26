@@ -1,0 +1,84 @@
+# Deployment images (ADR 0022): built here so a small VM only pulls them.
+#   main:          build and push ghcr.io/<owner>/coderoom-{api,worker,migrate,web}:sha-<full commit sha>
+#                  for EVERY commit (no path filter), so each commit on main has a complete release.
+#                  deploy.sh deploys the four images of the commit the server has checked out, so
+#                  images, compose file and migrations always come from the same commit.
+#   pull requests: build only (proves the Dockerfile still builds), nothing pushed
+# Images contain no settings or secrets: URLs and keys come from deploy/.env on the server.
+name: Images
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "supabase/**"
+      - "deploy/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - ".dockerignore"
+      - ".github/workflows/images.yml"
+  workflow_dispatch: # on main: (re)publish that commit's images; on other branches: build only
+
+# Pull requests: a newer push cancels the older build. Everything else (each commit on main, manual
+# runs) gets a group of its own, so it is never cancelled or replaced in the queue — GitHub keeps only
+# one PENDING run per group, which would leave a commit in a burst of pushes without images, and
+# rolling back to that commit would then fail. Parallel publishes write different tags; at worst they
+# race on the build cache, which only costs speed.
+concurrency:
+  group: images-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: write # push to GHCR; used only when PUBLISH is true
+
+jobs:
+  build:
+    name: Build${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && ' and publish' || '' }} images
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # Registry writes only from main — never from a PR or a manually dispatched feature branch.
+      PUBLISH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && ' and publish' || '' }}
+        run: |
+          set -euo pipefail
+          docker buildx create --use --name coderoom >/dev/null
+          owner=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          base="ghcr.io/$owner/coderoom"
+          # The full commit sha: deploy.sh asks for exactly `sha-$(git rev-parse HEAD)`.
+          tag="sha-$GITHUB_SHA"
+          for target in api worker migrate web; do
+            echo "::group::$target"
+            image="$base-$target"
+            args=(--platform linux/amd64 -f deploy/Dockerfile --target "$target"
+                  --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+                  --label "org.opencontainers.image.revision=$GITHUB_SHA"
+                  --cache-from "type=registry,ref=$image:buildcache")
+            case "$target" in api|worker) args+=(--build-arg "APP=$target") ;; esac
+            if [ "$PUBLISH" = true ]; then
+              args+=(--tag "$image:$tag" --push --cache-to "type=registry,ref=$image:buildcache,mode=max")
+            fi
+            docker buildx build "${args[@]}" .
+            echo "::endgroup::"
+          done
+          if [ "$PUBLISH" = true ]; then
+            {
+              echo "### Published \`$tag\`"
+              for target in api worker migrate web; do echo "- \`$base-$target:$tag\`"; done
+              echo
+              echo "On the server: \`git pull && deploy/scripts/deploy.sh\` (deploys the images of the checked-out commit)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

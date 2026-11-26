@@ -25,6 +25,14 @@
 		respond 404
 	}
 
+	# Runtime settings for the web app (apps/web/src/lib/config.ts): the same prebuilt image works for
+	# any hostname. Public values only; filled in from deploy/.env when Caddy starts.
+	handle /config.js {
+		header Content-Type "text/javascript; charset=utf-8"
+		header Cache-Control "no-cache"
+		respond `window.CODEROOM_CONFIG = {"apiUrl": "{$API_ADDRESS}", "supabaseUrl": "{$APP_ADDRESS}", "supabasePublishableKey": "self-hosted"};` 200
+	}
+
 	handle {
 		root * /srv/web
 		@assets path /assets/*

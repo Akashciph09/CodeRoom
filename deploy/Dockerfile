@@ -13,13 +13,16 @@ WORKDIR /app
 FROM base AS build
 COPY . .
 RUN pnpm install --frozen-lockfile
-# Public values only (ADR 0006): they end up in the browser bundle.
-ARG VITE_API_URL
-ARG VITE_SUPABASE_URL
-ARG VITE_SUPABASE_PUBLISHABLE_KEY=self-hosted
-ENV VITE_API_URL=$VITE_API_URL VITE_SUPABASE_URL=$VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
-RUN test -n "$VITE_API_URL" && test -n "$VITE_SUPABASE_URL" || (echo "VITE_API_URL and VITE_SUPABASE_URL are required" && exit 1)
+# No URLs baked in: the web app reads them at runtime from /config.js, which Caddy serves from
+# deploy/.env. So these images are the same for every deployment and can be prebuilt in CI.
 RUN pnpm -r build
+# The migrate image needs only the Supabase CLI binary, not the workspace's dev dependencies.
+# (Resolved the way the CLI's own launcher does: the per-platform package @supabase/cli-<os>-<arch>.)
+RUN bin=$(node -e 'const { createRequire } = require("node:module"); const path = require("node:path"); \
+      const req = createRequire(require.resolve("supabase/package.json")); \
+      const arch = { x64: "x64", arm64: "arm64" }[process.arch]; \
+      console.log(path.join(path.dirname(req.resolve(`@supabase/cli-linux-${arch}/package.json`)), "bin", "supabase"))') \
+    && cp "$bin" /usr/local/bin/supabase && supabase --version
 
 # ---- runtime: production dependencies + compiled output, for one app ------------------------------
 FROM base AS runtime-deps
@@ -49,12 +52,13 @@ WORKDIR /app/apps/worker
 CMD ["node", "dist/index.js"]
 
 # ---- migrations -----------------------------------------------------------------------------------
-FROM base AS migrate
-COPY --from=build /app/node_modules node_modules
-COPY --from=build /app/package.json ./
+FROM debian:bookworm-slim AS migrate
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/bin/supabase /usr/local/bin/supabase
+WORKDIR /app
 COPY supabase supabase
 # --include-seed adds the shared "Sum two numbers" question; the CLI records seed files and skips them later.
-CMD ["sh", "-c", "exec node_modules/.bin/supabase db push --db-url \"$MIGRATE_DATABASE_URL\" --include-seed --yes"]
+CMD ["sh", "-c", "exec supabase db push --db-url \"$MIGRATE_DATABASE_URL\" --include-seed --yes"]
 
 # ---- web + reverse proxy --------------------------------------------------------------------------
 FROM caddy:2.10-alpine AS web
